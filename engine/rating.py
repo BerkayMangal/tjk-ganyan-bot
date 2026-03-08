@@ -77,7 +77,7 @@ def rate_sequence(legs, breed_type='mixed'):
         stars = "★★☆"
     else:
         rating = 1
-        verdict = "OYNAMA"
+        verdict = "RİSKLİ — Model emin değil"
         stars = "★☆☆"
 
     return {
