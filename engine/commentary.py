@@ -40,12 +40,16 @@ def generate_briefing(sequence_info, legs, rating_info, dar_ticket, genis_ticket
     lines.append(f"💥 SÜRPRİZ POTANSİYELİ: {sp}")
     lines.append("")
 
-    # Tickets
+    # Tickets — her zaman ikisini de göster
     lines.append(_format_ticket_summary(dar_ticket, "DAR"))
     lines.append("")
-    if rating_info['rating'] >= 3:
-        lines.append(_format_ticket_summary(genis_ticket, "GENİŞ"))
-        lines.append("")
+    lines.append(_format_ticket_summary(genis_ticket, "GENİŞ"))
+    lines.append("")
+
+    # Model opinion banner
+    opinion = _model_opinion(rating_info)
+    lines.append(opinion)
+    lines.append("")
 
     # Rating reasons
     lines.append("💡 MODEL NOTU:")
@@ -53,6 +57,29 @@ def generate_briefing(sequence_info, legs, rating_info, dar_ticket, genis_ticket
         lines.append(f"  • {reason}")
 
     return "\n".join(lines)
+
+
+def _model_opinion(rating_info):
+    """Model görüşü banner'ı — her zaman gösterilir"""
+    r = rating_info['rating']
+    score = rating_info['score']
+
+    if r >= 3:
+        return (
+            f"🟢 MODEL GÖRÜŞÜ: FULL BAS!\n"
+            f"   {rating_info['stars']} Skor: {score:.1f} — Model çok emin, DAR + GENİŞ oyna."
+        )
+    elif r >= 2:
+        return (
+            f"🟡 MODEL GÖRÜŞÜ: DİKKATLİ OYNA\n"
+            f"   {rating_info['stars']} Skor: {score:.1f} — Model makul buluyor, DAR oyna. GENİŞ riskli."
+        )
+    else:
+        return (
+            f"🔴 MODEL GÖRÜŞÜ: RİSKLİ — DİKKAT!\n"
+            f"   {rating_info['stars']} Skor: {score:.1f} — Model emin değil. Oynayacaksan küçük bütçeyle gir.\n"
+            f"   💰 Para biriktir derdim ama kuponlar yine aşağıda, sen bilirsin patron 😄"
+        )
 
 
 def _generate_overview(legs, rating_info):
