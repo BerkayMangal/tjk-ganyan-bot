@@ -1,3 +1,4 @@
+"""
 TJK 6'li Ganyan Bot — Main Orchestrator
 ========================================
 Daily flow:
