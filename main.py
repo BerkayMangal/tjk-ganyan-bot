@@ -1,4 +1,3 @@
-"""
 TJK 6'li Ganyan Bot — Main Orchestrator
 ========================================
 Daily flow:
@@ -27,6 +26,7 @@ from engine.kupon import build_kupon, format_kupon_text
 from engine.rating import rate_sequence
 from engine.commentary import generate_briefing
 from bot.telegram_sender import send_sync, format_daily_header, format_no_play_message
+from engine.retro import save_predictions_for_retro, run_retro
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(name)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
@@ -164,6 +164,12 @@ def run_daily(target_date=None):
 
         briefing = generate_briefing(seq_info, legs, rating, dar, genis)
 
+        # Save predictions for end-of-day retro
+        try:
+            save_predictions_for_retro(hippo, altili_no, dar, genis)
+        except Exception as e:
+            logger.warning(f"Retro save failed: {e}")
+
         # Add to messages
         messages.append(briefing)
         messages.append("")  # separator
@@ -177,8 +183,12 @@ def run_daily(target_date=None):
 
     # Summary footer
     messages.append(f"{'='*40}")
-    messages.append(f"📊 ÖZET: {n_play} altılı OYNA, {n_skip} altılı OYNAMA")
+    if n_skip > 0:
+        messages.append(f"📊 ÖZET: {n_play} altılı güçlü, {n_skip} altılı riskli (kuponlar yine yukarıda)")
+    else:
+        messages.append(f"📊 ÖZET: {n_play} altılının hepsi güçlü! Full gaz 🚀")
     messages.append(f"🤖 Model: 3-Ensemble (XGB+LGBM+CB) | {len(model.feature_cols)} feature")
+    messages.append(f"⏰ Sonuçlar yarışlar bitince gelecek!")
 
     # 9. SEND
     full_message = "\n".join(messages)
@@ -195,7 +205,22 @@ def main():
 
             scheduler = BlockingScheduler(timezone='Europe/Istanbul')
             scheduler.add_job(run_daily, 'cron', hour=RUN_HOUR, minute=RUN_MINUTE)
-            logger.info(f"Scheduler started: running daily at {RUN_HOUR:02d}:{RUN_MINUTE:02d} Istanbul time")
+
+            # Retro: yarışlar bittikten sonra sonuç karşılaştırması
+            def run_retro_job():
+                logger.info("Running end-of-day retro...")
+                try:
+                    report = run_retro(date.today())
+                    send_sync(report)
+                    logger.info("Retro sent!")
+                except Exception as e:
+                    logger.error(f"Retro failed: {e}")
+
+            scheduler.add_job(run_retro_job, 'cron', hour=21, minute=0)  # 21:00 İstanbul
+
+            logger.info(f"Scheduler started:")
+            logger.info(f"  Tahmin: {RUN_HOUR:02d}:{RUN_MINUTE:02d}")
+            logger.info(f"  Retro:  21:00")
             scheduler.start()
         else:
             # Parse date argument
