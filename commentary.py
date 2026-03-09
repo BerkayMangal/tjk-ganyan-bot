@@ -179,3 +179,6 @@ def _format_ticket_summary(ticket, label):
         lines.append(f"  {icon} {leg['leg_number']}.Ayak: [{nums}] ({tag})")
 
     return "\n".join(lines)
+# commentary.py en altına ekle:
+# Backward compat — main.py "generate_briefing" import ediyor
+generate_briefing = generate_commentary
