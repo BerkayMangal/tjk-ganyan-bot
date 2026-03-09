@@ -174,14 +174,24 @@ def _parse_races(text):
     races = []
     lines = text.split('\n')
 
-    # Koşu başlık pattern: "1.Koşu" veya "2. Koşu" vs.
-    race_header_re = re.compile(r'^(\d+)\s*\.\s*[Kk]oşu\b')
+    logger.info(f"Parsing {len(lines)} lines from PDF text")
 
-    # At satırı pattern: "1(7) ..." veya "1 (7) ..." — numara + parantez içinde start no
-    horse_line_re = re.compile(r'^(\d{1,2})\s*\((\d{1,2})\)\s*')
+    # Koşu başlık pattern: "1.Koşu" veya "2. Koşu" veya "3.KOŞU" vs.
+    race_header_re = re.compile(r'(\d+)\s*\.\s*[Kk]o[şs]u', re.IGNORECASE)
 
-    # Saat pattern: "14.00" veya "14:00" (tek başına satırda)
-    time_re = re.compile(r'^(\d{2})[.:]+(\d{2})$')
+    # Also try: "N. Koşu" inside longer lines, e.g. "blah 4.Koşu blah"
+    # And handle "KoşuS." footer line (skip it)
+
+    # At satırı pattern
+    horse_line_re = re.compile(r'(\d{1,2})\s*\((\d{1,2})\)\s*')
+
+    # Saat pattern: "14.00" veya "14:00" (tek başına veya satır başında)
+    time_re = re.compile(r'^(\d{2})[.:]+(\d{2})\s*$')
+
+    # Debug: log any line containing "oşu" or "KOŞU"
+    for i, raw_line in enumerate(lines):
+        if 'oşu' in raw_line.lower() or 'kosu' in raw_line.lower():
+            logger.info(f"  Line {i}: {raw_line.strip()[:80]}")
 
     # Mesafe pattern: "1300m" veya "1200m."
     dist_re = re.compile(r'(\d{3,4})\s*m[\.\s]')
@@ -205,8 +215,8 @@ def _parse_races(text):
             continue
 
         # --- Koşu başlığı mı? ---
-        hm = race_header_re.match(line)
-        if hm:
+        hm = race_header_re.search(line)
+        if hm and 'KoşuS' not in line and 'Koşul' not in line:
             # Önceki koşuyu kaydet
             if current_race is not None:
                 current_race['horses'] = _parse_horse_lines(horse_lines_buf)
