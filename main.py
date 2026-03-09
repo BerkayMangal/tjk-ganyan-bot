@@ -1,19 +1,23 @@
 """
-TJK 6'lı Ganyan Bot V4 — Main Orchestrator
-============================================
+TJK 6'lı Ganyan Bot V5 — AGF-First Pipeline
+==============================================
+V5 farkları:
+  - AGF = PRIMARY data source (altılı keşfi + at sıralama)
+  - PDF = SECONDARY (at ismi, jokey, kilo, form, mesafe detayları)
+  - Şanlıurfa gibi PDF'siz hipodromlar destekleniyor
+  - Kupon motoru AGF yüzdelerine göre çalışıyor
+  - Commentary AGF bazlı ("Piyasa %50 favori görüyor")
+
 Daily flow:
-1. Scrape TJK program
-2. Detect altılı sequences (1-6, 3-8, etc.)
-3. Build features per race
-4. Rank horses (ensemble model)
-5. Rate each altılı (1/2/3 stars)
-6. Generate DAR + GENİŞ kupons (Monte Carlo V4)
-7. Generate kupon message + commentary (AYRI)
-8. Send to Telegram (kupon + yorum ayrı mesaj)
+  1. AGF'den altılı keşfi (agftablosu.com)
+  2. PDF'ten detay zenginleştirme (varsa)
+  3. AGF yüzdelerine göre kupon üretimi
+  4. AGF bazlı commentary
+  5. Telegram gönderim
 
 Usage:
   python main.py              # Run for today
-  python main.py 2026-03-08   # Run for specific date
+  python main.py 2026-03-09   # Run for specific date
   python main.py --schedule   # Run on daily schedule
 """
 import sys
@@ -21,17 +25,22 @@ import logging
 from datetime import datetime, date
 import numpy as np
 
-from scraper.tjk_program import get_todays_races, identify_altili_sequences
-from model.features import build_features_for_race, RollingStats, FEATURE_COLUMNS
-from model.ensemble import EnsembleRanker
-from engine.kupon import build_kupon, format_kupon_text
+from scraper.agf_scraper import (
+    get_todays_agf,
+    agf_to_legs,
+    enrich_legs_from_pdf,
+)
+from scraper.tjk_program import (
+    get_todays_races as get_pdf_races,
+    identify_altili_sequences as pdf_identify_altili,
+)
+from engine.kupon import build_kupon
 from engine.rating import rate_sequence
 from engine.commentary import generate_commentary, generate_kupon_message
 from bot.telegram_sender import (
     send_sync, send_daily_sync,
     format_daily_header, format_no_play_message,
 )
-from engine.retro import save_predictions_for_retro, run_retro
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,64 +50,59 @@ logger = logging.getLogger(__name__)
 
 
 def run_daily(target_date=None):
-    """Main daily run: scrape → predict → kupon → send"""
+    """Main daily run: AGF → PDF enrich → kupon → send"""
 
     if target_date is None:
         target_date = date.today()
 
     date_str = target_date.strftime('%d.%m.%Y')
-    logger.info(f"=== TJK Bot V4 — {date_str} ===")
+    logger.info(f"=== TJK Bot V5 (AGF-First) — {date_str} ===")
 
-    # ── 1. SCRAPE ──
-    logger.info("Step 1: Fetching TJK program...")
-    hippodromes = get_todays_races(target_date)
-    if not hippodromes:
-        logger.warning("No races found!")
+    # ── 1. AGF FETCH (PRIMARY) ──
+    logger.info("Step 1: Fetching AGF data from agftablosu.com...")
+    agf_altilis = get_todays_agf(target_date)
+
+    if not agf_altilis:
+        logger.warning("No AGF data found!")
         send_sync(format_no_play_message(date_str))
         return
 
-    logger.info(f"Found {len(hippodromes)} hippodromes")
+    logger.info(f"AGF: {len(agf_altilis)} Türkiye altılısı bulundu")
+    for a in agf_altilis:
+        logger.info(f"  {a['hippodrome']} {a['altili_no']}. altılı ({a['time']})")
 
-    # ── 2. LOAD MODEL ──
-    logger.info("Step 2: Loading ensemble model...")
-    model = EnsembleRanker()
-    model.load()
+    # ── 2. PDF FETCH (SECONDARY — detay zenginleştirme) ──
+    logger.info("Step 2: Fetching PDF data for enrichment...")
+    pdf_hippodromes = _fetch_pdf_data(target_date)
 
-    # ── 3. LOAD ROLLING STATS ──
-    rolling_stats = RollingStats()
+    # ── 3. PROCESS EACH ALTILI ──
+    altili_packages = []
 
-    # ── 4. DETECT ALTILI SEQUENCES ──
-    all_sequences = []
-    for hippo_data in hippodromes:
-        seqs = identify_altili_sequences(hippo_data)
-        for seq in seqs:
-            all_sequences.append(seq)
+    for agf_alt in agf_altilis:
+        hippo = agf_alt['hippodrome']
+        altili_no = agf_alt['altili_no']
 
-    if not all_sequences:
-        send_sync(format_no_play_message(date_str))
-        return
+        logger.info(f"Processing {hippo} {altili_no}. altılı...")
 
-    logger.info(f"Found {len(all_sequences)} altili sequences")
+        # AGF → leg format
+        legs = agf_to_legs(agf_alt)
 
-    # ── 5. PROCESS EACH ALTILI ──
-    altili_packages = []  # [(kupon_text, commentary_text), ...]
-
-    for seq in all_sequences:
-        hippo = seq['hippodrome']
-        altili_no = seq.get('altili_no', 1)
-        races = seq['races']
-
-        logger.info(f"Processing {hippo} {altili_no}. altili ({len(races)} races)")
-
-        # Build features + rank for each leg
-        legs = _process_legs(races, model, rolling_stats, target_date)
+        # PDF ile zenginleştir (varsa)
+        pdf_races = _match_pdf_races(hippo, altili_no, pdf_hippodromes)
+        if pdf_races:
+            legs = enrich_legs_from_pdf(legs, pdf_races)
+            logger.info(f"  PDF enrichment: {len(pdf_races)} races matched")
+        else:
+            logger.info(f"  No PDF data for {hippo} — AGF-only mode")
 
         # Rate sequence
         arab_count = sum(1 for l in legs if l.get('is_arab', False))
-        breed = 'arab' if arab_count >= 4 else ('english' if arab_count <= 2 else 'mixed')
+        breed = 'arab' if arab_count >= 4 else (
+            'english' if arab_count <= 2 else 'mixed'
+        )
         rating = rate_sequence(legs, breed)
 
-        # Build kupons (Monte Carlo V4)
+        # Build kupons
         dar = build_kupon(legs, hippo, mode='dar')
         genis = build_kupon(legs, hippo, mode='genis')
 
@@ -107,152 +111,97 @@ def run_daily(target_date=None):
             'hippodrome': hippo,
             'altili_no': altili_no,
             'date': date_str,
+            'time': agf_alt.get('time', ''),
         }
 
-        # Generate SEPARATE messages
+        # Generate messages
         kupon_text = generate_kupon_message(seq_info, dar, genis, rating)
         commentary_text = generate_commentary(seq_info, legs, rating, dar, genis)
 
         altili_packages.append((kupon_text, commentary_text))
 
-        # Save predictions for retro
-        try:
-            save_predictions_for_retro(hippo, altili_no, dar, genis)
-        except Exception as e:
-            logger.warning(f"Retro save failed: {e}")
-
-        logger.info(f"  {hippo} {altili_no}. altili: {rating['stars']} — {rating['verdict']}")
+        # Log summary
+        logger.info(f"  {hippo} {altili_no}. altılı: {rating['stars']} — {rating['verdict']}")
         logger.info(f"  DAR: {dar['cost']:.0f} TL ({dar['combo']} kombi, hit: {dar['hitrate_pct']})")
         logger.info(f"  GENİŞ: {genis['cost']:.0f} TL ({genis['combo']} kombi, hit: {genis['hitrate_pct']})")
 
-    # ── 6. SEND TO TELEGRAM ──
-    n_hippo = len(set(s['hippodrome'] for s in all_sequences))
-    daily_header = format_daily_header(date_str, n_hippo, len(all_sequences))
+    # ── 4. SEND TO TELEGRAM ──
+    n_hippo = len(set(a['hippodrome'] for a in agf_altilis))
+    daily_header = format_daily_header(date_str, n_hippo, len(agf_altilis))
 
     logger.info(f"Sending {len(altili_packages)} altili packages to Telegram...")
     send_daily_sync(daily_header, altili_packages)
     logger.info("Done! ✓")
 
 
-def _process_legs(races, model, rolling_stats, target_date):
+def _fetch_pdf_data(target_date):
     """
-    Her koşu için feature build + model predict + leg dict oluştur.
+    PDF verisini çek — hata olursa boş döndür, pipeline durmaz.
+    Returns: list of hippodrome dicts (PDF formatı)
     """
-    legs = []
-    is_weekend = target_date.weekday() >= 5
-
-    for race in races:
-        # Build features
-        df = build_features_for_race(
-            race['horses'], race, rolling_stats
-        )
-
-        # Day-level features
-        df['f_is_weekend'] = float(is_weekend)
-        df['f_day_of_week'] = target_date.weekday() / 6.0
-
-        # Ensemble predict
-        scores = model.predict(df)
-        df['_rank_score'] = scores
-
-        # Individual model predictions (for agreement)
-        indiv = model.predict_individual(df)
-
-        # Sort by score
-        df = df.sort_values('_rank_score', ascending=False)
-
-        # Build horse tuples: (name, score, number, feature_dict)
-        horses = []
-        for _, row in df.iterrows():
-            feature_dict = _extract_horse_features(row)
-            horses.append((
-                row['_horse_name'],
-                row['_rank_score'],
-                int(row['_horse_number']),
-                feature_dict,
-            ))
-
-        # Confidence: score gap between #1 and #2
-        conf = horses[0][1] - horses[1][1] if len(horses) >= 2 else 0
-
-        # Model agreement: do all 3 models agree on #1?
-        top_names = set()
-        for idx_key in ['xgb_top_idx', 'lgbm_top_idx', 'cb_top_idx']:
-            if idx_key in indiv:
-                top_names.add(df.iloc[indiv[idx_key]]['_horse_name'])
-        agree = 1.0 if len(top_names) == 1 else (0.67 if len(top_names) == 2 else 0.33)
-
-        # Breed
-        group = race.get('group_name', '')
-        is_arab = 'Arap' in group
-        is_english = 'İngiliz' in group or 'Ingiliz' in group
-
-        # Top horse stats for commentary
-        top_row = df.iloc[0]
-
-        legs.append({
-            'horses': horses,
-            'n_runners': len(horses),
-            'confidence': conf,
-            'model_agreement': agree,
-            'is_arab': is_arab,
-            'is_english': is_english,
-            'race_number': race['race_number'],
-            'distance': race.get('distance', ''),
-            'race_type': race.get('race_type', ''),
-            'group_name': group,
-            'top_jockey_name': top_row.get('_jockey_name', ''),
-            'top_jockey_wr': top_row.get('f_jockey_win_rate', 0),
-            'top_form_top3': top_row.get('f_form_top3', 0),
-        })
-
-    return legs
+    try:
+        hippodromes = get_pdf_races(target_date)
+        if hippodromes:
+            logger.info(f"PDF: {len(hippodromes)} hipodrom bulundu")
+            for h in hippodromes:
+                n_races = len(h.get('races', []))
+                n_horses = sum(len(r.get('horses', [])) for r in h.get('races', []))
+                logger.info(f"  {h['hippodrome']}: {n_races} koşu, {n_horses} at")
+        return hippodromes or []
+    except Exception as e:
+        logger.warning(f"PDF fetch failed (non-fatal): {e}")
+        return []
 
 
-def _extract_horse_features(row):
+def _match_pdf_races(hippo_name, altili_no, pdf_hippodromes):
     """
-    DataFrame row'dan commentary için önemli feature'ları çıkar.
-    SHAP değerleri varsa onları da ekle.
+    AGF altılısı ile eşleşen PDF koşularını bul.
+
+    AGF hipodrom adı: "Bursa Hipodromu"
+    PDF hipodrom adı: "Bursa Hipodromu" (veya "Bursa Osmangazi Hipodromu")
+
+    Returns: list of 6 race dicts (PDF formatı) or None
     """
-    features = {}
+    if not pdf_hippodromes:
+        return None
 
-    # Jokey
-    if 'f_jockey_win_rate' in row.index:
-        features['jockey_wr'] = row['f_jockey_win_rate']
+    # Hipodrom adı eşleştirme (fuzzy)
+    hippo_lower = hippo_name.lower().replace(' hipodromu', '').replace(' hipodrom', '')
 
-    # Form
-    if 'f_form_top3' in row.index:
-        features['form_score'] = row['f_form_top3']
+    matched_hippo = None
+    for ph in pdf_hippodromes:
+        ph_lower = ph['hippodrome'].lower().replace(' hipodromu', '').replace(' hipodrom', '')
+        # "bursa" in "bursa osmangazi" → match
+        if hippo_lower in ph_lower or ph_lower in hippo_lower:
+            matched_hippo = ph
+            break
 
-    # Antrenör
-    if 'f_trainer_win_rate' in row.index:
-        features['trainer_wr'] = row['f_trainer_win_rate']
+    if not matched_hippo:
+        return None
 
-    # Kilo
-    if 'f_weight_advantage' in row.index:
-        features['weight_advantage'] = row['f_weight_advantage']
+    races = matched_hippo.get('races', [])
+    if len(races) < 6:
+        return None
 
-    # Mesafe uyumu
-    if 'f_distance_fit' in row.index:
-        features['distance_fit'] = row['f_distance_fit']
-
-    # Pist uyumu
-    if 'f_track_fit' in row.index:
-        features['track_fit'] = row['f_track_fit']
-
-    # Son koşu zamanı
-    if 'f_days_since_race' in row.index:
-        features['days_since_race'] = row['f_days_since_race']
-
-    # Son derece
-    if 'f_last_finish' in row.index:
-        features['last_finish'] = row['f_last_finish']
-
-    # SHAP top features (varsa)
-    if '_shap_top' in row.index and row['_shap_top'] is not None:
-        features['shap_top'] = row['_shap_top']
-
-    return features
+    # Altılı koşuları seç
+    # 1. altılı = son 6 koşu (veya ilk 6 koşu, duruma göre)
+    # 2. altılı = varsa önceki 6 koşu
+    # TJK'da genelde: 1. altılı = koşu 1-6, 2. altılı = koşu 3-8 veya son 6
+    if altili_no == 1:
+        # İlk altılı — eğer 12+ koşu varsa ilk 6, yoksa son 6
+        if len(races) >= 12:
+            return races[:6]
+        else:
+            return races[-6:]
+    elif altili_no == 2:
+        # İkinci altılı — varsa koşu 7-12 veya son 6
+        if len(races) >= 12:
+            return races[6:12]
+        elif len(races) >= 8:
+            return races[-6:]
+    
+    # Fallback
+    return races[-6:] if len(races) >= 6 else None
 
 
 def main():
@@ -264,21 +213,8 @@ def main():
             scheduler = BlockingScheduler(timezone='Europe/Istanbul')
             scheduler.add_job(run_daily, 'cron', hour=RUN_HOUR, minute=RUN_MINUTE)
 
-            # Retro: yarışlar bittikten sonra sonuç karşılaştırması
-            def run_retro_job():
-                logger.info("Running end-of-day retro...")
-                try:
-                    report = run_retro(date.today())
-                    send_sync(report)
-                    logger.info("Retro sent!")
-                except Exception as e:
-                    logger.error(f"Retro failed: {e}")
-
-            scheduler.add_job(run_retro_job, 'cron', hour=21, minute=0)
-
-            logger.info(f"Scheduler started — TJK Bot V4")
+            logger.info(f"Scheduler started — TJK Bot V5 (AGF-First)")
             logger.info(f"  Tahmin: {RUN_HOUR:02d}:{RUN_MINUTE:02d} İstanbul")
-            logger.info(f"  Retro:  21:00 İstanbul")
             scheduler.start()
         else:
             target = datetime.strptime(sys.argv[1], '%Y-%m-%d').date()
