@@ -1,19 +1,22 @@
-"""6'lı Ganyan Kupon Motoru V4 — Monte Carlo Optimizasyonlu
+"""6'lı Ganyan Kupon Motoru V5 — AGF-Bazlı Monte Carlo
 DAR (0-1500 TL) + GENİŞ (1500-4000 TL) kupon üretici
 
-V4 farkları:
-- Monte Carlo simülasyon ile optimal at sayısı seçimi
-- Her ayak için beklenen değer (EV) hesaplaması
-- Confidence + EV birlikte optimize edilir
-- Sürpriz atlarına ağırlık verilebilir
+V5 farkları:
+- AGF yüzdeleri = birincil skor (model skoru yerine piyasa konsensüsü)
+- Kupon kuralları AGF'ye göre:
+    %50+ → TEK (1 at)
+    %25-40 → 2 at
+    %15-25 → 3 at
+    <15% → açık (4+ at)
+- Monte Carlo simülasyonunda AGF olasılıkları direkt kullanılır
+- EV hesaplaması gerçek piyasa odds'larından
 """
 import numpy as np
 import logging
 from config import (
     DAR_BUDGET, GENIS_BUDGET, BUYUK_SEHIR_HIPODROMLAR,
     BIRIM_FIYAT_BUYUK, BIRIM_FIYAT_KUCUK, MIN_KUPON_BEDELI,
-    DAR_CONFIDENCE_THRESH, GENIS_CONFIDENCE_THRESH,
-    MC_SIMULATIONS, MC_TOP_PCT, MC_MIN_EV_RATIO,
+    MC_SIMULATIONS,
 )
 
 logger = logging.getLogger(__name__)
@@ -27,124 +30,140 @@ def birim_fiyat(hippodrome):
 
 
 # ═══════════════════════════════════════════════════════════
-# MONTE CARLO SİMÜLASYON
+# AGF-BAZLI AT SAYISI BELİRLEME
 # ═══════════════════════════════════════════════════════════
 
-def _simulate_leg_outcomes(leg, n_sims=MC_SIMULATIONS):
+def _agf_based_counts(legs, mode='dar'):
     """
-    Tek bir ayak için Monte Carlo simülasyonu.
-    Her atın kazanma olasılığını score'dan türet,
-    n_sims kez simüle et, hangi atların ne sıklıkla
-    ilk 1'e girdiğini say.
+    AGF yüzdelerine göre her ayak için at sayısı belirle.
 
-    Returns: dict {horse_number: win_frequency}
+    Kurallar:
+    - Favori AGF %50+ → TEK (1 at) — piyasa çok emin
+    - Favori AGF %35-50 → 2 at — güçlü favori ama garanti değil
+    - Favori AGF %25-35 → 2-3 at — orta güven
+    - Favori AGF %15-25 → 3-4 at — açık yarış
+    - Favori AGF <15% → 4-5 at — tam açık, sürpriz riski
+
+    mode='genis' ise her kategoride 1 at daha fazla
     """
-    horses = leg['horses']
-    if not horses:
-        return {}
+    counts = []
+    extra = 1 if mode == 'genis' else 0
 
-    # Score'ları olasılığa çevir (softmax)
-    scores = np.array([h[1] for h in horses], dtype=float)
+    for leg in legs:
+        agf_data = leg.get('agf_data', [])
+        n_runners = leg['n_runners']
 
-    # Score'lar arasındaki fark çok küçükse uniform'a yaklaştır
-    score_range = scores.max() - scores.min()
-    if score_range < 0.01:
-        probs = np.ones(len(scores)) / len(scores)
-    else:
-        # Temperature-scaled softmax
-        temperature = max(score_range * 2, 0.5)
-        exp_scores = np.exp((scores - scores.max()) / temperature)
-        probs = exp_scores / exp_scores.sum()
+        if not agf_data:
+            # AGF yok → model score'dan çalış (fallback)
+            counts.append(min(3 + extra, n_runners))
+            continue
 
-    # Simülasyon
-    winners = np.random.choice(len(horses), size=n_sims, p=probs)
-    win_counts = np.bincount(winners, minlength=len(horses))
-    win_freq = win_counts / n_sims
+        top_agf = agf_data[0]['agf_pct']
 
-    return {horses[i][2]: win_freq[i] for i in range(len(horses))}
+        if top_agf >= 50:
+            # Çok net favori → TEK
+            c = 1 + extra
+        elif top_agf >= 35:
+            # Güçlü favori
+            c = 2 + extra
+        elif top_agf >= 25:
+            # Orta güven
+            c = 2 + extra + (1 if mode == 'genis' else 0)
+        elif top_agf >= 15:
+            # Açık yarış
+            c = 3 + extra
+        else:
+            # Tam açık — favorisi bile zayıf
+            c = 4 + extra
+
+        counts.append(min(c, n_runners))
+
+    return counts
 
 
-def _mc_evaluate_ticket(legs, counts, n_sims=5000):
+# ═══════════════════════════════════════════════════════════
+# MONTE CARLO SİMÜLASYON (AGF Odds)
+# ═══════════════════════════════════════════════════════════
+
+def _mc_evaluate_ticket(legs, counts):
     """
-    Bir kupon konfigürasyonunun Monte Carlo EV'sini hesapla.
+    Kupon konfigürasyonunun tutma olasılığını hesapla.
+    AGF yüzdeleri = gerçek olasılık yaklaşımı.
 
-    Mantık: her simülasyonda her ayakta rastgele bir at kazanır,
-    kupondaki seçimler bu kazananı içeriyor mu? 6/6 tutarsa
-    "kazandı" say. Toplam kazanma oranı = hitrate.
-
-    Returns: float hitrate (0-1 arası)
+    Her ayakta seçilen atların toplam AGF'si = tutma olasılığı.
+    6 ayağın hepsini tutma = çarpım.
     """
     if not legs or not counts:
         return 0.0
 
-    # Her ayak için kazanma olasılıklarını hazırla
     leg_probs = []
     for i, leg in enumerate(legs):
-        horses = leg['horses']
-        scores = np.array([h[1] for h in horses], dtype=float)
-        score_range = scores.max() - scores.min() if len(scores) > 1 else 1.0
+        agf_data = leg.get('agf_data', [])
+        n_pick = min(counts[i], len(leg['horses']))
 
-        if score_range < 0.01:
-            probs = np.ones(len(scores)) / len(scores)
+        if agf_data:
+            # AGF yüzdeleri doğrudan olasılık — seçilen atların toplamı
+            selected_pct = sum(h['agf_pct'] for h in agf_data[:n_pick])
+            leg_probs.append(selected_pct / 100.0)
         else:
-            temperature = max(score_range * 2, 0.5)
-            exp_scores = np.exp((scores - scores.max()) / temperature)
-            probs = exp_scores / exp_scores.sum()
+            # Fallback: softmax score
+            horses = leg['horses']
+            if not horses:
+                leg_probs.append(0.0)
+                continue
+            scores = np.array([h[1] for h in horses], dtype=float)
+            if scores.max() - scores.min() < 0.01:
+                prob = min(n_pick / len(scores), 1.0)
+            else:
+                temperature = max((scores.max() - scores.min()) * 2, 0.5)
+                exp_s = np.exp((scores - scores.max()) / temperature)
+                probs = exp_s / exp_s.sum()
+                prob = probs[:n_pick].sum()
+            leg_probs.append(prob)
 
-        # Seçilen atların toplam olasılığı
-        n_pick = min(counts[i], len(horses))
-        selected_prob = probs[:n_pick].sum()
-        leg_probs.append(selected_prob)
-
-    # 6 ayağın hepsini tutma olasılığı (bağımsız varsayım)
-    # Monte Carlo yerine analitik — daha hızlı, yeterli
-    hitrate = np.prod(leg_probs)
-    return hitrate
+    return np.prod(leg_probs)
 
 
-def _mc_optimize_counts(legs, bf, budget, mode='dar',
-                        n_iterations=MC_SIMULATIONS):
+def _mc_optimize_counts(legs, bf, budget, mode='dar'):
     """
     Monte Carlo ile optimal at sayısı dağılımını bul.
-
-    Strateji:
-    - Rastgele count konfigürasyonları üret (bütçe içinde)
-    - Her birinin hitrate'ini hesapla
-    - En yüksek hitrate * combo / cost dengesini bul
+    AGF-based başlangıç noktası + rastgele varyasyonlar.
     """
     n_legs = len(legs)
     max_runners = [leg['n_runners'] for leg in legs]
-    confidences = [leg['confidence'] for leg in legs]
 
-    if mode == 'dar':
-        min_h, max_h = 1, 4
+    # Başlangıç: AGF-based counts
+    base_counts = _agf_based_counts(legs, mode)
+
+    # Bütçe kontrolü
+    base_combo = int(np.prod(base_counts))
+    base_cost = base_combo * bf
+
+    if base_cost <= budget:
+        best_counts = base_counts.copy()
+        best_hitrate = _mc_evaluate_ticket(legs, base_counts)
     else:
-        min_h, max_h = 1, 6
+        # Bütçeyi aşıyorsa küçült
+        best_counts = _shrink_to_budget(base_counts, legs, bf, budget)
+        best_hitrate = _mc_evaluate_ticket(legs, best_counts)
 
-    best_score = -1
-    best_counts = [2] * n_legs
+    best_score = best_hitrate / (int(np.prod(best_counts)) * bf + 1)
 
-    # Confidence sıralaması — en emin ayakları biliyoruz
-    conf_sorted = sorted(range(n_legs), key=lambda i: confidences[i], reverse=True)
+    # Monte Carlo: rastgele varyasyonlar dene
+    max_h = 4 if mode == 'dar' else 6
+    n_iterations = min(MC_SIMULATIONS, 2000)
 
-    for _ in range(min(n_iterations, 2000)):
-        # Rastgele count üret, confidence'a göre bias'lı
-        counts = []
-        for i in range(n_legs):
-            max_for_leg = min(max_h, max_runners[i])
-            conf = confidences[i]
+    for _ in range(n_iterations):
+        # Base counts'tan rastgele ±1 varyasyon
+        counts = base_counts.copy()
+        n_changes = np.random.randint(1, 4)  # 1-3 ayak değiştir
 
-            if conf > 0.5:
-                # Yüksek güven → az at
-                c = np.random.choice([1, 1, 2], p=[0.5, 0.3, 0.2])
-            elif conf > 0.25:
-                c = np.random.choice([1, 2, 3], p=[0.2, 0.5, 0.3])
-            elif conf > 0.1:
-                c = np.random.choice([2, 3, 4], p=[0.3, 0.4, 0.3])
-            else:
-                c = np.random.choice([3, 4, max_for_leg], p=[0.2, 0.4, 0.4])
-
-            counts.append(min(c, max_for_leg))
+        for _ in range(n_changes):
+            idx = np.random.randint(0, n_legs)
+            delta = np.random.choice([-1, 1])
+            new_val = counts[idx] + delta
+            new_val = max(1, min(new_val, max_h, max_runners[idx]))
+            counts[idx] = new_val
 
         combo = int(np.prod(counts))
         cost = combo * bf
@@ -152,18 +171,71 @@ def _mc_optimize_counts(legs, bf, budget, mode='dar',
         if cost > budget or cost < MIN_KUPON_BEDELI:
             continue
 
-        # Hitrate hesapla
         hitrate = _mc_evaluate_ticket(legs, counts)
-
-        # Score: hitrate per TL (maliyet verimliliği)
-        # Yüksek hitrate + düşük maliyet = iyi
         score = hitrate / (cost + 1)
 
         if score > best_score:
             best_score = score
             best_counts = counts.copy()
+            best_hitrate = hitrate
 
     return best_counts
+
+
+def _shrink_to_budget(counts, legs, bf, budget):
+    """Bütçeyi aşıyorsa en düşük güvenli ayaklardan küçült."""
+    # AGF farkına göre sırala — en belirsiz ayakları daralt
+    agf_gaps = []
+    for i, leg in enumerate(legs):
+        agf_data = leg.get('agf_data', [])
+        if len(agf_data) >= 2:
+            gap = agf_data[0]['agf_pct'] - agf_data[1]['agf_pct']
+        else:
+            gap = 0
+        agf_gaps.append((gap, i))
+
+    # En düşük gap = en belirsiz → orayı daraltma, en yüksek gap'i daralt
+    agf_gaps.sort(reverse=True)
+
+    counts = counts.copy()
+    while int(np.prod(counts)) * bf > budget:
+        reduced = False
+        for _, idx in agf_gaps:
+            if counts[idx] > 1:
+                counts[idx] -= 1
+                reduced = True
+                break
+        if not reduced:
+            break
+
+    return counts
+
+
+def _expand_to_budget(counts, legs, bf, budget, max_h):
+    """Bütçe kullanılmamışsa en belirsiz ayaklara at ekle."""
+    agf_gaps = []
+    for i, leg in enumerate(legs):
+        agf_data = leg.get('agf_data', [])
+        if len(agf_data) >= 2:
+            gap = agf_data[0]['agf_pct'] - agf_data[1]['agf_pct']
+        else:
+            gap = 100
+        agf_gaps.append((gap, i))
+
+    # En düşük gap = en belirsiz → oraya at ekle
+    agf_gaps.sort()
+
+    counts = counts.copy()
+    for _, idx in agf_gaps:
+        while counts[idx] < min(legs[idx]['n_runners'], max_h):
+            new_counts = counts.copy()
+            new_counts[idx] += 1
+            if int(np.prod(new_counts)) * bf <= budget:
+                counts = new_counts
+            else:
+                break
+
+    return counts
 
 
 # ═══════════════════════════════════════════════════════════
@@ -172,45 +244,28 @@ def _mc_optimize_counts(legs, bf, budget, mode='dar',
 
 def build_kupon(legs, hippodrome, mode='dar'):
     """
-    Build a 6'li ganyan ticket with Monte Carlo optimization.
+    Build a 6'li ganyan ticket with AGF-based optimization.
 
-    legs: list of 6 dicts, each with:
-        - horses: list of (name, score, number) sorted by score desc
-        - n_runners: total runners
-        - confidence: score gap between #1 and #2
+    legs: list of 6 dicts (agf_to_legs çıktısı)
     mode: 'dar' or 'genis'
 
     Returns: dict with counts, cost, selected horses per leg
     """
     bf = birim_fiyat(hippodrome)
     budget = DAR_BUDGET if mode == 'dar' else GENIS_BUDGET
-    thresh = DAR_CONFIDENCE_THRESH if mode == 'dar' else GENIS_CONFIDENCE_THRESH
+    max_h = 4 if mode == 'dar' else 6
 
-    # ── Monte Carlo optimizasyon ──
+    # ── Monte Carlo + AGF optimizasyon ──
     counts = _mc_optimize_counts(legs, bf, budget, mode)
-    logger.info(f"MC optimal counts ({mode}): {counts}")
 
-    # ── Fallback: confidence-based (V3 mantığı) ──
-    # MC bazen bütçeyi tam kullanamıyor, fallback ile karşılaştır
-    conf_sorted = sorted(range(6), key=lambda i: legs[i]['confidence'], reverse=True)
-    fallback_counts = _confidence_based_counts(legs, bf, budget, mode, thresh, conf_sorted)
-
-    # Hangisi daha iyi? (hitrate bazlı)
-    mc_hitrate = _mc_evaluate_ticket(legs, counts)
-    fb_hitrate = _mc_evaluate_ticket(legs, fallback_counts)
-
-    mc_cost = int(np.prod(counts)) * bf
-    fb_cost = int(np.prod(fallback_counts)) * bf
-
-    mc_efficiency = mc_hitrate / (mc_cost + 1) if mc_cost <= budget else 0
-    fb_efficiency = fb_hitrate / (fb_cost + 1) if fb_cost <= budget else 0
-
-    if fb_efficiency > mc_efficiency:
-        counts = fallback_counts
-        logger.info(f"Fallback counts daha iyi: {counts}")
+    # ── Bütçe kullanımını maximize et ──
+    combo = int(np.prod(counts))
+    cost = combo * bf
+    if cost < budget * 0.6:
+        counts = _expand_to_budget(counts, legs, bf, budget, max_h)
 
     # ── Cap & floor ──
-    for i in range(6):
+    for i in range(len(legs)):
         counts[i] = min(counts[i], legs[i]['n_runners'])
         counts[i] = max(counts[i], 1)
 
@@ -220,20 +275,38 @@ def build_kupon(legs, hippodrome, mode='dar'):
     # ── Final hitrate ──
     hitrate = _mc_evaluate_ticket(legs, counts)
 
+    logger.info(f"Kupon ({mode}): counts={counts}, combo={combo}, "
+                f"cost={cost:.0f} TL, hit={hitrate*100:.2f}%")
+
     # ── Build ticket with top N horses per leg ──
     ticket_legs = []
-    for i in range(6):
-        selected = legs[i]['horses'][:counts[i]]
-        is_tek = counts[i] == 1
+    for i in range(len(legs)):
+        n_pick = counts[i]
+        selected = legs[i]['horses'][:n_pick]
+        is_tek = n_pick == 1
+
+        # AGF bilgisi ekle
+        agf_info = ''
+        agf_data = legs[i].get('agf_data', [])
+        if agf_data and selected:
+            top_agf = agf_data[0]['agf_pct']
+            if is_tek:
+                agf_info = f"AGF %{top_agf:.0f}"
+            else:
+                total_agf = sum(h['agf_pct'] for h in agf_data[:n_pick])
+                agf_info = f"AGF %{total_agf:.0f} kapsam"
+
         ticket_legs.append({
             'leg_number': i + 1,
             'race_number': legs[i].get('race_number', i + 1),
-            'n_pick': counts[i],
+            'n_pick': n_pick,
             'n_runners': legs[i]['n_runners'],
             'confidence': legs[i]['confidence'],
             'is_tek': is_tek,
             'selected': selected,
-            'leg_type': 'TEK' if is_tek else f'{counts[i]} AT',
+            'leg_type': 'TEK' if is_tek else f'{n_pick} AT',
+            'agf_info': agf_info,
+            'agf_data': agf_data,
         })
 
     return {
@@ -249,62 +322,8 @@ def build_kupon(legs, hippodrome, mode='dar'):
     }
 
 
-def _confidence_based_counts(legs, bf, budget, mode, thresh, conf_sorted):
-    """V3 confidence-based count allocation (fallback)"""
-    if mode == 'dar':
-        counts = [2] * 6
-        for rank in range(3):
-            i = conf_sorted[rank]
-            if legs[i]['confidence'] > thresh:
-                counts[i] = 1
-    else:
-        counts = [3] * 6
-        i = conf_sorted[0]
-        if legs[i]['confidence'] > thresh:
-            counts[i] = 1
-        for rank in range(4, 6):
-            counts[conf_sorted[rank]] = min(4, legs[conf_sorted[rank]]['n_runners'])
-
-    for i in range(6):
-        counts[i] = min(counts[i], legs[i]['n_runners'])
-        counts[i] = max(counts[i], 1)
-
-    # Expand
-    max_horses = 4 if mode == 'dar' else 6
-    combo = int(np.prod(counts))
-    cost = combo * bf
-    if cost < budget:
-        for rank in range(5, -1, -1):
-            idx = conf_sorted[rank]
-            while counts[idx] < min(legs[idx]['n_runners'], max_horses):
-                new_counts = counts.copy()
-                new_counts[idx] += 1
-                if int(np.prod(new_counts)) * bf <= budget:
-                    counts = new_counts
-                else:
-                    break
-
-    # Shrink
-    combo = int(np.prod(counts))
-    cost = combo * bf
-    while cost > budget:
-        reduced = False
-        for rank in range(5, -1, -1):
-            idx = conf_sorted[rank]
-            if counts[idx] > 1:
-                counts[idx] -= 1
-                combo = int(np.prod(counts))
-                cost = combo * bf
-                reduced = True
-                break
-        if not reduced:
-            break
-
-    return counts
-
-
 # ═══════════════════════════════════════════════════════════
-# FORMAT
+# FORMAT (kupon mesajı içinde kullanılır)
 # ═══════════════════════════════════════════════════════════
 
 def format_kupon_text(ticket, hippodrome):
@@ -332,7 +351,9 @@ def format_kupon_text(ticket, hippodrome):
             icon = "⚠️"
             label = f"{leg['n_pick']} at"
 
-        lines.append(f"{icon} {leg['leg_number']}. Ayak (K{leg['race_number']}): [{horses_str}] — {label}")
+        agf_tag = f" [{leg['agf_info']}]" if leg.get('agf_info') else ""
+        lines.append(f"{icon} {leg['leg_number']}. Ayak (K{leg['race_number']}): "
+                     f"[{horses_str}] — {label}{agf_tag}")
         lines.append(f"   {names_str}")
 
     return "\n".join(lines)
