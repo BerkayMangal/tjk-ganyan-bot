@@ -1,6 +1,7 @@
-"""3-Model Ensemble: XGBRanker + LGBMRanker + CatBoostRanker"""
+"""3-Model Ensemble: XGBRanker + LGBMRanker + CatBoostRanker — V4"""
 import joblib
 import numpy as np
+import pandas as pd
 import os
 import logging
 from config import MODEL_DIR
@@ -23,6 +24,7 @@ class EnsembleRanker:
     def load(self):
         """Load trained models from disk"""
         logger.info(f"Loading models from {self.model_dir}")
+
         self.xgb = joblib.load(os.path.join(self.model_dir, 'xgb_ranker.pkl'))
         self.lgbm = joblib.load(os.path.join(self.model_dir, 'lgbm_ranker.pkl'))
         self.scaler = joblib.load(os.path.join(self.model_dir, 'scaler.pkl'))
@@ -31,9 +33,29 @@ class EnsembleRanker:
         cb_path = os.path.join(self.model_dir, 'cb_ranker.pkl')
         if os.path.exists(cb_path):
             self.cb = joblib.load(cb_path)
-            logger.info("Loaded: XGB + LGBM + CatBoost")
+            logger.info(f"Loaded: XGB + LGBM + CatBoost ({len(self.feature_cols)} features)")
         else:
-            logger.info("Loaded: XGB + LGBM (no CatBoost)")
+            logger.info(f"Loaded: XGB + LGBM (no CatBoost) ({len(self.feature_cols)} features)")
+
+    def _prepare_features(self, df):
+        """
+        Prepare feature matrix from DataFrame.
+        Handles missing features by filling with 0.0.
+        """
+        # Check which features are missing
+        missing = [f for f in self.feature_cols if f not in df.columns]
+        if missing:
+            logger.warning(f"Missing {len(missing)} features, filling with 0: {missing[:5]}{'...' if len(missing)>5 else ''}")
+            for feat in missing:
+                df[feat] = 0.0
+
+        # Select features in correct order
+        X = df[self.feature_cols].values.astype(np.float64)
+
+        # Replace any NaN/inf
+        X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+
+        return X
 
     def predict(self, df):
         """
@@ -41,10 +63,10 @@ class EnsembleRanker:
         df: DataFrame with feature columns
         Returns: np.array of ensemble scores (higher = better)
         """
-        # Use only selected features, in correct order
-        X = df[self.feature_cols].values
+        X = self._prepare_features(df)
         X_s = self.scaler.transform(X)
 
+        # XGB and LGBM work with numpy arrays
         xgb_sc = self.xgb.predict(X_s)
         lgbm_sc = self.lgbm.predict(X_s)
 
@@ -52,7 +74,9 @@ class EnsembleRanker:
         lgbm_n = self._norm01(lgbm_sc)
 
         if self.cb is not None:
-            cb_sc = self.cb.predict(X_s)
+            # CatBoost needs DataFrame with column names
+            X_s_df = pd.DataFrame(X_s, columns=self.feature_cols)
+            cb_sc = self.cb.predict(X_s_df)
             cb_n = self._norm01(cb_sc)
             scores = self.weights[0] * xgb_n + self.weights[1] * lgbm_n + self.weights[2] * cb_n
         else:
@@ -63,7 +87,7 @@ class EnsembleRanker:
 
     def predict_individual(self, df):
         """Get individual model predictions (for agreement check)"""
-        X = df[self.feature_cols].values
+        X = self._prepare_features(df)
         X_s = self.scaler.transform(X)
 
         xgb_sc = self.xgb.predict(X_s)
@@ -75,7 +99,8 @@ class EnsembleRanker:
         }
 
         if self.cb is not None:
-            cb_sc = self.cb.predict(X_s)
+            X_s_df = pd.DataFrame(X_s, columns=self.feature_cols)
+            cb_sc = self.cb.predict(X_s_df)
             result['cb_top_idx'] = np.argmax(cb_sc)
         else:
             result['cb_top_idx'] = result['lgbm_top_idx']
