@@ -194,35 +194,55 @@ def _horse_selection_reasons(horse, leg, rank):
         return reasons
 
     # SHAP yoksa klasik feature'lardan yorum üret
-    if features.get('jockey_wr', 0) >= 0.20:
-        reasons.append(f"Jokey güçlü (%{features['jockey_wr']*100:.0f})")
+    # NOT: 0 = veri yok demek, kötü demek değil. Sadece gerçek veri varsa yorum yap.
 
-    if features.get('form_score', 0) >= 0.7:
-        reasons.append("Form yüksek")
-    elif features.get('form_score', 0) <= 0.2:
-        reasons.append("Form düşük ⚠️")
+    jwr = features.get('jockey_wr', 0)
+    if jwr > 0.01 and jwr >= 0.20:
+        reasons.append(f"Jokey güçlü (%{jwr*100:.0f})")
 
-    if features.get('trainer_wr', 0) >= 0.18:
-        reasons.append(f"Antrenör iyi (%{features['trainer_wr']*100:.0f})")
+    form = features.get('form_score')
+    if form is not None and form > 0.01:  # gerçek veri var
+        if form >= 0.7:
+            reasons.append("Form yüksek")
+        elif form <= 0.2:
+            reasons.append("Form düşük ⚠️")
+        elif form >= 0.4:
+            reasons.append("Form stabil")
 
-    if features.get('weight_advantage', 0) > 0:
+    twr = features.get('trainer_wr', 0)
+    if twr > 0.01 and twr >= 0.18:
+        reasons.append(f"Antrenör iyi (%{twr*100:.0f})")
+
+    wa = features.get('weight_advantage')
+    if wa is not None and wa > 0:
         reasons.append("Kilo avantajı")
 
-    if features.get('distance_fit', 0) >= 0.8:
+    df_ = features.get('distance_fit')
+    if df_ is not None and df_ > 0.01 and df_ >= 0.8:
         reasons.append("Mesafe uyumlu")
 
-    if features.get('track_fit', 0) >= 0.8:
+    tf = features.get('track_fit')
+    if tf is not None and tf > 0.01 and tf >= 0.8:
         reasons.append("Pist uyumlu")
 
     days = features.get('days_since_race')
-    if days is not None and days < 20:
+    if days is not None and days > 0 and days < 20:
         reasons.append("Taze (yakın koşu)")
     elif days is not None and days > 60:
         reasons.append("Uzun ara ⚠️")
 
     last = features.get('last_finish')
-    if last is not None and last <= 2:
+    if last is not None and last > 0 and last <= 2:
         reasons.append(f"Son koşu {int(last)}.")
+
+    # Hiç neden bulamadıysak, skor bazlı yorum
+    if not reasons:
+        if rank == 0 and leg['confidence'] > 0.3:
+            reasons.append("Ensemble skor farkı net")
+        elif rank == 0:
+            reasons.append("Skor farkı düşük, kesin favori yok")
+        elif rank <= 2:
+            reasons.append(f"Ensemble #{rank+1} sırada")
 
     return reasons[:3]  # Max 3 neden
 
