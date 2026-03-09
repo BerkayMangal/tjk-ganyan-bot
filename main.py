@@ -37,6 +37,7 @@ from scraper.tjk_program import (
 from engine.kupon import build_kupon
 from engine.rating import rate_sequence
 from engine.commentary import generate_commentary, generate_kupon_message
+from engine.retro import save_predictions, run_retro
 from bot.telegram_sender import (
     send_sync, send_daily_sync,
     format_daily_header, format_no_play_message,
@@ -119,6 +120,15 @@ def run_daily(target_date=None):
         commentary_text = generate_commentary(seq_info, legs, rating, dar, genis)
 
         altili_packages.append((kupon_text, commentary_text))
+
+        # Save predictions for retro
+        try:
+            save_predictions(
+                hippo, altili_no, dar, genis,
+                legs, rating, target_date
+            )
+        except Exception as e:
+            logger.warning(f"Prediction save failed: {e}")
 
         # Log summary
         logger.info(f"  {hippo} {altili_no}. altılı: {rating['stars']} — {rating['verdict']}")
@@ -213,8 +223,21 @@ def main():
             scheduler = BlockingScheduler(timezone='Europe/Istanbul')
             scheduler.add_job(run_daily, 'cron', hour=RUN_HOUR, minute=RUN_MINUTE)
 
+            # Retro: yarışlar bittikten sonra sonuç karşılaştırması
+            def run_retro_job():
+                logger.info("Running end-of-day retro...")
+                try:
+                    report = run_retro(date.today())
+                    send_sync(report)
+                    logger.info("Retro sent!")
+                except Exception as e:
+                    logger.error(f"Retro failed: {e}")
+
+            scheduler.add_job(run_retro_job, 'cron', hour=21, minute=0)
+
             logger.info(f"Scheduler started — TJK Bot V5 (AGF-First)")
             logger.info(f"  Tahmin: {RUN_HOUR:02d}:{RUN_MINUTE:02d} İstanbul")
+            logger.info(f"  Retro:  21:00 İstanbul")
             scheduler.start()
         else:
             target = datetime.strptime(sys.argv[1], '%Y-%m-%d').date()
