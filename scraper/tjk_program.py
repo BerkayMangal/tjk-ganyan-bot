@@ -121,19 +121,51 @@ def _parse_pdf(pdf_bytes, hipodrom_url, dt):
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             logger.info(f"PDF opened: {len(pdf.pages)} pages")
+
+            # Strategy: extract words with coordinates, split into left/right columns
             all_text = ""
             for page in pdf.pages:
-                t = page.extract_text()
-                if t:
-                    all_text += t + "\n"
+                width = page.width
+                mid_x = width / 2
+
+                words = page.extract_words(keep_blank_chars=True) or []
+                if not words:
+                    t = page.extract_text()
+                    if t:
+                        all_text += t + "\n"
+                    continue
+
+                # Group words by y-coordinate (same line)
+                from collections import defaultdict
+                lines_by_y = defaultdict(list)
+                for w in words:
+                    # Round y to group words on same line
+                    y_key = round(w['top'] / 4) * 4
+                    lines_by_y[y_key].append(w)
+
+                # Split into left and right columns
+                left_lines = []
+                right_lines = []
+
+                for y_key in sorted(lines_by_y.keys()):
+                    line_words = sorted(lines_by_y[y_key], key=lambda w: w['x0'])
+
+                    left_words = [w for w in line_words if w['x0'] < mid_x]
+                    right_words = [w for w in line_words if w['x0'] >= mid_x]
+
+                    if left_words:
+                        left_lines.append(" ".join(w['text'] for w in left_words))
+                    if right_words:
+                        right_lines.append(" ".join(w['text'] for w in right_words))
+
+                # Combine: left column first, then right column
+                all_text += "\n".join(left_lines) + "\n" + "\n".join(right_lines) + "\n"
 
             if not all_text.strip():
                 logger.warning("PDF text extraction returned empty")
                 return None
 
-            logger.info(f"Extracted {len(all_text)} chars from PDF")
-            # Debug: ilk 500 karakter logla
-            logger.debug(f"PDF text preview: {all_text[:500]}")
+            logger.info(f"Extracted {len(all_text)} chars from PDF (column-split)")
 
             races = _parse_races(all_text)
 
@@ -165,134 +197,108 @@ def _parse_races(text):
     """
     Gerçek TJK PDF formatını parse et.
 
-    Koşu başlığı pattern: "1.Koşu" veya "1. Koşu" (satır başı)
-    Sonraki satır: saat (14.00)
-    Sonraki: grup bilgisi (Maiden/DHÖ, 4 Yaşlı Araplar, 58.00 kg)
-    Sonraki: mesafe + pist + ikramiye (1300m. Kum İkramiye: ...)
-    Sonra: at satırları: 1(7) EMİRHAT KG DB SK GKR 4y 58 R.KETME ...
+    PDF çok sütunlu olabilir — pdfplumber satırları birleştirir.
+    Örn: "1. Koşu ... 5. Koşu ..." tek satırda.
+    Bu yüzden koşu başlıklarını full text'te bulup bölümlere ayırıyoruz.
     """
-    races = []
-    lines = text.split('\n')
+    # Step 1: Koşu başlıklarını full text'te bul
+    # "KoşuS." (footer) ve "Koşul" (tür adı) hariç
+    race_header_re = re.compile(r'(\d+)\s*\.\s*[Kk]o[şs]u(?!\s*S\.)(?!l)', re.IGNORECASE)
 
-    logger.info(f"Parsing {len(lines)} lines from PDF text")
+    matches = list(race_header_re.finditer(text))
 
-    # Koşu başlık pattern: "1.Koşu" veya "2. Koşu" veya "3.KOŞU" vs.
-    race_header_re = re.compile(r'(\d+)\s*\.\s*[Kk]o[şs]u', re.IGNORECASE)
+    logger.info(f"Found {len(matches)} race headers in {len(text)} chars")
+    for m in matches:
+        ctx = text[m.start():m.start()+50].replace('\n', ' ')
+        logger.info(f"  {int(m.group(1))}. Koşu at pos {m.start()}: '{ctx}'")
 
-    # Also try: "N. Koşu" inside longer lines, e.g. "blah 4.Koşu blah"
-    # And handle "KoşuS." footer line (skip it)
+    if not matches:
+        logger.warning("No race headers found!")
+        return []
 
-    # At satırı pattern
-    horse_line_re = re.compile(r'(\d{1,2})\s*\((\d{1,2})\)\s*')
+    # Step 2: Text'i koşu bölümlerine ayır
+    sections = []
+    for i, m in enumerate(matches):
+        start = m.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        sections.append((int(m.group(1)), text[start:end]))
 
-    # Saat pattern: "14.00" veya "14:00" (tek başına veya satır başında)
-    time_re = re.compile(r'^(\d{2})[.:]+(\d{2})\s*$')
-
-    # Debug: log any line containing "oşu" or "KOŞU"
-    for i, raw_line in enumerate(lines):
-        if 'oşu' in raw_line.lower() or 'kosu' in raw_line.lower():
-            logger.info(f"  Line {i}: {raw_line.strip()[:80]}")
-
-    # Mesafe pattern: "1300m" veya "1200m."
+    # Step 3: Her bölümü parse et
+    horse_line_re = re.compile(r'(\d{1,2})\s*\((\d{1,2})\)')
     dist_re = re.compile(r'(\d{3,4})\s*m[\.\s]')
-
-    # Pist pattern: "Kum" veya "Çim" veya "Sentetik" (mesafe satırında)
-    track_re = re.compile(r'(\d{3,4})\s*m[\.\s]+\s*(Kum|Çim|Sentetik|KUM|ÇİM|SENTETİK)', re.IGNORECASE)
-
-    # İkramiye pattern: "1.)545.000TL"
+    track_re = re.compile(r'(\d{3,4})\s*m[\.\s]+\s*(Kum|Çim|Sentetik)', re.IGNORECASE)
     prize_re = re.compile(r'1\.\)\s*([\d.]+)\s*TL')
+    time_re = re.compile(r'(?:^|\n)\s*(\d{2})[.:](\d{2})\s*(?:\n|$)')
+    group_keywords = ['Maiden', 'Handikap', 'ŞARTLI', 'KV-']
 
-    # Grup/tür satırı: "Maiden/DHÖ, 4 Yaşlı Araplar" veya "Handikap 15..."
-    group_re = re.compile(r'(Maiden|Handikap|ŞARTLI|KV|Kosul|Koşul|KoşuL)', re.IGNORECASE)
+    races = []
 
-    current_race = None
-    horse_lines_buf = []
-    state = 'scanning'  # scanning, header_found, collecting_info, collecting_horses
+    for kosu_no, section in sections:
+        race = {
+            'race_number': kosu_no,
+            'distance': 0,
+            'group_name': '',
+            'track_type': '',
+            'prize': 0,
+            'time': '',
+            'horses': [],
+        }
 
-    for i, raw_line in enumerate(lines):
-        line = raw_line.strip()
-        if not line:
-            continue
+        # Saat: koşu başlığından hemen sonraki satırda
+        tm = time_re.search(section)
+        if tm:
+            h, mn = int(tm.group(1)), int(tm.group(2))
+            if 10 <= h <= 22:
+                race['time'] = f"{h:02d}:{mn:02d}"
 
-        # --- Koşu başlığı mı? ---
-        hm = race_header_re.search(line)
-        if hm and 'KoşuS' not in line and 'Koşul' not in line:
-            # Önceki koşuyu kaydet
-            if current_race is not None:
-                current_race['horses'] = _parse_horse_lines(horse_lines_buf)
-                if current_race['horses']:
-                    races.append(current_race)
-                horse_lines_buf = []
+        # Mesafe
+        dm = dist_re.search(section)
+        if dm:
+            race['distance'] = int(dm.group(1))
 
-            kosu_no = int(hm.group(1))
-            current_race = {
-                'race_number': kosu_no,
-                'distance': 0,
-                'group_name': '',
-                'track_type': '',
-                'prize': 0,
-                'time': '',
-                'horses': [],
-            }
-            state = 'header_found'
-            continue
+        # Pist
+        trm = track_re.search(section)
+        if trm:
+            race['track_type'] = trm.group(2).capitalize()
 
-        if current_race is None:
-            continue
+        # İkramiye
+        pm = prize_re.search(section)
+        if pm:
+            try:
+                race['prize'] = float(pm.group(1).replace('.', ''))
+            except ValueError:
+                pass
 
-        # --- At satırı mı? ---
-        if horse_line_re.match(line):
-            horse_lines_buf.append(line)
-            state = 'collecting_horses'
-            continue
+        # Grup
+        for kw in group_keywords:
+            if kw.lower() in section.lower():
+                # İlgili satırı bul
+                for line in section.split('\n'):
+                    if kw.lower() in line.lower():
+                        race['group_name'] = line.strip()[:80]
+                        break
+                break
 
-        # --- Bahis bilgisi satırı (atla) ---
-        if 'GANYAN' in line or 'ÇİFTE' in line or 'PLASE' in line or 'BAHİS' in line:
-            continue
-
-        # --- Eküri bilgisi (atla) ---
-        if 'ekuridir' in line.lower():
-            continue
-
-        # --- Koşu bilgilerini topla ---
-        if state in ('header_found', 'collecting_info'):
-            state = 'collecting_info'
-
-            # Saat
-            tm = time_re.match(line)
-            if tm and not current_race['time']:
-                current_race['time'] = f"{tm.group(1)}:{tm.group(2)}"
+        # At satırları: section içinde numara(numara) pattern'i ara
+        horse_lines = []
+        for line in section.split('\n'):
+            line = line.strip()
+            if not line:
                 continue
+            if horse_line_re.match(line):
+                # Satırda başka koşu başlığı varsa kes
+                inner_race = race_header_re.search(line)
+                if inner_race and inner_race.start() > 10:
+                    line = line[:inner_race.start()].strip()
+                if line:
+                    horse_lines.append(line)
 
-            # Mesafe + Pist
-            dm = dist_re.search(line)
-            if dm and not current_race['distance']:
-                current_race['distance'] = int(dm.group(1))
+        race['horses'] = _parse_horse_lines(horse_lines)
 
-            trm = track_re.search(line)
-            if trm and not current_race['track_type']:
-                current_race['track_type'] = trm.group(2).capitalize()
-
-            # İkramiye
-            pm = prize_re.search(line)
-            if pm and not current_race['prize']:
-                prize_str = pm.group(1).replace('.', '')
-                try:
-                    current_race['prize'] = float(prize_str)
-                except ValueError:
-                    pass
-
-            # Grup/tür
-            gm = group_re.search(line)
-            if gm and not current_race['group_name']:
-                # Tüm satırı grup bilgisi olarak al
-                current_race['group_name'] = line.strip()
-
-    # Son koşuyu kaydet
-    if current_race is not None:
-        current_race['horses'] = _parse_horse_lines(horse_lines_buf)
-        if current_race['horses']:
-            races.append(current_race)
+        if race['horses']:
+            races.append(race)
+            logger.info(f"  {kosu_no}. Koşu: {len(race['horses'])} at, "
+                       f"{race['distance']}m {race['track_type']} {race['time']}")
 
     return races
 
