@@ -1,12 +1,17 @@
-"""Commentary Engine
-Generates strategic briefing + per-leg analysis in Turkish
+"""Commentary Engine V4
+Koşu bazlı detaylı yorum — at isimleri, neden seçildi, SHAP bazlı açıklama
+Kupon mesajından AYRI gönderilecek
 """
 import numpy as np
 
 
-def generate_briefing(sequence_info, legs, rating_info, dar_ticket, genis_ticket):
+# ═══════════════════════════════════════════════════════════
+# ANA BRIEFING — YORUM MESAJI (kupondan ayrı)
+# ═══════════════════════════════════════════════════════════
+
+def generate_commentary(sequence_info, legs, rating_info, dar_ticket, genis_ticket):
     """
-    Generate full altili ganyan briefing.
+    Detaylı yorum mesajı üret — kupondan AYRI gönderilecek.
 
     Returns: formatted string ready for Telegram
     """
@@ -14,53 +19,230 @@ def generate_briefing(sequence_info, legs, rating_info, dar_ticket, genis_ticket
     altili_no = sequence_info.get('altili_no', 1)
     date = sequence_info['date']
 
-    # Header
     hippo_short = hippo.replace(' Hipodromu', '').replace(' Hipodrom', '')
+
     lines = [
-        f"🏇 {hippo_short} {altili_no}. ALTILI — {date}",
-        f"{rating_info['stars']} RATING: {rating_info['verdict']}",
+        f"📝 {hippo_short} {altili_no}. ALTILI — DETAYLI YORUM",
+        f"📅 {date}",
+        f"{rating_info['stars']} GÜN RATING: {rating_info['verdict']}",
         "",
     ]
 
-    # Strategic overview
+    # Genel görünüm
     overview = _generate_overview(legs, rating_info)
-    lines.append("📋 GENEL GÖRÜNÜM:")
-    lines.append(overview)
+    lines.append(f"📋 {overview}")
     lines.append("")
 
-    # Per-leg analysis
-    lines.append("📊 AYAK ANALİZİ:")
+    # ── Koşu bazlı detaylı yorumlar ──
+    lines.append("─" * 35)
     for i, leg in enumerate(legs):
-        leg_comment = _analyze_leg(i + 1, leg)
-        lines.append(leg_comment)
-    lines.append("")
+        leg_lines = _detailed_leg_commentary(i + 1, leg)
+        lines.extend(leg_lines)
+        lines.append("")
 
-    # Surprise potential
+    # Sürpriz potansiyeli
+    lines.append("─" * 35)
     sp = _surprise_potential(legs)
     lines.append(f"💥 SÜRPRİZ POTANSİYELİ: {sp}")
     lines.append("")
 
-    # Tickets — her zaman ikisini de göster
-    lines.append(_format_ticket_summary(dar_ticket, "DAR"))
-    lines.append("")
-    lines.append(_format_ticket_summary(genis_ticket, "GENİŞ"))
-    lines.append("")
-
-    # Model opinion banner
+    # Model opinion
     opinion = _model_opinion(rating_info)
     lines.append(opinion)
     lines.append("")
 
-    # Rating reasons
-    lines.append("💡 MODEL NOTU:")
-    for reason in rating_info['reasons'][:3]:
-        lines.append(f"  • {reason}")
+    # Model notları
+    if rating_info.get('reasons'):
+        lines.append("💡 MODEL NOTU:")
+        for reason in rating_info['reasons'][:3]:
+            lines.append(f"  • {reason}")
 
     return "\n".join(lines)
 
 
+# ═══════════════════════════════════════════════════════════
+# KUPON MESAJI — KISA, NET (ayrı gönderilecek)
+# ═══════════════════════════════════════════════════════════
+
+def generate_kupon_message(sequence_info, dar_ticket, genis_ticket, rating_info):
+    """
+    Kupon mesajı — sadece seçimler, kısa ve net.
+    Telegram'da ayrı mesaj olarak gönderilecek.
+
+    Returns: formatted string
+    """
+    hippo = sequence_info['hippodrome']
+    altili_no = sequence_info.get('altili_no', 1)
+    date = sequence_info['date']
+
+    hippo_short = hippo.replace(' Hipodromu', '').replace(' Hipodrom', '')
+
+    lines = [
+        f"🏇 {hippo_short} {altili_no}. ALTILI — {date}",
+        f"{rating_info['stars']} {rating_info['verdict']}",
+        "",
+    ]
+
+    # DAR kupon
+    lines.append(_format_ticket_block(dar_ticket, "DAR"))
+    lines.append("")
+
+    # GENİŞ kupon
+    lines.append(_format_ticket_block(genis_ticket, "GENİŞ"))
+
+    return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════════════
+# DETAYLI AYAK YORUMU
+# ═══════════════════════════════════════════════════════════
+
+def _detailed_leg_commentary(leg_num, leg):
+    """
+    Tek ayak için detaylı yorum.
+    At isimleri, neden seçildi, SHAP feature'lar.
+    """
+    conf = leg['confidence']
+    n = leg['n_runners']
+    horses = leg['horses']  # [(name, score, number, ...), ...]
+    lines = []
+
+    # Ayak başlığı + sınıflandırma
+    leg_class, icon = _classify_leg(conf, n, leg)
+    race_type = leg.get('race_type', '')
+    distance = leg.get('distance', '')
+    breed = "Arap" if leg.get('is_arab') else ("İngiliz" if leg.get('is_english') else "")
+
+    header_parts = [f"{icon} {leg_num}. AYAK (K{leg.get('race_number', leg_num)})"]
+    if breed:
+        header_parts.append(breed)
+    if distance:
+        header_parts.append(f"{distance}m")
+    header_parts.append(f"— {n} at")
+    header_parts.append(f"[{leg_class}]")
+
+    lines.append(" ".join(header_parts))
+
+    # ── Top 3 at detayı ──
+    for rank, horse in enumerate(horses[:3]):
+        name = horse[0]
+        score = horse[1]
+        number = horse[2]
+
+        rank_icon = ["🥇", "🥈", "🥉"][rank]
+
+        # SHAP bazlı seçim nedenleri
+        reasons = _horse_selection_reasons(horse, leg, rank)
+        reason_str = " | ".join(reasons) if reasons else ""
+
+        lines.append(f"  {rank_icon} #{number} {name} ({score:.2f})")
+        if reason_str:
+            lines.append(f"      ↳ {reason_str}")
+
+    # ── Sürpriz at (varsa) ──
+    surprises = leg.get('surprise_horses', [])
+    if surprises:
+        for s in surprises[:1]:
+            s_name = s[0] if isinstance(s, tuple) else s.get('name', '?')
+            s_num = s[2] if isinstance(s, tuple) else s.get('number', '?')
+            s_reason = s[4] if isinstance(s, tuple) and len(s) > 4 else ''
+            lines.append(f"  💎 SÜRPRİZ: #{s_num} {s_name}")
+            if s_reason:
+                lines.append(f"      ↳ {s_reason}")
+
+    # ── Jokey bilgisi ──
+    jockey_wr = leg.get('top_jockey_wr', 0)
+    if jockey_wr >= 0.15:
+        jockey_name = leg.get('top_jockey_name', '')
+        lines.append(f"  🏇 Jokey {jockey_name}: %{jockey_wr*100:.0f} win rate")
+
+    # ── Model agreement ──
+    agreement = leg.get('model_agreement', 0)
+    if agreement >= 0.67:
+        lines.append(f"  ✅ Model hemfikir ({agreement*100:.0f}% uyum)")
+    elif agreement <= 0.33 and agreement > 0:
+        lines.append(f"  ⚠️ Modeller ayrışıyor ({agreement*100:.0f}% uyum)")
+
+    return lines
+
+
+def _horse_selection_reasons(horse, leg, rank):
+    """
+    Bir atın neden seçildiğini SHAP bazlı açıkla.
+    horse tuple: (name, score, number, feature_dict_or_None, ...)
+    """
+    reasons = []
+
+    # Feature dict varsa (horse[3] olarak geçer)
+    features = horse[3] if len(horse) > 3 and isinstance(horse[3], dict) else {}
+
+    if not features:
+        # Feature yoksa score-based basit yorum
+        if rank == 0 and leg['confidence'] > 0.3:
+            reasons.append("En yüksek skor, net favori")
+        elif rank == 0:
+            reasons.append("Birinci ama fark az")
+        return reasons
+
+    # ── SHAP tarzı feature açıklamaları ──
+    # En yüksek etkili feature'ları seç
+    shap_values = features.get('shap_top', [])
+    if shap_values:
+        for feat_name, feat_impact in shap_values[:2]:
+            direction = "↑" if feat_impact > 0 else "↓"
+            reasons.append(f"{feat_name} {direction}")
+        return reasons
+
+    # SHAP yoksa klasik feature'lardan yorum üret
+    if features.get('jockey_wr', 0) >= 0.20:
+        reasons.append(f"Jokey güçlü (%{features['jockey_wr']*100:.0f})")
+
+    if features.get('form_score', 0) >= 0.7:
+        reasons.append("Form yüksek")
+    elif features.get('form_score', 0) <= 0.2:
+        reasons.append("Form düşük ⚠️")
+
+    if features.get('trainer_wr', 0) >= 0.18:
+        reasons.append(f"Antrenör iyi (%{features['trainer_wr']*100:.0f})")
+
+    if features.get('weight_advantage', 0) > 0:
+        reasons.append("Kilo avantajı")
+
+    if features.get('distance_fit', 0) >= 0.8:
+        reasons.append("Mesafe uyumlu")
+
+    if features.get('track_fit', 0) >= 0.8:
+        reasons.append("Pist uyumlu")
+
+    if features.get('days_since_race', 0) and features['days_since_race'] < 20:
+        reasons.append("Taze (yakın koşu)")
+    elif features.get('days_since_race', 0) and features['days_since_race'] > 60:
+        reasons.append("Uzun ara ⚠️")
+
+    if features.get('last_finish', 0) <= 2:
+        reasons.append(f"Son koşu {features['last_finish']}.")
+
+    return reasons[:3]  # Max 3 neden
+
+
+def _classify_leg(conf, n_runners, leg):
+    """Ayağı sınıflandır"""
+    if conf > 0.4 and n_runners <= 8:
+        return "TEK POTANSİYEL", "🎯"
+    elif conf > 0.2:
+        return "GÜVENLİ", "🔒"
+    elif n_runners >= 10:
+        return "AÇIK YARIŞ", "⚠️"
+    else:
+        return "BELİRSİZ", "🔄"
+
+
+# ═══════════════════════════════════════════════════════════
+# YARDIMCI FONKSİYONLAR
+# ═══════════════════════════════════════════════════════════
+
 def _model_opinion(rating_info):
-    """Model görüşü banner'ı — her zaman gösterilir"""
+    """Model görüşü banner'ı"""
     r = rating_info['rating']
     score = rating_info['score']
 
@@ -77,20 +259,19 @@ def _model_opinion(rating_info):
     else:
         return (
             f"🔴 MODEL GÖRÜŞÜ: RİSKLİ — DİKKAT!\n"
-            f"   {rating_info['stars']} Skor: {score:.1f} — Model emin değil. Oynayacaksan küçük bütçeyle gir.\n"
-            f"   💰 Para biriktir derdim ama kuponlar yine aşağıda, sen bilirsin patron 😄"
+            f"   {rating_info['stars']} Skor: {score:.1f} — Model emin değil.\n"
+            f"   💰 Para biriktir derdim ama kuponlar yine geldi, sen bilirsin patron 😄"
         )
 
 
 def _generate_overview(legs, rating_info):
-    """Generate strategic overview paragraph"""
+    """Genel görünüm paragrafı"""
     n_runners = [l['n_runners'] for l in legs]
     avg_field = np.mean(n_runners)
     n_big_field = sum(1 for n in n_runners if n >= 10)
     n_small_field = sum(1 for n in n_runners if n <= 7)
     n_tek_candidate = sum(1 for l in legs if l['confidence'] > 0.3)
 
-    # Breed mix
     arab_count = sum(1 for l in legs if l.get('is_arab', False))
     eng_count = sum(1 for l in legs if l.get('is_english', False))
 
@@ -101,62 +282,23 @@ def _generate_overview(legs, rating_info):
     elif eng_count >= 4:
         parts.append(f"Ağırlıklı İngiliz dizisi ({eng_count}/6)")
     else:
-        parts.append(f"Karışık dizi ({arab_count} Arap, {eng_count} İngiliz)")
+        parts.append(f"Karışık dizi ({arab_count}A, {eng_count}İ)")
 
     if n_big_field >= 3:
         parts.append(f"{n_big_field} yarışta 10+ at — sürpriz riski yüksek")
     elif n_small_field >= 4:
-        parts.append(f"{n_small_field} yarışta 7 veya daha az at — kolay dizi")
+        parts.append(f"{n_small_field} yarışta ≤7 at — kolay dizi")
 
     if n_tek_candidate >= 3:
-        parts.append(f"Model {n_tek_candidate} ayakta çok emin — tek potansiyeli var")
+        parts.append(f"Model {n_tek_candidate} ayakta emin — tek potansiyeli var")
     elif n_tek_candidate <= 1:
-        parts.append(f"Model hiçbir yarışta tam emin değil — geniş oynamak lazım")
+        parts.append("Model hiçbir yarışta tam emin değil — geniş oyna")
 
     return " ".join(parts) + "."
 
 
-def _analyze_leg(leg_num, leg):
-    """Generate per-leg analysis"""
-    conf = leg['confidence']
-    n = leg['n_runners']
-    horses = leg['horses']  # list of (name, score, number, ...)
-
-    top_name = horses[0][0] if horses else '?'
-    top_num = horses[0][2] if horses else '?'
-
-    # Classify leg
-    if conf > 0.4 and n <= 8:
-        icon = "🎯"
-        comment = f"TEK POTANSİYEL — {top_num} ({top_name}) çok güçlü"
-        if leg.get('model_agreement', 0) >= 0.67:
-            comment += ", 3 model hemfikir"
-    elif conf > 0.2:
-        icon = "🔒"
-        comment = f"GÜVENLİ — Model net, 2 at yeter"
-    elif n >= 10:
-        icon = "⚠️"
-        comment = f"AÇIK YARIŞ — {n} at, sürpriz çıkabilir, 3-4+ at yazın"
-    else:
-        icon = "🔄"
-        comment = f"BELİRSİZ — Model emin değil, 2-3 at"
-
-    # Add jockey insight if notable
-    jockey_wr = leg.get('top_jockey_wr', 0)
-    if jockey_wr >= 0.20:
-        jockey_name = leg.get('top_jockey_name', '')
-        comment += f"\n     Jokey {jockey_name} son dönem %{jockey_wr*100:.0f} win rate"
-
-    # Form insight
-    form_top3 = leg.get('top_form_top3', 0)
-    if form_top3 >= 0.5:
-        comment += f"\n     Favori son 6 koşuda {form_top3*100:.0f}% ilk 3"
-
-    return f"  {icon} {leg_num}. Ayak: {comment}"
-
-
 def _surprise_potential(legs):
-    """Assess overall surprise potential"""
+    """Genel sürpriz potansiyeli"""
     n_open = sum(1 for l in legs if l['confidence'] < 0.15)
     n_big = sum(1 for l in legs if l['n_runners'] >= 10)
 
@@ -168,14 +310,26 @@ def _surprise_potential(legs):
         return "DÜŞÜK — Favori ağırlıklı gün"
 
 
-def _format_ticket_summary(ticket, label):
-    """Short ticket summary"""
-    lines = [f"{'📌' if label=='DAR' else '📋'} {label} KUPON ({ticket['cost']:,.0f} TL — {ticket['combo']:,} kombi):"]
+def _format_ticket_block(ticket, label):
+    """Kupon mesajı içindeki ticket bloğu"""
+    icon = '📌' if label == 'DAR' else '📋'
+    lines = [
+        f"{icon} {label} KUPON ({ticket['cost']:,.0f} TL — {ticket['combo']:,} kombi)",
+        f"🎯 Tutma: {ticket.get('hitrate_pct', '?')}",
+    ]
 
     for leg in ticket['legs']:
         nums = ",".join([str(h[2]) for h in leg['selected']])
+        names = ",".join([h[0][:10] for h in leg['selected']])
         tag = "TEK" if leg['is_tek'] else f"{leg['n_pick']}at"
-        icon = "🎯" if leg['is_tek'] else ("🔒" if leg['n_pick'] <= 2 else "⚠️")
-        lines.append(f"  {icon} {leg['leg_number']}.Ayak: [{nums}] ({tag})")
+
+        if leg['is_tek']:
+            li = f"  🎯 {leg['leg_number']}.Ayak: [{nums}] ({tag}) {names}"
+        elif leg['n_pick'] <= 2:
+            li = f"  🔒 {leg['leg_number']}.Ayak: [{nums}] ({tag}) {names}"
+        else:
+            li = f"  ⚠️ {leg['leg_number']}.Ayak: [{nums}] ({tag})"
+
+        lines.append(li)
 
     return "\n".join(lines)
