@@ -214,13 +214,15 @@ def _horse_selection_reasons(horse, leg, rank):
     if features.get('track_fit', 0) >= 0.8:
         reasons.append("Pist uyumlu")
 
-    if features.get('days_since_race', 0) and features['days_since_race'] < 20:
+    days = features.get('days_since_race')
+    if days is not None and days < 20:
         reasons.append("Taze (yakın koşu)")
-    elif features.get('days_since_race', 0) and features['days_since_race'] > 60:
+    elif days is not None and days > 60:
         reasons.append("Uzun ara ⚠️")
 
-    if features.get('last_finish', 0) <= 2:
-        reasons.append(f"Son koşu {features['last_finish']}.")
+    last = features.get('last_finish')
+    if last is not None and last <= 2:
+        reasons.append(f"Son koşu {int(last)}.")
 
     return reasons[:3]  # Max 3 neden
 
