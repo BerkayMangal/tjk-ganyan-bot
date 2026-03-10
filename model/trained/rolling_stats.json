@@ -1,1 +1,342 @@
+#!/usr/bin/env python3
+"""
+Rolling Stats Builder — races_30k.csv + taydex_horses.csv → rolling_stats.json
+================================================================================
+Colab'da BİR KERE çalıştır, çıkan JSON'u Railway'e koy.
+Model canlıda bu JSON'dan jokey/antrenör/sire/dam istatistiklerini okur.
+
+Kullanım (Colab):
+    1. races_30k.csv ve taydex_horses.csv yükle
+    2. Bu scripti çalıştır
+    3. rolling_stats.json indir
+    4. GitHub model/trained/ klasörüne koy
+"""
+import pandas as pd
+import numpy as np
+import json
+import os
+import re
+from collections import defaultdict
+
+print("=" * 60)
+print("  ROLLING STATS BUILDER")
+print("=" * 60)
+
+# ── Load data ──
+for path in ['races_30k.csv', '/content/races_30k.csv', './races_30k.csv']:
+    if os.path.exists(path):
+        df = pd.read_csv(path, low_memory=False); break
+else:
+    try:
+        from google.colab import files
+        print("Upload races_30k.csv:"); uploaded = files.upload()
+        df = pd.read_csv(list(uploaded.keys())[0], low_memory=False)
+    except:
+        raise FileNotFoundError("races_30k.csv not found!")
+
+for path in ['taydex_horses.csv', '/content/taydex_horses.csv', './taydex_horses.csv']:
+    if os.path.exists(path):
+        dh = pd.read_csv(path); break
+else:
+    try:
+        from google.colab import files
+        print("Upload taydex_horses.csv:"); uploaded = files.upload()
+        dh = pd.read_csv(list(uploaded.keys())[0])
+    except:
+        raise FileNotFoundError("taydex_horses.csv not found!")
+
+# Merge pedigree
+hcols = [c for c in ['name','sire_sire','sire_dam','dam_dam','dam','dam_sire',
+         'total_earnings','best_time','birth_date'] if c in dh.columns]
+df = df.merge(dh[hcols], left_on='horse_name', right_on='name',
+              how='left', suffixes=('','_h'))
+if 'total_earnings_h' in df.columns:
+    df['total_earnings'] = df['total_earnings'].fillna(df['total_earnings_h'])
+df['race_date'] = pd.to_datetime(df['race_date'])
+df = df.sort_values(['race_date','race_id','finish_position']).reset_index(drop=True)
+df = df[df['finish_position'].notna() & (df['finish_position'] > 0)].reset_index(drop=True)
+df['is_winner'] = (df['finish_position'] == 1).astype(int)
+df['is_top3'] = (df['finish_position'] <= 3).astype(int)
+
+print(f"  Races: {len(df):,} | Winners: {df['is_winner'].sum():,}")
+
+stats = {}
+
+# ═══════════════════════════════════════════════════════════
+# JOCKEY STATS
+# ═══════════════════════════════════════════════════════════
+print("  Building jockey stats...")
+jockey_stats = {}
+for j, grp in df.groupby('jockey_name'):
+    if pd.isna(j): continue
+    n = len(grp)
+    if n < 10: continue
+    jockey_stats[j] = {
+        'win_rate': float(grp['is_winner'].mean()),
+        'top3_rate': float(grp['is_top3'].mean()),
+        'experience': int(n),
+    }
+stats['jockey'] = jockey_stats
+print(f"    {len(jockey_stats)} jockeys (min 10 rides)")
+
+# ═══════════════════════════════════════════════════════════
+# TRAINER STATS
+# ═══════════════════════════════════════════════════════════
+print("  Building trainer stats...")
+trainer_stats = {}
+for t, grp in df.groupby('trainer_name'):
+    if pd.isna(t): continue
+    n = len(grp)
+    if n < 10: continue
+    trainer_stats[t] = {
+        'win_rate': float(grp['is_winner'].mean()),
+        'experience': int(n),
+    }
+stats['trainer'] = trainer_stats
+print(f"    {len(trainer_stats)} trainers")
+
+# ═══════════════════════════════════════════════════════════
+# JOCKEY-TRAINER COMBO
+# ═══════════════════════════════════════════════════════════
+print("  Building jockey-trainer combo stats...")
+jt_stats = {}
+for (j, t), grp in df.groupby(['jockey_name', 'trainer_name']):
+    if pd.isna(j) or pd.isna(t): continue
+    n = len(grp)
+    if n < 5: continue
+    key = f"{j}||{t}"
+    jt_stats[key] = {
+        'win_rate': float(grp['is_winner'].mean()),
+        'rides': int(n),
+    }
+stats['jockey_trainer'] = jt_stats
+print(f"    {len(jt_stats)} combos")
+
+# ═══════════════════════════════════════════════════════════
+# SIRE / DAM_SIRE / SIRE_SIRE STATS
+# ═══════════════════════════════════════════════════════════
+for col_name, label, min_n in [('sire','sire',5), ('dam_sire','dam_sire',5), ('sire_sire','sire_sire',5)]:
+    if col_name not in df.columns: continue
+    print(f"  Building {label} stats...")
+    d = {}
+    for v, grp in df.groupby(col_name):
+        if pd.isna(v): continue
+        n = len(grp)
+        if n < min_n: continue
+        d[v] = {
+            'win_rate': float(grp['is_winner'].mean()),
+            'top3_rate': float(grp['is_top3'].mean()),
+            'runners': int(n),
+        }
+    stats[label] = d
+    print(f"    {len(d)} {label}s")
+
+# ═══════════════════════════════════════════════════════════
+# DAM PRODUCE (anne performansı)
+# ═══════════════════════════════════════════════════════════
+print("  Building dam produce stats...")
+horse_dam = {}
+for idx in df.index:
+    hn = df.loc[idx, 'horse_name']
+    dm = df.loc[idx, 'dam'] if 'dam' in df.columns else None
+    if pd.notna(hn) and pd.notna(dm):
+        horse_dam[hn] = dm
+
+dam_stats_d = defaultdict(lambda: {'wins': 0, 'races': 0, 'top3': 0, 'best_earn': 0})
+for idx in df.index:
+    hn = df.loc[idx, 'horse_name']
+    dm = horse_dam.get(hn)
+    if not dm: continue
+    ds = dam_stats_d[dm]
+    ds['races'] += 1
+    if df.loc[idx, 'is_winner'] == 1: ds['wins'] += 1
+    if df.loc[idx, 'finish_position'] <= 3: ds['top3'] += 1
+    earn = df.loc[idx, 'total_earnings']
+    if pd.notna(earn) and earn > ds['best_earn']:
+        ds['best_earn'] = float(earn)
+
+dam_produce = {}
+dam_offspring_count = defaultdict(set)
+for hn, dm in horse_dam.items():
+    dam_offspring_count[dm].add(hn)
+
+for dm, ds in dam_stats_d.items():
+    if ds['races'] < 5: continue
+    dam_produce[dm] = {
+        'win_rate': ds['wins'] / ds['races'],
+        'top3_rate': ds['top3'] / ds['races'],
+        'n_offspring': len(dam_offspring_count.get(dm, set())),
+        'best_earner': ds['best_earn'],
+    }
+stats['dam_produce'] = dam_produce
+print(f"    {len(dam_produce)} dams")
+
+# ═══════════════════════════════════════════════════════════
+# GRANDDAM (dam_dam) FAMILY
+# ═══════════════════════════════════════════════════════════
+print("  Building granddam stats...")
+horse_damdam = {}
+if 'dam_dam' in df.columns:
+    for idx in df.index:
+        hn = df.loc[idx, 'horse_name']
+        dd = df.loc[idx, 'dam_dam']
+        if pd.notna(hn) and pd.notna(dd):
+            horse_damdam[hn] = dd
+
+dd_stats = defaultdict(lambda: {'wins': 0, 'races': 0})
+for idx in df.index:
+    hn = df.loc[idx, 'horse_name']
+    dd = horse_damdam.get(hn)
+    if not dd: continue
+    dd_stats[dd]['races'] += 1
+    if df.loc[idx, 'is_winner'] == 1: dd_stats[dd]['wins'] += 1
+
+damdam_stats = {}
+for dd, ds in dd_stats.items():
+    if ds['races'] < 10: continue
+    damdam_stats[dd] = {'win_rate': ds['wins'] / ds['races']}
+stats['damdam'] = damdam_stats
+print(f"    {len(damdam_stats)} granddams")
+
+# ═══════════════════════════════════════════════════════════
+# SIBLING (aynı anneden kardeşler)
+# ═══════════════════════════════════════════════════════════
+print("  Building sibling stats...")
+sib_stats = defaultdict(lambda: {'wins': 0, 'races': 0, 'top3': 0})
+for idx in df.index:
+    hn = df.loc[idx, 'horse_name']
+    dm = horse_dam.get(hn)
+    if not dm: continue
+    sib_stats[dm]['races'] += 1
+    if df.loc[idx, 'is_winner'] == 1: sib_stats[dm]['wins'] += 1
+    if df.loc[idx, 'finish_position'] <= 3: sib_stats[dm]['top3'] += 1
+
+sibling_out = {}
+for dm, ss in sib_stats.items():
+    if ss['races'] < 5: continue
+    wr = ss['wins'] / ss['races']
+    sibling_out[dm] = {
+        'win_rate': wr,
+        'top3_rate': ss['top3'] / ss['races'],
+        'has_star': wr >= 0.20,
+    }
+stats['sibling'] = sibling_out
+print(f"    {len(sibling_out)} dam families")
+
+# ═══════════════════════════════════════════════════════════
+# HIPPODROME ENCODING
+# ═══════════════════════════════════════════════════════════
+print("  Building hippodrome encoding...")
+hippo_list = sorted(df['hippodrome_name'].dropna().unique())
+stats['hippodrome_encoding'] = {h: i / max(len(hippo_list) - 1, 1) for i, h in enumerate(hippo_list)}
+print(f"    {len(hippo_list)} hippodromes")
+
+# ═══════════════════════════════════════════════════════════
+# HORSE → DAM MAPPING (for live lookup)
+# ═══════════════════════════════════════════════════════════
+stats['horse_dam'] = {k: v for k, v in horse_dam.items()}
+stats['horse_damdam'] = {k: v for k, v in horse_damdam.items()}
+
+# ═══════════════════════════════════════════════════════════
+# RACE SURPRISE PROFILES
+# ═══════════════════════════════════════════════════════════
+print("  Building race surprise profiles...")
+race_profiles = defaultdict(lambda: {'fav_wins': 0, 'total': 0})
+race_ids_done = set()
+for idx in df.index:
+    rid = df.loc[idx, 'race_id']
+    if rid in race_ids_done: continue
+    race_ids_done.add(rid)
+    rd = df[df['race_id'] == rid]
+    fs = len(rd)
+    fs_bucket = 'small' if fs <= 7 else ('medium' if fs <= 11 else 'large')
+    is_arab = int(rd['group_name'].str.contains('Arap', case=False, na=False).any())
+    track = rd['track_type'].iloc[0] if len(rd) > 0 else 'dirt'
+    hippo = rd['hippodrome_name'].iloc[0] if len(rd) > 0 else 'UNK'
+    key = f"{fs_bucket}|{is_arab}|{track}|{hippo}"
+    race_profiles[key]['total'] += 1
+    fav_row = rd.loc[rd['final_odds'].idxmin()] if rd['final_odds'].sum() > 0 else None
+    if fav_row is not None and fav_row['is_winner'] == 1:
+        race_profiles[key]['fav_wins'] += 1
+
+surprise_profiles = {}
+for key, rp in race_profiles.items():
+    if rp['total'] >= 5:
+        surprise_profiles[key] = {
+            'fav_win_rate': rp['fav_wins'] / rp['total'],
+            'surprise_rate': 1.0 - rp['fav_wins'] / rp['total'],
+            'total': rp['total'],
+        }
+stats['race_surprise'] = surprise_profiles
+print(f"    {len(surprise_profiles)} profiles")
+
+# ═══════════════════════════════════════════════════════════
+# UPSET RATE per hippodrome (for f_upset_rate)
+# ═══════════════════════════════════════════════════════════
+print("  Building upset rates...")
+upset_rates = {}
+for hippo, grp in df.groupby('hippodrome_name'):
+    if pd.isna(hippo): continue
+    # Race bazında: favori kazandı mı?
+    rids = grp['race_id'].unique()
+    fav_wins = 0
+    for rid in rids:
+        rd = grp[grp['race_id'] == rid]
+        if len(rd) < 2: continue
+        fav = rd.loc[rd['final_odds'].idxmin()]
+        if fav['is_winner'] == 1: fav_wins += 1
+    if len(rids) > 0:
+        upset_rates[hippo] = 1.0 - fav_wins / len(rids)
+stats['upset_rate'] = upset_rates
+print(f"    {len(upset_rates)} hippodromes")
+
+# ═══════════════════════════════════════════════════════════
+# GLOBAL STATS (normalization references)
+# ═══════════════════════════════════════════════════════════
+stats['global'] = {
+    'weight_min': float(df['weight'].min()),
+    'weight_max': float(df['weight'].max()),
+    'distance_min': float(df['distance'].min()),
+    'distance_max': float(df['distance'].max()),
+    'handicap_min': float(df['handicap'].min()),
+    'handicap_max': float(df['handicap'].max()),
+    'gate_min': float(df['gate_number'].min()),
+    'gate_max': float(df['gate_number'].max()),
+    'extra_weight_min': float(df['extra_weight'].min()),
+    'extra_weight_max': float(df['extra_weight'].max()),
+    'earnings_max': float(df['total_earnings'].max()),
+    'kgs_max': 200.0,
+    'prize_max': float(df['first_prize'].max()),
+    'total_races': len(df),
+    'last_date': str(df['race_date'].max().date()),
+}
+
+# ═══════════════════════════════════════════════════════════
+# SAVE
+# ═══════════════════════════════════════════════════════════
+output_path = 'rolling_stats.json'
+with open(output_path, 'w', encoding='utf-8') as f:
+    json.dump(stats, f, ensure_ascii=False, default=str)
+
+fsize = os.path.getsize(output_path)
+print(f"\n  ✅ Saved: {output_path} ({fsize/1024:.0f} KB)")
+print(f"  Keys: {list(stats.keys())}")
+print(f"  Jockeys: {len(stats['jockey'])}")
+print(f"  Trainers: {len(stats['trainer'])}")
+print(f"  Sires: {len(stats.get('sire', {}))}")
+print(f"  Dam produce: {len(stats['dam_produce'])}")
+print(f"  Siblings: {len(stats['sibling'])}")
+print(f"  Last date: {stats['global']['last_date']}")
+
+try:
+    from google.colab import files
+    files.download(output_path)
+    print(f"\n  📥 {output_path} downloading...")
+except:
+    print(f"\n  💡 Download {output_path} manually")
+
+print("\n  Sonraki adımlar:")
+print("  1. rolling_stats.json indir")
+print("  2. GitHub model/trained/ klasörüne koy")
+print("  3. Railway otomatik redeploy edecek")
 
