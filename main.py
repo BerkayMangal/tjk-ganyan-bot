@@ -1,24 +1,15 @@
 """
-TJK 6'lı Ganyan Bot V5 — AGF-First Pipeline
-==============================================
-V5 farkları:
-  - AGF = PRIMARY data source (altılı keşfi + at sıralama)
-  - PDF = SECONDARY (at ismi, jokey, kilo, form, mesafe detayları)
-  - Şanlıurfa gibi PDF'siz hipodromlar destekleniyor
-  - Kupon motoru AGF yüzdelerine göre çalışıyor
-  - Commentary AGF bazlı ("Piyasa %50 favori görüyor")
-
-Daily flow:
-  1. AGF'den altılı keşfi (agftablosu.com)
+TJK 6'lı Ganyan Bot V5.1 — Model Entegreli Pipeline
+======================================================
+Flow:
+  1. AGF'den altılı keşfi + market data
   2. PDF'ten detay zenginleştirme (varsa)
-  3. AGF yüzdelerine göre kupon üretimi
-  4. AGF bazlı commentary
-  5. Telegram gönderim
-
-Usage:
-  python main.py              # Run for today
-  python main.py 2026-03-09   # Run for specific date
-  python main.py --schedule   # Run on daily schedule
+  3. 82 feature build (AGF + PDF + rolling_stats)
+  4. 3-ensemble model predict (XGB + LGBM + CB)
+  5. Rating + sürpriz filtre ("2+ yıldız & 0 sürpriz" = oyna)
+  6. Model sıralamasına göre kupon üret (DAR + GENİŞ)
+  7. Model vs market commentary
+  8. Telegram gönder
 """
 import sys
 import logging
@@ -26,14 +17,11 @@ from datetime import datetime, date
 import numpy as np
 
 from scraper.agf_scraper import (
-    get_todays_agf,
-    agf_to_legs,
-    enrich_legs_from_pdf,
+    get_todays_agf, agf_to_legs, enrich_legs_from_pdf,
 )
-from scraper.tjk_program import (
-    get_todays_races as get_pdf_races,
-    identify_altili_sequences as pdf_identify_altili,
-)
+from scraper.tjk_program import get_todays_races as get_pdf_races
+from model.ensemble import EnsembleRanker
+from model.features import FeatureBuilder
 from engine.kupon import build_kupon
 from engine.rating import rate_sequence
 from engine.commentary import generate_commentary, generate_kupon_message
@@ -51,167 +39,217 @@ logger = logging.getLogger(__name__)
 
 
 def run_daily(target_date=None):
-    """Main daily run: AGF → PDF enrich → kupon → send"""
-
     if target_date is None:
         target_date = date.today()
 
     date_str = target_date.strftime('%d.%m.%Y')
-    logger.info(f"=== TJK Bot V5 (AGF-First) — {date_str} ===")
+    logger.info(f"=== TJK Bot V5.1 (Model Entegreli) — {date_str} ===")
 
-    # ── 1. AGF FETCH (PRIMARY) ──
-    logger.info("Step 1: Fetching AGF data from agftablosu.com...")
+    # ── 1. LOAD MODEL ──
+    logger.info("Step 1: Loading model...")
+    model = EnsembleRanker()
+    model_ok = model.load()
+    fb = FeatureBuilder()
+    fb_ok = fb.load()
+
+    if model_ok and fb_ok:
+        logger.info("Model + features ready")
+    else:
+        logger.warning("Model yüklenemedi — AGF-only fallback")
+
+    # ── 2. AGF ──
+    logger.info("Step 2: Fetching AGF...")
     agf_altilis = get_todays_agf(target_date)
-
     if not agf_altilis:
-        logger.warning("No AGF data found!")
         send_sync(format_no_play_message(date_str))
         return
+    logger.info(f"AGF: {len(agf_altilis)} altılı")
 
-    logger.info(f"AGF: {len(agf_altilis)} Türkiye altılısı bulundu")
-    for a in agf_altilis:
-        logger.info(f"  {a['hippodrome']} {a['altili_no']}. altılı ({a['time']})")
-
-    # ── 2. PDF FETCH (SECONDARY — detay zenginleştirme) ──
-    logger.info("Step 2: Fetching PDF data for enrichment...")
+    # ── 3. PDF ──
+    logger.info("Step 3: Fetching PDF...")
     pdf_hippodromes = _fetch_pdf_data(target_date)
 
-    # ── 3. PROCESS EACH ALTILI ──
+    # ── 4. PROCESS ──
     altili_packages = []
+    skipped = 0
 
     for agf_alt in agf_altilis:
         hippo = agf_alt['hippodrome']
         altili_no = agf_alt['altili_no']
-
         logger.info(f"Processing {hippo} {altili_no}. altılı...")
 
-        # AGF → leg format
-        legs = agf_to_legs(agf_alt)
-
-        # PDF ile zenginleştir (varsa)
+        agf_legs = agf_to_legs(agf_alt)
         pdf_races = _match_pdf_races(hippo, altili_no, pdf_hippodromes)
         if pdf_races:
-            legs = enrich_legs_from_pdf(legs, pdf_races)
-            logger.info(f"  PDF enrichment: {len(pdf_races)} races matched")
-        else:
-            logger.info(f"  No PDF data for {hippo} — AGF-only mode")
+            agf_legs = enrich_legs_from_pdf(agf_legs, pdf_races)
 
-        # Rate sequence
+        # Model predict
+        if model_ok and fb_ok:
+            legs = _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date)
+        else:
+            legs = agf_legs
+
+        # Rating
         arab_count = sum(1 for l in legs if l.get('is_arab', False))
-        breed = 'arab' if arab_count >= 4 else (
-            'english' if arab_count <= 2 else 'mixed'
-        )
+        breed = 'arab' if arab_count >= 4 else ('english' if arab_count <= 2 else 'mixed')
         rating = rate_sequence(legs, breed)
 
-        # Build kupons
+        # Sürpriz sayısı
+        n_surprise = sum(1 for l in legs
+                         if l.get('agf_data') and l['agf_data'][0]['agf_pct'] < 20)
+
+        # ── FİLTRE: 1 yıldız → pas geç ──
+        if rating['rating'] < 2:
+            logger.info(f"  ⭐ SKIP — {rating['verdict']}")
+            skipped += 1
+            skip_msg = (
+                f"🏇 {hippo.replace(' Hipodromu','')} {altili_no}. Altılı — {date_str}\n"
+                f"⭐ {rating['verdict']}\n"
+                f"⏭️ Model bu altılıyı pas geçiyor."
+            )
+            altili_packages.append((skip_msg, None))
+            continue
+
+        # Kuponlar
         dar = build_kupon(legs, hippo, mode='dar')
         genis = build_kupon(legs, hippo, mode='genis')
 
-        # Sequence info
         seq_info = {
-            'hippodrome': hippo,
-            'altili_no': altili_no,
-            'date': date_str,
-            'time': agf_alt.get('time', ''),
+            'hippodrome': hippo, 'altili_no': altili_no,
+            'date': date_str, 'time': agf_alt.get('time', ''),
+            'n_surprise': n_surprise,
         }
 
-        # Generate messages
         kupon_text = generate_kupon_message(seq_info, dar, genis, rating)
         commentary_text = generate_commentary(seq_info, legs, rating, dar, genis)
-
         altili_packages.append((kupon_text, commentary_text))
 
-        # Save predictions for retro
         try:
-            save_predictions(
-                hippo, altili_no, dar, genis,
-                legs, rating, target_date
-            )
+            save_predictions(hippo, altili_no, dar, genis, legs, rating, target_date)
         except Exception as e:
-            logger.warning(f"Prediction save failed: {e}")
+            logger.warning(f"Retro save failed: {e}")
 
-        # Log summary
-        logger.info(f"  {hippo} {altili_no}. altılı: {rating['stars']} — {rating['verdict']}")
-        logger.info(f"  DAR: {dar['cost']:.0f} TL ({dar['combo']} kombi, hit: {dar['hitrate_pct']})")
-        logger.info(f"  GENİŞ: {genis['cost']:.0f} TL ({genis['combo']} kombi, hit: {genis['hitrate_pct']})")
+        logger.info(f"  {rating['stars']} DAR: {dar['cost']:.0f} TL | GENİŞ: {genis['cost']:.0f} TL")
 
-    # ── 4. SEND TO TELEGRAM ──
+    # ── 5. SEND ──
     n_hippo = len(set(a['hippodrome'] for a in agf_altilis))
-    daily_header = format_daily_header(date_str, n_hippo, len(agf_altilis))
-
-    logger.info(f"Sending {len(altili_packages)} altili packages to Telegram...")
-    send_daily_sync(daily_header, altili_packages)
+    header = format_daily_header(date_str, n_hippo, len(agf_altilis))
+    if skipped:
+        header += f"\n⏭️ {skipped} altılı pas geçildi (1 yıldız)"
+    send_daily_sync(header, altili_packages)
     logger.info("Done! ✓")
 
 
+def _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date):
+    """Her ayak için 82 feature build + 3-ensemble predict."""
+    new_legs = []
+
+    for i, leg in enumerate(agf_legs):
+        agf_data = leg.get('agf_data', [])
+
+        # Horse dicts for feature builder
+        horses_input = []
+        for name, score, number, feat_dict in leg['horses']:
+            horses_input.append({
+                'horse_name': name if not name.startswith('#') else f'At_{number}',
+                'horse_number': number,
+                'weight': feat_dict.get('weight', 57),
+                'age': feat_dict.get('age', 4),
+                'age_text': feat_dict.get('age_text', '4y a e'),
+                'jockey_name': feat_dict.get('jockey', ''),
+                'trainer_name': feat_dict.get('trainer', ''),
+                'form': feat_dict.get('form', ''),
+                'last_20_score': feat_dict.get('last_20_score', 10),
+                'equipment': feat_dict.get('equipment', ''),
+                'handicap': feat_dict.get('handicap', 60),
+                'gate_number': feat_dict.get('gate_number', number),
+                'extra_weight': feat_dict.get('extra_weight', 0),
+                'kgs': feat_dict.get('kgs', 30),
+                'sire': feat_dict.get('sire', ''),
+                'dam': feat_dict.get('dam', ''),
+                'dam_sire': feat_dict.get('dam_sire', ''),
+                'sire_sire': feat_dict.get('sire_sire', ''),
+                'dam_dam': feat_dict.get('dam_dam', ''),
+                'total_earnings': feat_dict.get('total_earnings', 0),
+            })
+
+        if len(horses_input) < 2:
+            new_legs.append(leg)
+            continue
+
+        race_info = {
+            'distance': leg.get('distance', 1400),
+            'track_type': leg.get('track_type', 'dirt'),
+            'group_name': leg.get('group_name', ''),
+            'hippodrome_name': hippo,
+            'first_prize': leg.get('first_prize', 100000),
+            'temperature': leg.get('temperature', 15),
+            'humidity': leg.get('humidity', 60),
+            'race_date': str(target_date),
+        }
+
+        try:
+            matrix, names = fb.build_race_features(horses_input, race_info, agf_data)
+            scores = model.predict(matrix)
+
+            # Model agreement
+            indiv = model.predict_individual(matrix)
+            top_set = set()
+            for key in ['xgb_top_idx', 'lgbm_top_idx', 'cb_top_idx']:
+                if key in indiv:
+                    top_set.add(names[indiv[key]])
+            agree = 1.0 if len(top_set) == 1 else (0.67 if len(top_set) == 2 else 0.33)
+
+            # Rebuild horses sorted by MODEL score
+            horse_tuples = []
+            for j, (name, _, number, feat_dict) in enumerate(leg['horses']):
+                if j < len(scores):
+                    feat_dict['model_score'] = float(scores[j])
+                    real_name = names[j] if j < len(names) else name
+                    horse_tuples.append((real_name, float(scores[j]), number, feat_dict))
+                else:
+                    horse_tuples.append((name, 0.0, number, feat_dict))
+
+            horse_tuples.sort(key=lambda x: -x[1])
+            conf = horse_tuples[0][1] - horse_tuples[1][1] if len(horse_tuples) >= 2 else 0
+
+            updated = dict(leg)
+            updated['horses'] = horse_tuples
+            updated['confidence'] = conf
+            updated['model_agreement'] = agree
+            updated['has_model'] = True
+            new_legs.append(updated)
+
+        except Exception as e:
+            logger.warning(f"  Leg {i+1} model failed: {e}")
+            new_legs.append(leg)
+
+    return new_legs
+
+
 def _fetch_pdf_data(target_date):
-    """
-    PDF verisini çek — hata olursa boş döndür, pipeline durmaz.
-    Returns: list of hippodrome dicts (PDF formatı)
-    """
     try:
-        hippodromes = get_pdf_races(target_date)
-        if hippodromes:
-            logger.info(f"PDF: {len(hippodromes)} hipodrom bulundu")
-            for h in hippodromes:
-                n_races = len(h.get('races', []))
-                n_horses = sum(len(r.get('horses', [])) for r in h.get('races', []))
-                logger.info(f"  {h['hippodrome']}: {n_races} koşu, {n_horses} at")
-        return hippodromes or []
+        return get_pdf_races(target_date) or []
     except Exception as e:
-        logger.warning(f"PDF fetch failed (non-fatal): {e}")
+        logger.warning(f"PDF failed: {e}")
         return []
 
 
 def _match_pdf_races(hippo_name, altili_no, pdf_hippodromes):
-    """
-    AGF altılısı ile eşleşen PDF koşularını bul.
-
-    AGF hipodrom adı: "Bursa Hipodromu"
-    PDF hipodrom adı: "Bursa Hipodromu" (veya "Bursa Osmangazi Hipodromu")
-
-    Returns: list of 6 race dicts (PDF formatı) or None
-    """
     if not pdf_hippodromes:
         return None
-
-    # Hipodrom adı eşleştirme (fuzzy)
-    hippo_lower = hippo_name.lower().replace(' hipodromu', '').replace(' hipodrom', '')
-
-    matched_hippo = None
+    hippo_lower = hippo_name.lower().replace(' hipodromu', '')
     for ph in pdf_hippodromes:
-        ph_lower = ph['hippodrome'].lower().replace(' hipodromu', '').replace(' hipodrom', '')
-        # "bursa" in "bursa osmangazi" → match
+        ph_lower = ph['hippodrome'].lower().replace(' hipodromu', '')
         if hippo_lower in ph_lower or ph_lower in hippo_lower:
-            matched_hippo = ph
-            break
-
-    if not matched_hippo:
-        return None
-
-    races = matched_hippo.get('races', [])
-    if len(races) < 6:
-        return None
-
-    # Altılı koşuları seç
-    # 1. altılı = son 6 koşu (veya ilk 6 koşu, duruma göre)
-    # 2. altılı = varsa önceki 6 koşu
-    # TJK'da genelde: 1. altılı = koşu 1-6, 2. altılı = koşu 3-8 veya son 6
-    if altili_no == 1:
-        # İlk altılı — eğer 12+ koşu varsa ilk 6, yoksa son 6
-        if len(races) >= 12:
-            return races[:6]
-        else:
-            return races[-6:]
-    elif altili_no == 2:
-        # İkinci altılı — varsa koşu 7-12 veya son 6
-        if len(races) >= 12:
-            return races[6:12]
-        elif len(races) >= 8:
-            return races[-6:]
-    
-    # Fallback
-    return races[-6:] if len(races) >= 6 else None
+            races = ph.get('races', [])
+            if len(races) < 6:
+                return None
+            if altili_no == 1:
+                return races[-6:] if len(races) < 12 else races[:6]
+            elif altili_no == 2:
+                return races[6:12] if len(races) >= 12 else races[-6:]
+    return None
 
 
 def main():
@@ -219,32 +257,20 @@ def main():
         if sys.argv[1] == '--schedule':
             from apscheduler.schedulers.blocking import BlockingScheduler
             from config import RUN_HOUR, RUN_MINUTE
-
             scheduler = BlockingScheduler(timezone='Europe/Istanbul')
             scheduler.add_job(run_daily, 'cron', hour=RUN_HOUR, minute=RUN_MINUTE)
-
-            # Retro: yarışlar bittikten sonra sonuç karşılaştırması
-            def run_retro_job():
-                logger.info("Running end-of-day retro...")
+            def retro_job():
                 try:
-                    report = run_retro(date.today())
-                    send_sync(report)
-                    logger.info("Retro sent!")
+                    send_sync(run_retro(date.today()))
                 except Exception as e:
                     logger.error(f"Retro failed: {e}")
-
-            scheduler.add_job(run_retro_job, 'cron', hour=21, minute=0)
-
-            logger.info(f"Scheduler started — TJK Bot V5 (AGF-First)")
-            logger.info(f"  Tahmin: {RUN_HOUR:02d}:{RUN_MINUTE:02d} İstanbul")
-            logger.info(f"  Retro:  21:00 İstanbul")
+            scheduler.add_job(retro_job, 'cron', hour=21, minute=0)
+            logger.info(f"Scheduler: tahmin {RUN_HOUR:02d}:{RUN_MINUTE:02d}, retro 21:00")
             scheduler.start()
         else:
-            target = datetime.strptime(sys.argv[1], '%Y-%m-%d').date()
-            run_daily(target)
+            run_daily(datetime.strptime(sys.argv[1], '%Y-%m-%d').date())
     else:
         run_daily()
-
 
 if __name__ == '__main__':
     main()
