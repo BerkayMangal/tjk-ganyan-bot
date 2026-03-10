@@ -122,56 +122,40 @@ def _parse_pdf(pdf_bytes, hipodrom_url, dt):
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             logger.info(f"PDF opened: {len(pdf.pages)} pages")
 
-            # Strategy: extract words with coordinates, split into left/right columns
-            all_text = ""
+            # Strategy 1: extract words with coordinates, split into left/right columns
+            col_text = _extract_column_split(pdf)
+
+            # Strategy 2: simple extract_text as fallback
+            simple_text = ""
             for page in pdf.pages:
-                width = page.width
-                mid_x = width / 2
+                t = page.extract_text() or ""
+                simple_text += t + "\n"
 
-                words = page.extract_words(keep_blank_chars=True) or []
-                if not words:
-                    t = page.extract_text()
-                    if t:
-                        all_text += t + "\n"
-                    continue
+            # Count race headers in each strategy, use the one with more
+            import re as _re
+            header_re = _re.compile(r'\d+\s*\.\s*[Kk]o[şs]u(?!\s*S\.)(?!l)', _re.IGNORECASE)
+            col_count = len(header_re.findall(col_text))
+            simple_count = len(header_re.findall(simple_text))
 
-                # Group words by y-coordinate (same line)
-                from collections import defaultdict
-                lines_by_y = defaultdict(list)
-                for w in words:
-                    # Round y to group words on same line
-                    y_key = round(w['top'] / 4) * 4
-                    lines_by_y[y_key].append(w)
+            logger.info(f"Extraction: column-split={len(col_text)} chars/{col_count} races, "
+                        f"simple={len(simple_text)} chars/{simple_count} races")
 
-                # Split into left and right columns
-                left_lines = []
-                right_lines = []
-
-                for y_key in sorted(lines_by_y.keys()):
-                    line_words = sorted(lines_by_y[y_key], key=lambda w: w['x0'])
-
-                    left_words = [w for w in line_words if w['x0'] < mid_x]
-                    right_words = [w for w in line_words if w['x0'] >= mid_x]
-
-                    if left_words:
-                        left_lines.append(" ".join(w['text'] for w in left_words))
-                    if right_words:
-                        right_lines.append(" ".join(w['text'] for w in right_words))
-
-                # Combine: left column first, then right column
-                all_text += "\n".join(left_lines) + "\n" + "\n".join(right_lines) + "\n"
+            # Use whichever found more races
+            if simple_count > col_count:
+                all_text = simple_text
+                logger.info("Using simple extraction (more races found)")
+            else:
+                all_text = col_text
+                logger.info("Using column-split extraction")
 
             if not all_text.strip():
                 logger.warning("PDF text extraction returned empty")
                 return None
 
-            logger.info(f"Extracted {len(all_text)} chars from PDF (column-split)")
-
             races = _parse_races(all_text)
 
             if not races:
                 logger.warning(f"No races parsed from PDF ({hipodrom_url})")
-                # Extra debug: log first 1000 chars
                 logger.info(f"PDF text first 1000 chars: {all_text[:1000]}")
                 return None
 
@@ -191,6 +175,45 @@ def _parse_pdf(pdf_bytes, hipodrom_url, dt):
         import traceback
         traceback.print_exc()
         return None
+
+
+def _extract_column_split(pdf):
+    """Column-aware extraction: left column first, then right."""
+    from collections import defaultdict
+    all_text = ""
+    for page in pdf.pages:
+        width = page.width
+        mid_x = width / 2
+
+        words = page.extract_words(keep_blank_chars=True) or []
+        if not words:
+            t = page.extract_text()
+            if t:
+                all_text += t + "\n"
+            continue
+
+        lines_by_y = defaultdict(list)
+        for w in words:
+            y_key = round(w['top'] / 4) * 4
+            lines_by_y[y_key].append(w)
+
+        left_lines = []
+        right_lines = []
+
+        for y_key in sorted(lines_by_y.keys()):
+            line_words = sorted(lines_by_y[y_key], key=lambda w: w['x0'])
+
+            left_words = [w for w in line_words if w['x0'] < mid_x]
+            right_words = [w for w in line_words if w['x0'] >= mid_x]
+
+            if left_words:
+                left_lines.append(" ".join(w['text'] for w in left_words))
+            if right_words:
+                right_lines.append(" ".join(w['text'] for w in right_words))
+
+        all_text += "\n".join(left_lines) + "\n" + "\n".join(right_lines) + "\n"
+
+    return all_text
 
 
 def _parse_races(text):
@@ -327,10 +350,10 @@ def _parse_one_horse(line):
     - İSİM + TAKILAR (KG, DB, SK, vs.) — yaş pattern'ine kadar
     - Ny — yaş (3y, 4y, 5y, 6y, 7y)
     - kilo — sayı (58, 60.5, 52,5)
-    - JOKEY — genelde kısa format (R.KETME, O.YILDIZ)
-    - SAHİP/ANTRENÖR — sonraki text
-    - SAYILAR — handikap, çim, kum puanları
-    - FORM — en sondaki tire içeren sayı dizisi (7-54436, 858, 0-00)
+    - JOKEY — ilk text token (R.KETME, O.YILDIZ)
+    - ANTRENÖR/SAHİP — kalan text token'lar (ÖME. ALTIN)
+    - SAYILAR — KGS, çim, kum puanları (31 21 16)
+    - FORM — en sondaki tire/rakam dizisi (7-54436, 858, 0-00)
     """
     line = line.strip()
 
@@ -354,14 +377,17 @@ def _parse_one_horse(line):
     before_age = rest[:age_m.start()].strip()
     after_age = rest[age_m.end():].strip()
 
-    # At adını takılardan ayır
+    # At adını takılardan ayır, equipment'ı yakala
     name_parts = []
+    equipment_parts = []
     for word in before_age.split():
         if word.upper() in HORSE_TAGS:
-            continue  # Takı, atla
-        name_parts.append(word)
+            equipment_parts.append(word.upper())
+        else:
+            name_parts.append(word)
 
     horse_name = " ".join(name_parts).strip()
+    equipment = " ".join(equipment_parts)
     if not horse_name:
         return None
 
@@ -378,30 +404,48 @@ def _parse_one_horse(line):
     else:
         after_kilo = after_age
 
-    # Form: en sondaki sayı-tire dizisi
-    form = ''
-    form_m = re.search(r'([\d][\d\-]*[\d\-])$', after_kilo)
-    if form_m:
-        candidate = form_m.group(1)
-        # En az 3 karakter ve sadece sayı+tire
-        if len(candidate) >= 3:
-            form = candidate
-    else:
-        # Sadece sayılardan oluşan son token (tire olmadan)
-        tokens = after_kilo.split()
-        if tokens:
-            last = tokens[-1]
-            if re.match(r'^[\d\-]+$', last) and len(last) >= 3:
-                form = last
+    # Token'lara ayır, sondan form'u çıkar
+    tokens = after_kilo.split()
 
-    # Jokey: kilodan sonraki ilk text bloğu (genelde "A.B.SOYİSİM" formatında)
+    # Form: son token (3+ karakter, rakam/tire)
+    form = ''
+    if tokens:
+        last = tokens[-1]
+        if re.match(r'^[\d][\d\-]*$', last) and len(last) >= 3:
+            form = last
+            tokens = tokens[:-1]
+
+    # Token'ları TEXT ve NUM olarak ayır (sondan başa)
+    # NUM'lar = KGS, çim puanı, kum puanı (genelde 2-3 adet)
+    # TEXT'ler = jokey + trainer/sahip
+    text_tokens = []
+    num_tokens = []
+    # Sondan geriye git: ardışık NUM'ları topla, ilk TEXT'e gelince dur
+    i = len(tokens) - 1
+    while i >= 0 and re.match(r'^\d+$', tokens[i]):
+        num_tokens.insert(0, tokens[i])
+        i -= 1
+    text_tokens = tokens[:i + 1]
+
+    # Jokey = ilk text token (noktalı kısa isim: R.KETME, O.YILDIZ, C.PASO)
     jockey = ''
-    after_kilo_parts = after_kilo.split()
-    for part in after_kilo_parts:
-        # Jokey adı genelde nokta içerir veya büyük harfle başlar
-        if re.match(r'^[A-ZÇĞIİÖŞÜ]', part) and not re.match(r'^[\d\-]+$', part):
-            jockey = part
-            break
+    trainer = ''
+    if text_tokens:
+        jockey = text_tokens[0]
+        # Kalan text = trainer/sahip (ÖME. ALTIN, C. ERD. KOPAL)
+        if len(text_tokens) > 1:
+            trainer = " ".join(text_tokens[1:])
+
+    # KGS = ilk sayı (gün sayısı), kalan puanlar
+    kgs = 0
+    handicap_vals = []
+    for n in num_tokens:
+        try:
+            handicap_vals.append(int(n))
+        except ValueError:
+            pass
+    if handicap_vals:
+        kgs = handicap_vals[0]  # İlk sayı genelde KGS
 
     return {
         'horse_number': horse_no,
@@ -409,12 +453,14 @@ def _parse_one_horse(line):
         'age': age,
         'weight': weight,
         'jockey_name': jockey,
-        'trainer_name': '',
+        'trainer_name': trainer,
         'owner_name': '',
         'sire_name': '',
         'dam_name': '',
         'form': form,
-        'handicap_rating': 0,
+        'equipment': equipment,
+        'kgs': kgs,
+        'handicap_rating': handicap_vals[1] if len(handicap_vals) >= 2 else 0,
         'start_position': start_no,
     }
 
