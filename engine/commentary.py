@@ -1,266 +1,355 @@
-"""Commentary Engine V5.1 — Model vs Market
-Model sıralamasını AGF ile karşılaştırarak value bet tespiti.
-"Model 1. sıra, piyasa 3. sıra → value bet potansiyeli"
+"""Commentary Engine V5.2 — Kupon + Yorum AYRI mesajlar
+Kupon: Temiz, büyük emoji, amca bile anlasın
+Yorum: Detaylı ama samimi, her at için seçim sebebi
 """
 import numpy as np
 
 
-def generate_commentary(sequence_info, legs, rating_info, dar_ticket, genis_ticket):
-    """Detaylı yorum — model + AGF karşılaştırmalı."""
-    hippo = sequence_info['hippodrome'].replace(' Hipodromu', '')
-    altili_no = sequence_info.get('altili_no', 1)
-    date = sequence_info['date']
-    time = sequence_info.get('time', '')
-
-    lines = [
-        f"📝 {hippo} {altili_no}. ALTILI — DETAYLI YORUM",
-        f"📅 {date} {time}",
-        f"{rating_info['stars']} {rating_info['verdict']}",
-        "",
-    ]
-
-    # Genel görünüm
-    lines.append(f"📋 {_overview(legs, rating_info)}")
-    lines.append("")
-
-    # Koşu bazlı
-    lines.append("─" * 35)
-    for i, leg in enumerate(legs):
-        lines.extend(_leg_commentary(i + 1, leg))
-        lines.append("")
-
-    # Value bet tespiti
-    lines.append("─" * 35)
-    value_bets = _find_value_bets(legs)
-    if value_bets:
-        lines.append("💎 VALUE BET TESPİTİ:")
-        for vb in value_bets:
-            lines.append(f"  {vb}")
-    else:
-        lines.append("💎 Value bet bulunamadı — model ve piyasa uyumlu")
-
-    # Model görüşü
-    lines.append("")
-    lines.append(_model_opinion(rating_info))
-
-    if rating_info.get('reasons'):
-        lines.append("")
-        lines.append("💡 MODEL NOTU:")
-        for r in rating_info['reasons'][:3]:
-            lines.append(f"  • {r}")
-
-    return "\n".join(lines)
-
+# ═══════════════════════════════════════════════════════════
+# 1. KUPON MESAJI — Temiz, net, büyük emoji
+# ═══════════════════════════════════════════════════════════
 
 def generate_kupon_message(sequence_info, dar_ticket, genis_ticket, rating_info):
-    """Kupon mesajı — model sıralamasıyla."""
-    hippo = sequence_info['hippodrome'].replace(' Hipodromu', '')
+    """
+    SADECE kupon mesajı — temiz, büyük emoji, herkes anlasın.
+    """
+    hippo = sequence_info['hippodrome'].replace(' Hipodromu', '').replace(' Hipodrom', '')
     altili_no = sequence_info.get('altili_no', 1)
     date = sequence_info['date']
     time = sequence_info.get('time', '')
 
-    lines = [
-        f"🏇 {hippo} {altili_no}. ALTILI — {date} {time}",
-        f"{rating_info['stars']} {rating_info['verdict']}",
-        "",
-        _ticket_block(dar_ticket, "DAR"),
-        "",
-        _ticket_block(genis_ticket, "GENİŞ"),
-    ]
+    # Rating emoji
+    r = rating_info['rating']
+    if r >= 3:
+        rating_line = "🟢 GÜÇLÜ GÜN — Oyna!"
+    elif r >= 2:
+        rating_line = "🟡 NORMAL GÜN — Dikkatli oyna"
+    else:
+        rating_line = "🔴 ZOR GÜN — Riskli!"
+
+    lines = []
+    lines.append(f"🏇🏇🏇 {hippo.upper()} {altili_no}. ALTILI 🏇🏇🏇")
+    lines.append(f"📅 {date} — Saat {time}")
+    lines.append(f"{rating_line}")
+    lines.append("")
+
+    # ── DAR KUPON ──
+    lines.append(f"📌📌📌 DAR KUPON 📌📌📌")
+    lines.append(f"💰 {dar_ticket['cost']:,.0f} TL — {dar_ticket['combo']:,} kombi")
+    lines.append(f"🎯 Tutma: {dar_ticket.get('hitrate_pct', '?')}")
+    lines.append("")
+
+    for leg in dar_ticket['legs']:
+        lines.append(_format_kupon_leg(leg))
+
+    lines.append("")
+
+    # ── GENİŞ KUPON ──
+    lines.append(f"📋📋📋 GENİŞ KUPON 📋📋📋")
+    lines.append(f"💰 {genis_ticket['cost']:,.0f} TL — {genis_ticket['combo']:,} kombi")
+    lines.append(f"🎯 Tutma: {genis_ticket.get('hitrate_pct', '?')}")
+    lines.append("")
+
+    for leg in genis_ticket['legs']:
+        lines.append(_format_kupon_leg(leg))
+
+    lines.append("")
+    lines.append("🍀 İyi şanslar! Sorumlu oyna. 🐎")
+
     return "\n".join(lines)
 
 
+def _format_kupon_leg(leg):
+    """Tek ayak — büyük emoji, temiz."""
+    nums = ",".join([str(h[2]) for h in leg['selected']])
+
+    # At isimleri (sadece TEK ve 2 at için göster)
+    names = ""
+    if leg['n_pick'] <= 2:
+        name_list = []
+        for h in leg['selected']:
+            n = h[0]
+            if not n.startswith('#') and not n.startswith('At_'):
+                name_list.append(n[:12])
+        if name_list:
+            names = " " + ",".join(name_list)
+
+    if leg['is_tek']:
+        return f"🎯 {leg['leg_number']}.Ayak: [{nums}] TEK{names}"
+    elif leg['n_pick'] <= 2:
+        return f"🔒 {leg['leg_number']}.Ayak: [{nums}] {leg['n_pick']}at{names}"
+    else:
+        return f"⚠️ {leg['leg_number']}.Ayak: [{nums}] {leg['n_pick']}at"
+
+
 # ═══════════════════════════════════════════════════════════
-# AYAK YORUMU
+# 2. YORUM MESAJI — Detaylı, samimi, her at için sebep
 # ═══════════════════════════════════════════════════════════
 
-def _leg_commentary(leg_num, leg):
+def generate_commentary(sequence_info, legs, rating_info, dar_ticket, genis_ticket):
+    """
+    DETAYLI YORUM mesajı — her koşu, her seçilen at için neden seçildi.
+    Samimi dil, amca bile anlasın.
+    """
+    hippo = sequence_info['hippodrome'].replace(' Hipodromu', '').replace(' Hipodrom', '')
+    altili_no = sequence_info.get('altili_no', 1)
+    date = sequence_info['date']
+    time = sequence_info.get('time', '')
+
+    # Rating
+    r = rating_info['rating']
+    if r >= 3:
+        rating_text = "🟢 GÜÇLÜ GÜN — Model çok emin!"
+    elif r >= 2:
+        rating_text = "🟡 NORMAL GÜN — Fena değil ama dikkat"
+    else:
+        rating_text = "🔴 ZOR GÜN — Sürpriz riski yüksek"
+
+    lines = []
+    lines.append(f"📝 {hippo.upper()} {altili_no}. ALTILI — YORUM")
+    lines.append(f"📅 {date} {time}")
+    lines.append(f"{rating_text}")
+    lines.append("")
+
+    # Genel bakış
+    overview = _build_overview(legs, rating_info)
+    lines.append(f"📊 {overview}")
+    lines.append("")
+
+    # ── Koşu bazlı yorumlar ──
+    for i, leg in enumerate(legs):
+        lines.append("─" * 30)
+        leg_lines = _build_leg_yorum(i + 1, leg)
+        lines.extend(leg_lines)
+        lines.append("")
+
+    # ── Model notu ──
+    lines.append("─" * 30)
+    lines.append(_build_model_notu(rating_info))
+
+    return "\n".join(lines)
+
+
+def _build_overview(legs, rating_info):
+    """Genel bakış — 1-2 cümle."""
+    n_model_banko = sum(1 for l in legs
+                        if l.get('confidence', 0) >= 0.2
+                        and l.get('model_agreement', 0) >= 0.67)
+    n_open = sum(1 for l in legs if l.get('confidence', 0) < 0.08)
+    n_big = sum(1 for l in legs if l['n_runners'] >= 12)
+    avg_agree = np.mean([l.get('model_agreement', 0.5) for l in legs])
+
+    parts = []
+    if n_model_banko >= 3:
+        parts.append(f"Bugün {n_model_banko} ayakta model çok emin 💪")
+    elif n_model_banko >= 1:
+        parts.append(f"{n_model_banko} banko ayak var, {n_open} ayak belirsiz")
+    else:
+        parts.append("Bugün net favori yok, dikkatli oyna")
+
+    if n_big >= 3:
+        parts.append(f"{n_big} kalabalık yarış var, sürpriz çıkabilir")
+
+    parts.append(f"Model uyumu: %{avg_agree*100:.0f}")
+
+    return " ".join(parts)
+
+
+def _build_leg_yorum(leg_num, leg):
+    """Tek ayak yorumu — her seçilen at için sebep."""
     horses = leg['horses']
     agf_data = leg.get('agf_data', [])
     n = leg['n_runners']
     has_model = leg.get('has_model', False)
-    lines = []
-
-    # Sınıflandırma
     conf = leg.get('confidence', 0)
     agree = leg.get('model_agreement', 0.5)
+    lines = []
 
-    if has_model and conf >= 0.25 and agree >= 0.67:
-        cls, icon = "MODEL BANKO", "🎯"
-    elif has_model and conf >= 0.15:
-        cls, icon = "MODEL GÜVENLİ", "🔒"
-    elif agf_data and agf_data[0]['agf_pct'] >= 40:
-        cls, icon = "PİYASA FAVORİ", "📊"
-    elif n >= 12:
-        cls, icon = "BÜYÜK ALAN", "⚠️"
-    else:
-        cls, icon = "AÇIK YARIŞ", "🔄"
-
-    # Header
+    # Ayak başlığı
     dist = leg.get('distance', '')
+    group = leg.get('group_name', '')
     breed = ""
-    if leg.get('is_arab'): breed = "Arap"
-    elif leg.get('is_english'): breed = "İng"
+    if leg.get('is_arab'):
+        breed = "🐴 Arap"
+    elif leg.get('is_english'):
+        breed = "🏇 İngiliz"
 
-    parts = [f"{icon} {leg_num}. AYAK (K{leg.get('race_number', leg_num)})"]
-    if breed: parts.append(breed)
-    if dist: parts.append(f"{dist}m")
-    parts.append(f"— {n} at [{cls}]")
-    lines.append(" ".join(parts))
+    # Sınıflandırma
+    if has_model and conf >= 0.25 and agree >= 0.67:
+        tag = "✅ NET FAVORİ"
+    elif has_model and conf >= 0.12:
+        tag = "🟡 İDDALI"
+    elif n >= 12:
+        tag = "⚠️ KALABALIK"
+    else:
+        tag = "🔄 AÇIK YARIŞ"
 
-    # Top 3
+    header = f"🏁 {leg_num}. AYAK — {n} at"
+    if dist:
+        header += f" | {dist}m"
+    if breed:
+        header += f" | {breed}"
+    header += f" | {tag}"
+    lines.append(header)
+
+    # AGF lookup
     agf_by_num = {h['horse_number']: h['agf_pct'] for h in agf_data} if agf_data else {}
 
+    # Top 3 at + seçim sebebi
     for rank in range(min(3, len(horses))):
         h = horses[rank]
         name = h[0]
         score = h[1]
         number = h[2]
-        feat = h[3] if len(h) > 3 else {}
+        feat = h[3] if len(h) > 3 and isinstance(h[3], dict) else {}
+
+        # İsim temizle
+        if name.startswith('At_') or name.startswith('#'):
+            display_name = f"#{number}"
+        else:
+            display_name = name[:15]
 
         rank_icon = ["🥇", "🥈", "🥉"][rank]
         agf_pct = agf_by_num.get(number, feat.get('agf_pct', 0))
 
-        # Model vs market karşılaştırma
-        if has_model and agf_pct > 0:
-            # AGF'deki sırası
-            agf_rank = sorted(agf_by_num.keys(),
-                              key=lambda k: -agf_by_num.get(k, 0)).index(number) + 1 if number in agf_by_num else '?'
-            comparison = f"Model #{rank+1}, Piyasa #{agf_rank}"
-            if isinstance(agf_rank, int) and agf_rank > rank + 2:
-                comparison += " 💎"  # value bet signal
+        # Model vs piyasa
+        if agf_pct > 0:
+            agf_rank = _get_agf_rank(number, agf_by_num)
+            mv = f"Model #{rank+1}"
+            if agf_rank and agf_rank != rank + 1:
+                mv += f", Piyasa #{agf_rank}"
+            if agf_rank and agf_rank > rank + 2:
+                mv += " 💎"
         else:
-            comparison = f"AGF %{agf_pct:.0f}" if agf_pct else ""
+            mv = f"Model #{rank+1}"
 
-        name_short = name[:15] if not name.startswith('#') else name
-        score_str = f"M:{score:.2f}" if has_model else ""
+        score_str = f"({score:.2f})" if has_model else ""
 
-        lines.append(f"  {rank_icon} #{number} {name_short} {score_str} ({comparison})")
+        lines.append(f"  {rank_icon} {display_name} {score_str}")
 
-        # Extras
-        extras = _horse_extras(feat)
-        if extras:
-            lines.append(f"      ↳ {extras}")
+        # ── SEÇIM SEBEBİ ──
+        reasons = _build_horse_reasons(feat, agf_pct, score, rank, leg, has_model)
+        if reasons:
+            lines.append(f"     ↳ {' | '.join(reasons)}")
 
-    # Agreement
+    # Model agreement
     if has_model:
         if agree >= 0.67:
-            lines.append(f"  ✅ 3 model hemfikir ({agree*100:.0f}%)")
+            lines.append(f"  ✅ 3 model hemfikir (%{agree*100:.0f})")
         elif agree <= 0.33:
-            lines.append(f"  ⚠️ Modeller ayrışıyor ({agree*100:.0f}%)")
+            lines.append(f"  ⚠️ Modeller farklı düşünüyor (%{agree*100:.0f})")
 
     return lines
 
 
-def _horse_extras(feat):
+def _build_horse_reasons(feat, agf_pct, score, rank, leg, has_model):
+    """
+    Her at için NEDEN SEÇİLDİ — somut sebepler.
+    """
+    reasons = []
+
     if not isinstance(feat, dict):
-        return ""
-    parts = []
-    j = feat.get('jockey', '')
-    if j: parts.append(f"J:{j}")
-    w = feat.get('weight', 0)
-    if w > 0: parts.append(f"{w}kg")
+        if rank == 0 and agf_pct >= 40:
+            reasons.append(f"Piyasa %{agf_pct:.0f} favori")
+        return reasons
+
+    # 1. Jokey
+    jockey = feat.get('jockey', '')
+    jockey_wr = feat.get('jockey_win_rate', 0)  # rolling stats'tan
+    if jockey and jockey_wr > 0:
+        reasons.append(f"J:{jockey} (%{jockey_wr*100:.0f})")
+    elif jockey:
+        reasons.append(f"J:{jockey}")
+
+    # 2. Form
     form = feat.get('form', '')
-    if form: parts.append(f"F:{form}")
-    return " | ".join(parts)
+    if form:
+        # Son 3 koşu özet
+        import re
+        positions = [int(p) for _, p in re.findall(r'([KC])(\d+)', form)]
+        if positions:
+            last3 = positions[-3:] if len(positions) >= 3 else positions
+            form_str = "-".join([str(p) for p in last3])
+            avg = np.mean(last3)
+            if avg <= 2.0:
+                reasons.append(f"Form muhteşem ({form_str})")
+            elif avg <= 3.5:
+                reasons.append(f"Form iyi ({form_str})")
+            elif avg >= 6:
+                reasons.append(f"Form kötü ({form_str}) ⚠️")
+
+    # 3. AGF / piyasa
+    if agf_pct >= 50:
+        reasons.append(f"Piyasa %{agf_pct:.0f} çok favori")
+    elif agf_pct >= 30:
+        reasons.append(f"Piyasa %{agf_pct:.0f} favori")
+    elif agf_pct > 0 and agf_pct < 10 and rank <= 1:
+        reasons.append(f"Piyasa sadece %{agf_pct:.0f} — gizli aday! 💎")
+
+    # 4. Kilo
+    weight = feat.get('weight', 0)
+    if weight and isinstance(weight, (int, float)) and weight > 0:
+        if weight <= 54:
+            reasons.append(f"{weight}kg hafif")
+        elif weight >= 60:
+            reasons.append(f"{weight}kg ağır ⚠️")
+
+    # 5. Pedigri (dam/sire)
+    sire = feat.get('sire', '')
+    dam_wr = feat.get('dam_produce_wr', 0)
+    if dam_wr and dam_wr > 0.15:
+        reasons.append("Anne soyundan kazananlar var")
+
+    # 6. Dinlenme
+    kgs = feat.get('kgs', 0)
+    if kgs and isinstance(kgs, (int, float)):
+        if 14 <= kgs <= 28:
+            reasons.append("Taze, yakın koşu")
+        elif kgs >= 60:
+            reasons.append("Uzun ara ⚠️")
+
+    # 7. Model skoru yüksek ama piyasa düşük (value)
+    if has_model and score >= 0.9 and agf_pct < 15:
+        reasons.append("Model çok beğeniyor ama piyasa bilmiyor 💎")
+
+    # Hiç sebep yoksa genel yorum
+    if not reasons:
+        if rank == 0:
+            reasons.append("Model en yüksek skor veriyor")
+        elif rank <= 2:
+            reasons.append(f"Model #{rank+1} sırada")
+
+    return reasons[:3]  # max 3 sebep
 
 
-# ═══════════════════════════════════════════════════════════
-# VALUE BET TESPİTİ
-# ═══════════════════════════════════════════════════════════
-
-def _find_value_bets(legs):
-    """Model top-3'te ama AGF top-5'te değilse → value bet."""
-    value_bets = []
-    for i, leg in enumerate(legs):
-        if not leg.get('has_model'):
-            continue
-        agf_data = leg.get('agf_data', [])
-        if not agf_data:
-            continue
-
-        horses = leg['horses']  # model sıralamasında
-        agf_top5_nums = {h['horse_number'] for h in agf_data[:5]}
-
-        for rank in range(min(3, len(horses))):
-            h = horses[rank]
-            number = h[2]
-            name = h[0]
-            score = h[1]
-            agf_pct = next((a['agf_pct'] for a in agf_data if a['horse_number'] == number), 0)
-
-            # Model top-3 ama AGF'de düşük
-            if number not in agf_top5_nums and agf_pct < 15:
-                value_bets.append(
-                    f"  {i+1}. Ayak #{number} {name[:12]}: "
-                    f"Model #{rank+1} (score {score:.2f}) ama AGF sadece %{agf_pct:.0f}"
-                )
-
-    return value_bets[:3]  # max 3
+def _get_agf_rank(horse_number, agf_by_num):
+    """AGF sıralamasında kaçıncı?"""
+    if not agf_by_num or horse_number not in agf_by_num:
+        return None
+    sorted_nums = sorted(agf_by_num.keys(), key=lambda k: -agf_by_num[k])
+    try:
+        return sorted_nums.index(horse_number) + 1
+    except ValueError:
+        return None
 
 
-# ═══════════════════════════════════════════════════════════
-# GENEL FONKSİYONLAR
-# ═══════════════════════════════════════════════════════════
-
-def _overview(legs, rating_info):
-    n_model_banko = sum(1 for l in legs
-                        if l.get('has_model') and l.get('confidence', 0) > 0.2
-                        and l.get('model_agreement', 0) >= 0.67)
-    n_open = sum(1 for l in legs if l.get('confidence', 0) < 0.1)
-    n_big = sum(1 for l in legs if l['n_runners'] >= 12)
-
-    avg_agree = np.mean([l.get('model_agreement', 0.5) for l in legs])
-    has_model = any(l.get('has_model') for l in legs)
-
-    parts = []
-    if has_model:
-        if n_model_banko >= 3:
-            parts.append(f"Model {n_model_banko} ayakta çok emin — güçlü gün")
-        elif n_model_banko >= 1:
-            parts.append(f"{n_model_banko} banko + {n_open} açık ayak")
-        else:
-            parts.append("Model hiçbir ayakta emin değil")
-        parts.append(f"Model uyum: %{avg_agree*100:.0f}")
-    else:
-        parts.append("AGF-only mod (model yüklenemedi)")
-
-    if n_big >= 3:
-        parts.append(f"{n_big} kalabalık alan")
-
-    return " ".join(parts) + "."
-
-
-def _model_opinion(rating_info):
+def _build_model_notu(rating_info):
+    """Model notu — samimi dil."""
     r = rating_info['rating']
     s = rating_info['score']
+
     if r >= 3:
-        return (f"🟢 MODEL: OYNA!\n"
-                f"   {rating_info['stars']} Skor: {s:.1f} — DAR + GENİŞ")
+        header = "🟢 MODEL DİYOR Kİ: Bugün iyi gün! Oyna!"
     elif r >= 2:
-        return (f"🟡 MODEL: DİKKATLİ\n"
-                f"   {rating_info['stars']} Skor: {s:.1f} — DAR oyna, GENİŞ riskli")
+        header = "🟡 MODEL DİYOR Kİ: Fena değil ama dikkat et."
     else:
-        return (f"🔴 MODEL: PAS GEÇ\n"
-                f"   {rating_info['stars']} Skor: {s:.1f} — Bugün oynama")
+        header = "🔴 MODEL DİYOR Kİ: Bugün zor, riskli oyna."
 
+    lines = [header]
+    lines.append(f"   Skor: {s:.1f}/7")
 
-def _ticket_block(ticket, label):
-    icon = '📌' if label == 'DAR' else '📋'
-    lines = [
-        f"{icon} {label} ({ticket['cost']:,.0f} TL — {ticket['combo']:,} kombi)",
-        f"🎯 Tutma: {ticket.get('hitrate_pct', '?')}",
-    ]
-    for leg in ticket['legs']:
-        nums = ",".join([str(h[2]) for h in leg['selected']])
-        names = ",".join([h[0][:10] for h in leg['selected']])
-        info = f" [{leg['info']}]" if leg.get('info') else ""
-
-        if leg['is_tek']:
-            lines.append(f"  🎯 {leg['leg_number']}.Ayak: [{nums}] TEK{info} {names}")
-        elif leg['n_pick'] <= 2:
-            lines.append(f"  🔒 {leg['leg_number']}.Ayak: [{nums}] {leg['n_pick']}at{info} {names}")
-        else:
-            lines.append(f"  ⚠️ {leg['leg_number']}.Ayak: [{nums}] {leg['n_pick']}at{info}")
+    if rating_info.get('reasons'):
+        for reason in rating_info['reasons'][:3]:
+            lines.append(f"   • {reason}")
 
     return "\n".join(lines)
