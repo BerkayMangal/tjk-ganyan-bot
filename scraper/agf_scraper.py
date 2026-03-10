@@ -404,29 +404,48 @@ def enrich_legs_from_pdf(legs: List[Dict], pdf_races: List[Dict]) -> List[Dict]:
     PDF'ten çekilen detay bilgileri ile AGF leg'lerini zenginleştir.
 
     Eşleştirme: at numarası üzerinden.
-    PDF'ten gelecek bilgiler: at_ismi, jokey, kilo, form, mesafe, pist, cins
+    PDF koşu numarasına göre eşleştirme (pozisyon değil!).
     """
     if not pdf_races:
         return legs
 
-    for i, leg in enumerate(legs):
-        if i >= len(pdf_races):
-            break
+    # PDF koşularını numara bazlı index'le
+    pdf_by_racenum = {}
+    for pr in pdf_races:
+        rn = pr.get('race_number', 0)
+        if rn > 0:
+            pdf_by_racenum[rn] = pr
 
-        pdf_race = pdf_races[i]
+    # Altılı ayak → koşu numarası eşleştirmesi
+    # AGF leg sırası 1-6, ama koşu numaraları farklı olabilir (3-8, 2-7 vs.)
+    # Eğer leg'te race_number varsa onu kullan, yoksa pozisyon bazlı dene
+    for i, leg in enumerate(legs):
+        leg_rn = leg.get('race_number', i + 1)
+
+        # Önce race_number ile eşleştir
+        pdf_race = pdf_by_racenum.get(leg_rn)
+
+        # Bulamazsa pozisyon bazlı dene
+        if not pdf_race and i < len(pdf_races):
+            pdf_race = pdf_races[i]
+
+        if not pdf_race:
+            continue
 
         # Koşu bilgileri
-        leg['distance'] = pdf_race.get('distance', '')
-        leg['race_type'] = pdf_race.get('race_type', '')
-        leg['group_name'] = pdf_race.get('group_name', '')
-        leg['race_number'] = pdf_race.get('race_number', i + 1)
+        leg['distance'] = pdf_race.get('distance', '') or leg.get('distance', '')
+        leg['track_type'] = pdf_race.get('track_type', '') or leg.get('track_type', '')
+        leg['race_type'] = pdf_race.get('race_type', '') or leg.get('race_type', '')
+        leg['group_name'] = pdf_race.get('group_name', '') or leg.get('group_name', '')
+        leg['first_prize'] = pdf_race.get('prize', 0) or leg.get('first_prize', 0)
+        leg['race_number'] = pdf_race.get('race_number', leg_rn)
 
         # Cins tespiti
         group = leg.get('group_name', '')
         leg['is_arab'] = 'Arap' in group
         leg['is_english'] = 'İngiliz' in group or 'Ingiliz' in group
 
-        # At isimlerini eşleştir
+        # At isimlerini eşleştir — horse_number bazlı
         pdf_horses = {h['horse_number']: h for h in pdf_race.get('horses', [])}
 
         enriched_horses = []
@@ -438,6 +457,8 @@ def enrich_legs_from_pdf(legs: List[Dict], pdf_races: List[Dict]) -> List[Dict]:
                 feat_dict['jockey'] = pdf_h.get('jockey_name', '')
                 feat_dict['form'] = pdf_h.get('form', '')
                 feat_dict['age'] = pdf_h.get('age', 0)
+                feat_dict['start_position'] = pdf_h.get('start_position', 0)
+                feat_dict['handicap'] = pdf_h.get('handicap_rating', 0)
                 enriched_horses.append((real_name, score, number, feat_dict))
             else:
                 enriched_horses.append((name, score, number, feat_dict))
@@ -445,7 +466,7 @@ def enrich_legs_from_pdf(legs: List[Dict], pdf_races: List[Dict]) -> List[Dict]:
         leg['horses'] = enriched_horses
 
         # Jokey bilgisi güncelle
-        if enriched_horses and len(enriched_horses) > 0:
+        if enriched_horses:
             top_feat = enriched_horses[0][3] if len(enriched_horses[0]) > 3 else {}
             leg['top_jockey_name'] = top_feat.get('jockey', '')
 
