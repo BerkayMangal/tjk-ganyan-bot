@@ -446,7 +446,12 @@ def enrich_legs_from_pdf(legs: List[Dict], pdf_races: List[Dict]) -> List[Dict]:
         leg['is_english'] = 'İngiliz' in group or 'Ingiliz' in group
 
         # At isimlerini eşleştir — horse_number bazlı
-        pdf_horses = {h['horse_number']: h for h in pdf_race.get('horses', [])}
+        try:
+            pdf_horses = {h.get('horse_number', 0): h for h in pdf_race.get('horses', [])
+                          if isinstance(h, dict) and h.get('horse_number')}
+        except Exception as e:
+            logger.warning(f"  Horse dict mapping failed: {e}")
+            pdf_horses = {}
 
         enriched_horses = []
         for name, score, number, feat_dict in leg['horses']:
