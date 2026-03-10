@@ -87,7 +87,10 @@ def run_daily(target_date=None):
         agf_legs = agf_to_legs(agf_alt)
         prog_races = _match_program_races(hippo, altili_no, program_hippodromes)
         if prog_races:
-            agf_legs = enrich_legs_from_pdf(agf_legs, prog_races)
+            try:
+                agf_legs = enrich_legs_from_pdf(agf_legs, prog_races)
+            except Exception as e:
+                logger.warning(f"  Enrichment failed for {hippo}: {e} — using AGF only")
 
         # Model predict
         if model_ok and fb_ok:
