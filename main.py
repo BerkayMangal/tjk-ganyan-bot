@@ -20,6 +20,7 @@ from scraper.agf_scraper import (
     get_todays_agf, agf_to_legs, enrich_legs_from_pdf,
 )
 from scraper.tjk_program import get_todays_races as get_pdf_races
+from scraper.tjk_html_scraper import get_todays_races_html
 from model.ensemble import EnsembleRanker
 from model.features import FeatureBuilder
 from engine.kupon import build_kupon
@@ -69,9 +70,9 @@ def run_daily(target_date=None):
         return
     logger.info(f"AGF: {len(agf_altilis)} altılı")
 
-    # ── 3. PDF ──
-    logger.info("Step 3: Fetching PDF...")
-    pdf_hippodromes = _fetch_pdf_data(target_date)
+    # ── 3. PROGRAM DATA (HTML → PDF fallback) ──
+    logger.info("Step 3: Fetching race program (HTML → PDF fallback)...")
+    program_hippodromes = _fetch_program_data(target_date)
 
     # ── 4. PROCESS ──
     altili_packages = []
@@ -84,9 +85,9 @@ def run_daily(target_date=None):
         logger.info(f"Processing {hippo} {altili_no}. altılı...")
 
         agf_legs = agf_to_legs(agf_alt)
-        pdf_races = _match_pdf_races(hippo, altili_no, pdf_hippodromes)
-        if pdf_races:
-            agf_legs = enrich_legs_from_pdf(agf_legs, pdf_races)
+        prog_races = _match_program_races(hippo, altili_no, program_hippodromes)
+        if prog_races:
+            agf_legs = enrich_legs_from_pdf(agf_legs, prog_races)
 
         # Model predict
         if model_ok and fb_ok:
@@ -268,26 +269,40 @@ def _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date):
     return new_legs, health
 
 
-def _fetch_pdf_data(target_date):
+def _fetch_program_data(target_date):
+    """HTML → PDF fallback chain."""
+    # Try HTML scraper first (richest data: pedigree, trainer, form, everything)
+    try:
+        html_data = get_todays_races_html(target_date)
+        if html_data:
+            logger.info(f"Program data from HTML: {len(html_data)} hipodrom")
+            return html_data
+    except Exception as e:
+        logger.warning(f"HTML scraper failed: {e}")
+
+    # Fallback to PDF
+    logger.info("Falling back to PDF parser...")
     try:
         return get_pdf_races(target_date) or []
     except Exception as e:
-        logger.warning(f"PDF failed: {e}")
+        logger.warning(f"PDF also failed: {e}")
         return []
 
 
-def _match_pdf_races(hippo_name, altili_no, pdf_hippodromes):
+def _match_program_races(hippo_name, altili_no, program_hippodromes):
     """Return ALL races for this hippodrome — enrichment matches by race_number."""
-    if not pdf_hippodromes:
+    if not program_hippodromes:
         return None
-    hippo_lower = hippo_name.lower().replace(' hipodromu', '')
-    for ph in pdf_hippodromes:
-        ph_lower = ph['hippodrome'].lower().replace(' hipodromu', '')
+    hippo_lower = hippo_name.lower().replace(' hipodromu', '').replace(' hipodrom', '')
+    for ph in program_hippodromes:
+        ph_lower = ph['hippodrome'].lower().replace(' hipodromu', '').replace(' hipodrom', '')
         if hippo_lower in ph_lower or ph_lower in hippo_lower:
             races = ph.get('races', [])
             if not races:
                 return None
-            return races  # Return all — enrichment matches by race_number
+            logger.info(f"  Matched {hippo_name} → {ph['hippodrome']} "
+                        f"({len(races)} races, source={ph.get('source', 'unknown')})")
+            return races
     return None
 
 
