@@ -206,12 +206,13 @@ def _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date):
             'race_date': str(target_date),
         }
 
+        health['total'] += 1
+
         try:
             matrix, names = fb.build_race_features(horses_input, race_info, agf_data)
 
             # Check: kaç feature non-zero? Çoğu 0 ise model güvenilmez
             nonzero_pct = np.count_nonzero(matrix) / matrix.size if matrix.size > 0 else 0
-            health['total'] += 1
             health['nonzero_pcts'].append(nonzero_pct)
 
             # Check if PDF enriched this leg (form/jockey/weight exist)
@@ -261,7 +262,6 @@ def _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date):
 
         except Exception as e:
             logger.warning(f"  Leg {i+1} model failed: {e}")
-            health['total'] += 1
             health['error'] += 1
             new_legs.append(leg)
 
