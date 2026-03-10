@@ -455,10 +455,13 @@ def enrich_legs_from_pdf(legs: List[Dict], pdf_races: List[Dict]) -> List[Dict]:
                 real_name = pdf_h.get('horse_name', name)
                 feat_dict['weight'] = pdf_h.get('weight', 0)
                 feat_dict['jockey'] = pdf_h.get('jockey_name', '')
+                feat_dict['trainer'] = pdf_h.get('trainer_name', '')
                 feat_dict['form'] = pdf_h.get('form', '')
                 feat_dict['age'] = pdf_h.get('age', 0)
                 feat_dict['start_position'] = pdf_h.get('start_position', 0)
                 feat_dict['handicap'] = pdf_h.get('handicap_rating', 0)
+                feat_dict['equipment'] = pdf_h.get('equipment', '')
+                feat_dict['kgs'] = pdf_h.get('kgs', 0)
                 enriched_horses.append((real_name, score, number, feat_dict))
             else:
                 enriched_horses.append((name, score, number, feat_dict))
