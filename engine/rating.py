@@ -51,14 +51,19 @@ def rate_sequence(legs, breed='mixed'):
             score += 0.5
             reasons.append(f"Model güveni düşük ({avg_conf:.2f})")
     else:
-        # AGF-only fallback
+        # AGF-only: AGF verisinden skor üret — daha cömert ol
         if avg_top_agf >= 40:
+            score += 3.0
+            reasons.append(f"Piyasa favorileri güçlü (ort. %{avg_top_agf:.0f})")
+        elif avg_top_agf >= 30:
             score += 2.0
-            reasons.append(f"AGF favori gücü yüksek (%{avg_top_agf:.0f})")
-        elif avg_top_agf >= 25:
-            score += 1.0
+            reasons.append(f"Piyasa favorileri orta (ort. %{avg_top_agf:.0f})")
+        elif avg_top_agf >= 20:
+            score += 1.5
+            reasons.append(f"Piyasa favorileri zayıf (ort. %{avg_top_agf:.0f})")
         else:
-            reasons.append(f"AGF favori gücü düşük (%{avg_top_agf:.0f})")
+            score += 0.5
+            reasons.append(f"Piyasa çok belirsiz (ort. %{avg_top_agf:.0f})")
 
     # Agreement (max 2)
     if has_model:
@@ -70,7 +75,15 @@ def rate_sequence(legs, breed='mixed'):
         else:
             score -= 0.5
             reasons.append(f"Modeller ayrışıyor ({avg_agree*100:.0f}%)")
-
+    else:
+        # AGF-only: banko ayak sayısına bak (AGF %45+)
+        n_agf_banko = sum(1 for a in top_agfs if a >= 45)
+        if n_agf_banko >= 2:
+            score += 1.5
+            reasons.append(f"{n_agf_banko} ayakta güçlü favori (%45+)")
+        elif n_agf_banko >= 1:
+            score += 0.8
+            reasons.append(f"{n_agf_banko} ayakta güçlü favori")
     # Banko ayak (max 1.5)
     if n_banko >= 3:
         score += 1.5
