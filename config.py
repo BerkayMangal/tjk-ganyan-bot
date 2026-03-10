@@ -41,8 +41,8 @@ MODEL_DIR = os.path.join(os.path.dirname(__file__), 'model', 'trained')
 DATA_DIR = os.path.join(os.path.dirname(__file__), 'data')
 
 # Day rating thresholds
-RATING_3_STAR = 5.0
-RATING_2_STAR = 3.0
+RATING_3_STAR = 4.0
+RATING_2_STAR = 2.0
 
 # Monte Carlo kupon optimizasyonu
 MC_SIMULATIONS = 10000
