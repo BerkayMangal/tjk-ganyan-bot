@@ -277,6 +277,7 @@ def _fetch_pdf_data(target_date):
 
 
 def _match_pdf_races(hippo_name, altili_no, pdf_hippodromes):
+    """Return ALL races for this hippodrome — enrichment matches by race_number."""
     if not pdf_hippodromes:
         return None
     hippo_lower = hippo_name.lower().replace(' hipodromu', '')
@@ -284,12 +285,9 @@ def _match_pdf_races(hippo_name, altili_no, pdf_hippodromes):
         ph_lower = ph['hippodrome'].lower().replace(' hipodromu', '')
         if hippo_lower in ph_lower or ph_lower in hippo_lower:
             races = ph.get('races', [])
-            if len(races) < 6:
+            if not races:
                 return None
-            if altili_no == 1:
-                return races[-6:] if len(races) < 12 else races[:6]
-            elif altili_no == 2:
-                return races[6:12] if len(races) >= 12 else races[-6:]
+            return races  # Return all — enrichment matches by race_number
     return None
 
 
