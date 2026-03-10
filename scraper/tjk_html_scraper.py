@@ -143,37 +143,49 @@ def _fetch_and_parse_html(sehir_id, sehir_name, target_date):
 
 
 def _build_col_map(headers):
+    """Map TJK table headers to standardized keys.
+    
+    Known headers: Forma, N, At İsmi, Yaş, Orijin(Baba - Anne), Sıklet,
+    Jokey, Sahip, Antrenör, St, HP, Son 6 Y., KGS, s20, En İyi D., Gny, AGF, İdm
+    """
+    # Normalize: strip + handle Turkish İ→i, Ş→s etc.
+    def norm(s):
+        return (s.strip()
+                .replace('İ', 'I').replace('ı', 'i')
+                .replace('Ş', 'S').replace('ş', 's')
+                .replace('Ö', 'O').replace('ö', 'o')
+                .replace('Ü', 'U').replace('ü', 'u')
+                .replace('Ç', 'C').replace('ç', 'c')
+                .replace('Ğ', 'G').replace('ğ', 'g')
+                .lower())
+
+    # Exact known mappings (TJK headers are consistent)
+    EXACT = {
+        'n': 'number',
+        'at ismi': 'name',
+        'yas': 'age',
+        'siklet': 'weight',
+        'jokey': 'jockey',
+        'antrenor': 'trainer',
+        'sahip': 'sahip',
+        'st': 'start',
+        'hp': 'handicap',
+        'son 6 y.': 'form',
+        'kgs': 'kgs',
+        's20': 's20',
+        'agf': 'agf',
+        'gny': 'gny',
+    }
+
     col = {}
     for i, h in enumerate(headers):
-        hl = h.lower().strip()
-        if hl == 'n' or hl == 'no':
-            col['number'] = i
-        elif 'at' in hl and ('ismi' in hl or 'adı' in hl or hl == 'at'):
-            col['name'] = i
-        elif hl in ('yaş', 'yas'):
-            col['age'] = i
-        elif 'orijin' in hl or ('baba' in hl and 'anne' in hl):
+        hn = norm(h)
+        # Exact match first
+        if hn in EXACT:
+            col[EXACT[hn]] = i
+        # Pedigree column: contains "orijin" or "baba"
+        elif 'orijin' in hn or 'baba' in hn:
             col['pedigree'] = i
-        elif hl in ('sıklet', 'siklet', 'kilo', 'kg'):
-            col['weight'] = i
-        elif 'jokey' in hl:
-            col['jockey'] = i
-        elif 'antrenör' in hl or 'antrenor' in hl:
-            col['trainer'] = i
-        elif hl == 'st':
-            col['start'] = i
-        elif hl == 'hp':
-            col['handicap'] = i
-        elif 'son' in hl and ('6' in hl or 'y.' in hl):
-            col['form'] = i
-        elif hl == 'kgs':
-            col['kgs'] = i
-        elif hl == 's20':
-            col['s20'] = i
-        elif hl == 'agf':
-            col['agf'] = i
-        elif 'gny' in hl or 'ganyan' in hl:
-            col['gny'] = i
     return col
 
 
