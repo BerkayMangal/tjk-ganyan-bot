@@ -91,6 +91,15 @@ class FeatureBuilder:
         if not self.feature_cols:
             raise RuntimeError("Feature columns not loaded! Call load() first.")
 
+        # ── Sanitize: tüm numeric alanları float'a çevir ──
+        def to_float(val, default=0.0):
+            if val is None:
+                return default
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                return default
+
         g = self.stats.get('global', {})
         n_horses = len(horses)
         field_size = n_horses
@@ -139,12 +148,12 @@ class FeatureBuilder:
         hippo_name = race_info.get('hippodrome_name', '')
         upset_rate = self.stats.get('upset_rate', {}).get(hippo_name, 0.3)
 
-        # Race conditions
-        distance = race_info.get('distance', 1400)
-        track_type = race_info.get('track_type', 'dirt')
-        first_prize = race_info.get('first_prize', 100000)
-        temperature = race_info.get('temperature', 15)
-        humidity = race_info.get('humidity', 60)
+        # Race conditions — sanitize
+        distance = to_float(race_info.get('distance', 1400), 1400)
+        track_type = race_info.get('track_type', 'dirt') or 'dirt'
+        first_prize = to_float(race_info.get('first_prize', 100000), 100000)
+        temperature = to_float(race_info.get('temperature', 15), 15)
+        humidity = to_float(race_info.get('humidity', 60), 60)
         race_date = race_info.get('race_date', None)
 
         is_dirt = 1.0 if track_type == 'dirt' else 0.0
@@ -181,7 +190,7 @@ class FeatureBuilder:
 
         for h in horses:
             f = {}
-            num = h.get('horse_number', 0)
+            num = int(to_float(h.get('horse_number', 0), 0))
             name = h.get('horse_name', f'#{num}')
             horse_names.append(name)
 
@@ -220,30 +229,30 @@ class FeatureBuilder:
             f['f_form_trend'] = self._calc_form_trend(parsed)
             f['f_form_dirt_pct'] = sum(1 for t, _ in parsed if t == 'K') / max(len(parsed), 1) if parsed else 0.5
             f['f_surface_match'] = self._calc_surface_match(parsed, track_type)
-            f['f_last20_score'] = h.get('last_20_score', 10) / 20.0
+            f['f_last20_score'] = to_float(h.get('last_20_score', 10), 10) / 20.0
 
             # ── PHYSICAL ──
-            weight = h.get('weight', 57)
+            weight = to_float(h.get('weight', 57), 57)
             f['f_weight'] = self._safe_norm_val(weight, g.get('weight_min', 50), g.get('weight_max', 62))
             f['f_distance'] = f_distance
             f['f_dist_mid'] = f_dist_mid
             f['f_dist_mile'] = f_dist_mile
-            f['f_gate'] = self._safe_norm_val(h.get('gate_number', h.get('start_position', 5)),
+            f['f_gate'] = self._safe_norm_val(to_float(h.get('gate_number', h.get('start_position', 5)), 5),
                                                g.get('gate_min', 1), g.get('gate_max', 18))
-            f['f_handicap'] = self._safe_norm_val(h.get('handicap', 60),
+            f['f_handicap'] = self._safe_norm_val(to_float(h.get('handicap', 60), 60),
                                                    g.get('handicap_min', 0), g.get('handicap_max', 100))
-            f['f_extra_weight'] = self._safe_norm_val(h.get('extra_weight', 0),
+            f['f_extra_weight'] = self._safe_norm_val(to_float(h.get('extra_weight', 0), 0),
                                                        g.get('extra_weight_min', 0), g.get('extra_weight_max', 5))
 
             # ── HORSE PROFILE ──
-            age = h.get('age', 4)
+            age = to_float(h.get('age', 4), 4)
             f['f_age'] = self._safe_norm_val(age, 2, 10)
             f['f_gender_mare'] = 1.0 if h.get('gender') == 'female' or 'k' in str(h.get('age_text', '')) else 0.0
             f['f_gender_stallion'] = 1.0 if 'a' in str(h.get('age_text', '')) else 0.0
             f['f_gender_gelding'] = 1.0 if 'e' in str(h.get('age_text', '')) else 0.0
-            earnings = h.get('total_earnings', 0) or 0
+            earnings = to_float(h.get('total_earnings', 0), 0)
             f['f_earnings'] = self._safe_norm_val(earnings, 0, g.get('earnings_max', 5000000))
-            kgs = h.get('kgs', 30) or 30
+            kgs = to_float(h.get('kgs', 30), 30)
             f['f_days_rest'] = self._safe_norm_val(min(kgs, 200), 0, 200)
             f['f_rested'] = 1.0 if kgs >= 30 else 0.0
 
@@ -300,7 +309,7 @@ class FeatureBuilder:
             f['f_day_of_week'] = day_of_week
 
             # ── EQUIPMENT ──
-            eq = h.get('equipment', '')
+            eq = str(h.get('equipment', '') or '')
             f['f_equip_kg'] = 1.0 if 'KG' in eq else 0.0
             f['f_equip_db'] = 1.0 if 'DB' in eq else 0.0
             f['f_equip_skg'] = 1.0 if 'SKG' in eq else 0.0
@@ -313,8 +322,10 @@ class FeatureBuilder:
             f['f_pace_race_avg'] = 0.5
             # If best_time available from taydex
             best_time = h.get('best_time', None)
-            if best_time and isinstance(best_time, (int, float)) and best_time > 0:
-                f['f_pace_best_time'] = self._safe_norm_val(best_time, 60, 160)
+            if best_time:
+                bt = to_float(best_time, 0)
+                if bt > 0:
+                    f['f_pace_best_time'] = self._safe_norm_val(bt, 60, 160)
 
             # ── SURPRISE ──
             f['f_surprise_v2'] = surprise_score
@@ -428,6 +439,12 @@ class FeatureBuilder:
 
     @staticmethod
     def _safe_norm_val(val, mn, mx):
+        try:
+            val = float(val)
+            mn = float(mn)
+            mx = float(mx)
+        except (ValueError, TypeError):
+            return 0.5
         if mx == mn:
             return 0.5
         return max(0.0, min(1.0, (val - mn) / (mx - mn)))
