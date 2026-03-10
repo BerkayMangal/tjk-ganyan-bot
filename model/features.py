@@ -28,7 +28,7 @@ from typing import Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 STATS_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), 'trained', 'rolling_stats.json'
+    os.path.dirname(os.path.abspath(__file__)), 'trained', 'rstats.json'
 )
 
 
@@ -42,16 +42,20 @@ class FeatureBuilder:
 
     def load(self):
         """Load rolling stats and feature column order."""
-        # Rolling stats
+        # Rolling stats — optional, model works without it (just fewer features filled)
         if os.path.exists(self.stats_path):
-            with open(self.stats_path, 'r', encoding='utf-8') as f:
-                self.stats = json.load(f)
-            logger.info(f"Rolling stats loaded: {list(self.stats.keys())}")
+            try:
+                with open(self.stats_path, 'r', encoding='utf-8') as f:
+                    self.stats = json.load(f)
+                logger.info(f"Rolling stats loaded: {list(self.stats.keys())}")
+            except Exception as e:
+                logger.warning(f"Rolling stats parse error: {e}")
+                self.stats = {}
         else:
-            logger.warning(f"Rolling stats not found: {self.stats_path}")
+            logger.warning(f"Rolling stats not found: {self.stats_path} — using defaults")
             self.stats = {}
 
-        # Feature column order
+        # Feature column order — required
         json_path = os.path.join(
             os.path.dirname(self.stats_path), 'feature_columns.json'
         )
@@ -63,7 +67,8 @@ class FeatureBuilder:
             logger.error("feature_columns.json not found!")
             self.feature_cols = []
 
-        return bool(self.stats and self.feature_cols)
+        # Feature cols yeterliyse True dön — stats olmasa da çalışabiliriz
+        return bool(self.feature_cols)
 
     def build_race_features(self, horses, race_info, agf_data=None):
         """
