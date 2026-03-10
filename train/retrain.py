@@ -20,7 +20,17 @@ logger = logging.getLogger(__name__)
 
 def retrain(races_csv, horses_csv, output_dir):
     """Full retrain pipeline"""
-    from model.features import FEATURE_COLUMNS
+    # Load feature columns from the trained model's JSON (same source of truth as inference)
+    import json
+    feat_cols_json = os.path.join(output_dir, 'feature_columns.json')
+    if os.path.exists(feat_cols_json):
+        with open(feat_cols_json) as f:
+            FEATURE_COLUMNS = json.load(f)
+        logger.info(f"Loaded {len(FEATURE_COLUMNS)} feature columns from {feat_cols_json}")
+    else:
+        logger.error(f"feature_columns.json not found in {output_dir}!")
+        logger.error("Run initial training first (e.g. from Colab) to generate this file.")
+        return
 
     logger.info(f"Loading {races_csv} and {horses_csv}")
     # Load and merge (same as training pipeline)
@@ -101,6 +111,10 @@ def retrain(races_csv, horses_csv, output_dir):
     joblib.dump(lgbm, os.path.join(output_dir, 'lgbm_ranker.pkl'))
     joblib.dump(scaler, os.path.join(output_dir, 'scaler.pkl'))
     joblib.dump(feat_cols, os.path.join(output_dir, 'feature_cols.pkl'))
+    # Keep feature_columns.json in sync (used by inference FeatureBuilder)
+    import json
+    with open(os.path.join(output_dir, 'feature_columns.json'), 'w') as f:
+        json.dump(feat_cols, f)
     if cb:
         joblib.dump(cb, os.path.join(output_dir, 'cb_ranker.pkl'))
 
