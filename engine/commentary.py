@@ -245,81 +245,74 @@ def _build_leg_yorum(leg_num, leg):
 def _build_horse_reasons(feat, agf_pct, score, rank, leg, has_model):
     """
     Her at için NEDEN SEÇİLDİ — somut sebepler.
+    En az 1, en fazla 3 sebep.
     """
     reasons = []
 
     if not isinstance(feat, dict):
-        if rank == 0 and agf_pct >= 40:
-            reasons.append(f"Piyasa %{agf_pct:.0f} favori")
-        return reasons
+        feat = {}
 
-    # 1. Jokey
+    # 1. AGF / Piyasa bilgisi — her zaman var
+    if agf_pct >= 50:
+        reasons.append(f"Piyasa %{agf_pct:.0f} — çok net favori")
+    elif agf_pct >= 35:
+        reasons.append(f"Piyasa %{agf_pct:.0f} — güçlü favori")
+    elif agf_pct >= 20:
+        reasons.append(f"Piyasa %{agf_pct:.0f}")
+    elif agf_pct >= 10:
+        reasons.append(f"Piyasa %{agf_pct:.0f} — outsider")
+    elif agf_pct > 0 and rank <= 1:
+        reasons.append(f"Piyasa sadece %{agf_pct:.0f} — model farklı düşünüyor 💎")
+
+    # 2. Jokey
     jockey = feat.get('jockey', '')
-    jockey_wr = feat.get('jockey_win_rate', 0)  # rolling stats'tan
-    if jockey and jockey_wr > 0:
-        reasons.append(f"J:{jockey} (%{jockey_wr*100:.0f})")
-    elif jockey:
-        reasons.append(f"J:{jockey}")
+    if jockey:
+        reasons.append(f"Jokey: {jockey}")
 
-    # 2. Form
+    # 3. Form (PDF'ten geldiyse)
     form = feat.get('form', '')
     if form:
-        # Son 3 koşu özet
         import re
-        positions = [int(p) for _, p in re.findall(r'([KC])(\d+)', form)]
+        positions = [int(p) for _, p in re.findall(r'([KC])(\d+)', str(form))]
         if positions:
             last3 = positions[-3:] if len(positions) >= 3 else positions
             form_str = "-".join([str(p) for p in last3])
-            avg = np.mean(last3)
+            avg = sum(last3) / len(last3)
             if avg <= 2.0:
-                reasons.append(f"Form muhteşem ({form_str})")
+                reasons.append(f"Form harika ({form_str}) 🔥")
             elif avg <= 3.5:
                 reasons.append(f"Form iyi ({form_str})")
             elif avg >= 6:
-                reasons.append(f"Form kötü ({form_str}) ⚠️")
+                reasons.append(f"Form zayıf ({form_str}) ⚠️")
+            else:
+                reasons.append(f"Form ({form_str})")
 
-    # 3. AGF / piyasa
-    if agf_pct >= 50:
-        reasons.append(f"Piyasa %{agf_pct:.0f} çok favori")
-    elif agf_pct >= 30:
-        reasons.append(f"Piyasa %{agf_pct:.0f} favori")
-    elif agf_pct > 0 and agf_pct < 10 and rank <= 1:
-        reasons.append(f"Piyasa sadece %{agf_pct:.0f} — gizli aday! 💎")
-
-    # 4. Kilo
+    # 4. Kilo (PDF'ten)
     weight = feat.get('weight', 0)
     if weight and isinstance(weight, (int, float)) and weight > 0:
         if weight <= 54:
-            reasons.append(f"{weight}kg hafif")
-        elif weight >= 60:
-            reasons.append(f"{weight}kg ağır ⚠️")
+            reasons.append(f"{weight:.0f}kg — hafif, avantaj")
 
-    # 5. Pedigri (dam/sire)
-    sire = feat.get('sire', '')
-    dam_wr = feat.get('dam_produce_wr', 0)
-    if dam_wr and dam_wr > 0.15:
-        reasons.append("Anne soyundan kazananlar var")
+    # 5. Model skoru yüksek ama piyasa düşük
+    if has_model and score >= 0.9 and agf_pct > 0 and agf_pct < 15:
+        if not any('💎' in r for r in reasons):
+            reasons.append("Model beğeniyor, piyasa fark etmemiş 💎")
 
-    # 6. Dinlenme
-    kgs = feat.get('kgs', 0)
-    if kgs and isinstance(kgs, (int, float)):
-        if 14 <= kgs <= 28:
-            reasons.append("Taze, yakın koşu")
-        elif kgs >= 60:
-            reasons.append("Uzun ara ⚠️")
+    # 6. Model-piyasa uyumu
+    if has_model and rank == 0 and agf_pct >= 30:
+        if not any('favori' in r.lower() for r in reasons[:1]):
+            reasons.append("Model + piyasa hemfikir")
 
-    # 7. Model skoru yüksek ama piyasa düşük (value)
-    if has_model and score >= 0.9 and agf_pct < 15:
-        reasons.append("Model çok beğeniyor ama piyasa bilmiyor 💎")
-
-    # Hiç sebep yoksa genel yorum
+    # Hiç sebep yoksa
     if not reasons:
-        if rank == 0:
-            reasons.append("Model en yüksek skor veriyor")
-        elif rank <= 2:
+        if has_model and score >= 0.9:
+            reasons.append("Model skoru çok yüksek")
+        elif rank == 0:
+            reasons.append("En yüksek model skoru")
+        else:
             reasons.append(f"Model #{rank+1} sırada")
 
-    return reasons[:3]  # max 3 sebep
+    return reasons[:3]
 
 
 def _get_agf_rank(horse_number, agf_by_num):
