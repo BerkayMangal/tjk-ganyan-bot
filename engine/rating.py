@@ -1,4 +1,9 @@
-"""Rating Engine — AGF-bazlı gün kalitesi değerlendirmesi"""
+"""Rating Engine V5.1 — Model confidence + agreement bazlı
+Backtest sonuçlarından kalibrasyon:
+  - 2+ yıldız & 0 sürpriz = en iyi strateji (DAR +13.9% ROI)
+  - 3 yıldız = model çok emin ama overfit riski (dikkat)
+  - 1 yıldız = pas geç
+"""
 import numpy as np
 from config import RATING_3_STAR, RATING_2_STAR
 
@@ -6,84 +11,97 @@ from config import RATING_3_STAR, RATING_2_STAR
 def rate_sequence(legs, breed='mixed'):
     """
     6'lı altılı dizisinin kalitesini değerlendir.
-    AGF verilerine göre gün ne kadar oynabilir?
-
-    Score hesaplama:
-    - Favori gücü (ortalama top AGF)
-    - Banko ayak sayısı
-    - Sürpriz riski (düşük favori sayısı)
-    - Alan büyüklüğü
-
-    Returns: {rating: 1-3, score: float, stars: str, verdict: str, reasons: []}
+    Model confidence + agreement + AGF verilerine göre.
     """
     reasons = []
     score = 0.0
 
-    # ── AGF bazlı metrikler ──
-    top_agfs = []
-    n_banko = 0
-    n_open = 0
-    n_big_field = 0
+    has_model = any(l.get('has_model', False) for l in legs)
 
+    # ── Model bazlı metrikler ──
+    confidences = [l.get('confidence', 0) for l in legs]
+    agreements = [l.get('model_agreement', 0.5) for l in legs]
+    avg_conf = np.mean(confidences)
+    avg_agree = np.mean(agreements)
+    n_banko = sum(1 for c, a in zip(confidences, agreements)
+                  if c >= 0.2 and a >= 0.67)
+    n_open = sum(1 for c in confidences if c < 0.08)
+    n_big = sum(1 for l in legs if l['n_runners'] >= 12)
+
+    # AGF metrikleri
+    top_agfs = []
     for leg in legs:
         agf_data = leg.get('agf_data', [])
         if agf_data:
-            top = agf_data[0]['agf_pct']
-            top_agfs.append(top)
-            if top >= 45:
-                n_banko += 1
-            if top < 20:
-                n_open += 1
-        if leg['n_runners'] >= 12:
-            n_big_field += 1
+            top_agfs.append(agf_data[0]['agf_pct'])
 
-    avg_top = np.mean(top_agfs) if top_agfs else 20
+    avg_top_agf = np.mean(top_agfs) if top_agfs else 20
 
     # ── Scoring ──
-    # Favori gücü (max 3 puan)
-    if avg_top >= 40:
-        score += 3.0
-        reasons.append(f"Ortalama favori gücü yüksek (%{avg_top:.0f})")
-    elif avg_top >= 30:
-        score += 2.0
-        reasons.append(f"Ortalama favori gücü orta (%{avg_top:.0f})")
-    elif avg_top >= 20:
-        score += 1.0
-        reasons.append(f"Ortalama favori gücü düşük (%{avg_top:.0f})")
-    else:
-        score += 0.0
-        reasons.append(f"Favori gücü çok düşük (%{avg_top:.0f}) — zor gün")
 
-    # Banko sayısı (max 2 puan)
+    # Model confidence (max 3)
+    if has_model:
+        if avg_conf >= 0.2:
+            score += 2.5
+            reasons.append(f"Model güveni yüksek ({avg_conf:.2f})")
+        elif avg_conf >= 0.12:
+            score += 1.5
+            reasons.append(f"Model güveni orta ({avg_conf:.2f})")
+        else:
+            score += 0.5
+            reasons.append(f"Model güveni düşük ({avg_conf:.2f})")
+    else:
+        # AGF-only fallback
+        if avg_top_agf >= 40:
+            score += 2.0
+            reasons.append(f"AGF favori gücü yüksek (%{avg_top_agf:.0f})")
+        elif avg_top_agf >= 25:
+            score += 1.0
+        else:
+            reasons.append(f"AGF favori gücü düşük (%{avg_top_agf:.0f})")
+
+    # Agreement (max 2)
+    if has_model:
+        if avg_agree >= 0.67:
+            score += 2.0
+            reasons.append(f"3 model uyumlu ({avg_agree*100:.0f}%)")
+        elif avg_agree >= 0.5:
+            score += 1.0
+        else:
+            score -= 0.5
+            reasons.append(f"Modeller ayrışıyor ({avg_agree*100:.0f}%)")
+
+    # Banko ayak (max 1.5)
     if n_banko >= 3:
-        score += 2.0
-        reasons.append(f"{n_banko} banko ayak — dar kupon uygun")
+        score += 1.5
+        reasons.append(f"{n_banko} banko ayak")
     elif n_banko >= 1:
-        score += 1.0
+        score += 0.5
         reasons.append(f"{n_banko} banko ayak")
     else:
-        reasons.append("Banko ayak yok!")
+        reasons.append("Banko ayak yok")
 
-    # Açık yarış penalty (max -2)
+    # Penalty: açık yarışlar
     if n_open >= 3:
         score -= 1.5
         reasons.append(f"{n_open} açık yarış — sürpriz riski yüksek")
     elif n_open >= 2:
         score -= 0.5
-        reasons.append(f"{n_open} açık yarış var")
 
-    # Kalabalık alan penalty
-    if n_big_field >= 3:
+    # Penalty: kalabalık
+    if n_big >= 3:
         score -= 1.0
-        reasons.append(f"{n_big_field} kalabalık alan (12+ at)")
+        reasons.append(f"{n_big} kalabalık alan")
 
-    # Breed bonus (İngiliz dizileri daha tahmin edilebilir)
-    if breed == 'english':
-        score += 0.5
-        reasons.append("İngiliz dizisi — form verisi daha güvenilir")
-    elif breed == 'arab':
+    # Breed
+    if breed == 'arab':
+        score += 0.3  # Backtest'te Arap +1.9% ROI
+        reasons.append("Arap dizisi (tarihsel ROI+)")
+    elif breed == 'english':
+        score += 0.2
+    elif breed == 'mixed':
         score -= 0.3
-        reasons.append("Arap dizisi — sürpriz riski daha yüksek")
+        reasons.append("Karışık dizi (tarihsel ROI düşük)")
 
     # ── Rating ──
     score = max(score, 0.0)
@@ -91,15 +109,15 @@ def rate_sequence(legs, breed='mixed'):
     if score >= RATING_3_STAR:
         rating = 3
         stars = "⭐⭐⭐"
-        verdict = "GÜÇLÜ GÜN — Piyasa emin, DAR+GENİŞ oyna"
+        verdict = "GÜÇLÜ GÜN — Model emin, DAR+GENİŞ oyna"
     elif score >= RATING_2_STAR:
         rating = 2
         stars = "⭐⭐"
-        verdict = "NORMAL GÜN — DAR oyna, GENİŞ düşün"
+        verdict = "NORMAL GÜN — DAR oyna"
     else:
         rating = 1
         stars = "⭐"
-        verdict = "ZAYIF GÜN — Dikkatli ol veya pas geç"
+        verdict = "ZAYIF GÜN — Pas geç"
 
     return {
         'rating': rating,
