@@ -110,6 +110,13 @@ class FeatureBuilder:
             for h in agf_data:
                 agf_by_num[h['horse_number']] = h
 
+        # Pre-compute AGF rank by horse number (highest pct = rank 1)
+        agf_rank_by_num = {}
+        if agf_data:
+            sorted_agf = sorted(agf_data, key=lambda a: a.get('agf_pct', 0), reverse=True)
+            for rank_i, a in enumerate(sorted_agf, 1):
+                agf_rank_by_num[a['horse_number']] = rank_i
+
         # All odds for race-level features
         all_odds = []
         for h in horses:
@@ -150,7 +157,11 @@ class FeatureBuilder:
 
         # Race conditions — sanitize
         distance = to_float(race_info.get('distance', 1400), 1400)
-        track_type = race_info.get('track_type', 'dirt') or 'dirt'
+        _track_map = {'kum': 'dirt', 'çim': 'turf', 'sentetik': 'synthetic',
+                      'dirt': 'dirt', 'turf': 'turf', 'synthetic': 'synthetic'}
+        track_type = _track_map.get(
+            (race_info.get('track_type', '') or '').lower().strip(), 'dirt'
+        )
         first_prize = to_float(race_info.get('first_prize', 100000), 100000)
         temperature = to_float(race_info.get('temperature', 15), 15)
         humidity = to_float(race_info.get('humidity', 60), 60)
@@ -202,11 +213,7 @@ class FeatureBuilder:
             f['f_agf_log'] = self._safe_norm_val(np.log1p(min(odds, 200)), 0, np.log1p(200))
             f['f_agf_implied_prob'] = min(1.0 / (odds + 0.01), 1.0) if odds > 0 else 0.0
             f['f_agf_rank'] = self._safe_norm_val(
-                agf.get('agf_rank', len(horses)),
-                1, len(horses)
-            ) if 'agf_rank' not in agf else self._safe_norm_val(
-                sorted([a['agf_pct'] for a in agf_data], reverse=True).index(agf_pct) + 1
-                if agf_data and agf_pct in [a['agf_pct'] for a in agf_data] else len(horses),
+                agf_rank_by_num.get(num, len(horses)),
                 1, len(horses)
             )
             f['f_agf_fav_margin'] = self._safe_norm_val(
@@ -227,7 +234,8 @@ class FeatureBuilder:
             f['f_form_best'] = 1.0 / (min(positions, default=10) + 1)
             f['f_form_consistency'] = 1.0 / (np.std(positions) + 1) if len(positions) >= 2 else 0.0
             f['f_form_trend'] = self._calc_form_trend(parsed)
-            f['f_form_dirt_pct'] = sum(1 for t, _ in parsed if t == 'K') / max(len(parsed), 1) if parsed else 0.5
+            known = [(t, p) for t, p in parsed if t in ('K', 'C')]
+            f['f_form_dirt_pct'] = sum(1 for t, _ in known if t == 'K') / max(len(known), 1) if known else 0.5
             f['f_surface_match'] = self._calc_surface_match(parsed, track_type)
             f['f_last20_score'] = to_float(h.get('last_20_score', 10), 10) / 20.0
 
@@ -379,8 +387,11 @@ class FeatureBuilder:
 
     def update_model_vs_market(self, matrix, model_scores):
         """
-        2nd pass: f_model_vs_market = model rank - AGF rank difference.
-        Call after first predict, then predict again.
+        2nd pass: f_model_vs_market = AGF rank − model rank (per horse).
+        Positive → model thinks horse is better than market does.
+        
+        NOTE: Only call this after retrain that includes real model_vs_market
+        values. Current trained models saw this feature as 0.0.
         """
         if 'f_model_vs_market' not in self.feature_cols:
             return matrix
@@ -391,23 +402,39 @@ class FeatureBuilder:
         if agf_rank_idx is None:
             return matrix
 
+        n = len(model_scores)
         # Model rank (1 = best)
         model_ranks = np.argsort(np.argsort(-model_scores)) + 1
-        agf_ranks = matrix[:, agf_rank_idx] * len(model_scores)  # denormalize
+        # Denormalize AGF rank from [0,1] back to [1, n]
+        agf_ranks = matrix[:, agf_rank_idx] * (n - 1) + 1
 
-        # Positive = model thinks horse is better than market
-        diff = agf_ranks - model_ranks
-        matrix[:, col_idx] = self._safe_norm_val(diff.mean(), -10, 10)  # simplified
+        # Per-horse diff, normalized to ~[-1, 1]
+        diff = (agf_ranks - model_ranks) / max(n, 1)
+        matrix[:, col_idx] = diff
 
         return matrix
 
     # ── Helper methods ──
 
     def _parse_form(self, form_str):
-        """Parse 'K4K1K1K7K3K1' → [('K',4), ('K',1), ...]"""
+        """Parse form string into [(surface, position), ...].
+        
+        Handles two formats:
+          'K4K1C1K7C3' → [('K',4), ('K',1), ('C',1), ('K',7), ('C',3)]
+          '7-54436'    → [('U',7), ('U',5), ('U',4), ('U',4), ('U',3), ('U',6)]
+        'U' = unknown surface (no K/C info available from PDF).
+        """
         if not form_str or not isinstance(form_str, str):
             return []
-        return [(t, int(p)) for t, p in re.findall(r'([KC])(\d+)', form_str)]
+        # Try K/C format first
+        kc_parsed = re.findall(r'([KC])(\d+)', form_str)
+        if kc_parsed:
+            return [(t, int(p)) for t, p in kc_parsed]
+        # Fallback: digit-dash format from PDF  ("7-54436" or "12345")
+        digits = [int(ch) for ch in form_str if ch.isdigit() and ch != '0']
+        if digits:
+            return [('U', d) for d in digits]
+        return []
 
     def _calc_form_trend(self, parsed):
         if len(parsed) < 4:
@@ -424,16 +451,22 @@ class FeatureBuilder:
     def _calc_surface_match(self, parsed, track_type):
         if not parsed:
             return 0.5
+        # Only count entries where surface is known (K or C)
+        known = [(t, p) for t, p in parsed if t in ('K', 'C')]
+        if not known:
+            return 0.5  # All unknown → neutral
         if track_type == 'dirt':
-            return sum(1 for t, _ in parsed if t == 'K') / len(parsed)
+            return sum(1 for t, _ in known if t == 'K') / len(known)
         else:
-            return sum(1 for t, _ in parsed if t == 'C') / len(parsed)
+            return sum(1 for t, _ in known if t == 'C') / len(known)
 
     def _build_surprise_key(self, field_size, race_info):
         fs_bucket = 'small' if field_size <= 7 else ('medium' if field_size <= 11 else 'large')
         group = race_info.get('group_name', '')
         is_arab = 1 if 'arap' in group.lower() else 0
-        track = race_info.get('track_type', 'dirt')
+        _tm = {'kum': 'dirt', 'çim': 'turf', 'sentetik': 'synthetic',
+               'dirt': 'dirt', 'turf': 'turf', 'synthetic': 'synthetic'}
+        track = _tm.get((race_info.get('track_type', '') or '').lower().strip(), 'dirt')
         hippo = race_info.get('hippodrome_name', 'UNK')
         return f"{fs_bucket}|{is_arab}|{track}|{hippo}"
 
