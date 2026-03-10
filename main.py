@@ -71,7 +71,6 @@ def run_daily(target_date=None):
 
     # ── 4. PROCESS ──
     altili_packages = []
-    skipped = 0
 
     for agf_alt in agf_altilis:
         hippo = agf_alt['hippodrome']
@@ -98,17 +97,9 @@ def run_daily(target_date=None):
         n_surprise = sum(1 for l in legs
                          if l.get('agf_data') and l['agf_data'][0]['agf_pct'] < 20)
 
-        # ── FİLTRE: 1 yıldız → pas geç ──
+        # ── FİLTRE: 1 yıldız → uyarı ama yine kupon üret ──
         if rating['rating'] < 2:
-            logger.info(f"  ⭐ SKIP — {rating['verdict']}")
-            skipped += 1
-            skip_msg = (
-                f"🏇 {hippo.replace(' Hipodromu','')} {altili_no}. Altılı — {date_str}\n"
-                f"⭐ {rating['verdict']}\n"
-                f"⏭️ Model bu altılıyı pas geçiyor."
-            )
-            altili_packages.append((skip_msg, None))
-            continue
+            logger.info(f"  ⭐ UYARI — {rating['verdict']} (kupon yine üretiliyor)")
 
         # Kuponlar
         dar = build_kupon(legs, hippo, mode='dar')
@@ -134,8 +125,6 @@ def run_daily(target_date=None):
     # ── 5. SEND ──
     n_hippo = len(set(a['hippodrome'] for a in agf_altilis))
     header = format_daily_header(date_str, n_hippo, len(agf_altilis))
-    if skipped:
-        header += f"\n⏭️ {skipped} altılı pas geçildi (1 yıldız)"
     send_daily_sync(header, altili_packages)
     logger.info("Done! ✓")
 
@@ -190,6 +179,18 @@ def _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date):
 
         try:
             matrix, names = fb.build_race_features(horses_input, race_info, agf_data)
+
+            # Check: kaç feature non-zero? Çoğu 0 ise model güvenilmez
+            nonzero_pct = np.count_nonzero(matrix) / matrix.size if matrix.size > 0 else 0
+
+            if nonzero_pct < 0.25:
+                # Çok az veri — AGF sıralamasını koru, model güvenilmez
+                logger.info(f"  Leg {i+1}: insufficient data ({nonzero_pct:.0%} filled) — using AGF")
+                updated = dict(leg)
+                updated['has_model'] = False
+                new_legs.append(updated)
+                continue
+
             scores = model.predict(matrix)
 
             # Model agreement
