@@ -75,6 +75,8 @@ def run_daily(target_date=None):
 
     # ── 4. PROCESS ──
     altili_packages = []
+    all_health = {'total': 0, 'model_ok': 0, 'fallback': 0, 'error': 0,
+                  'nonzero_pcts': [], 'pdf_fields_filled': 0}
 
     for agf_alt in agf_altilis:
         hippo = agf_alt['hippodrome']
@@ -88,7 +90,10 @@ def run_daily(target_date=None):
 
         # Model predict
         if model_ok and fb_ok:
-            legs = _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date)
+            legs, leg_health = _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date)
+            for k in ('total', 'model_ok', 'fallback', 'error', 'pdf_fields_filled'):
+                all_health[k] += leg_health[k]
+            all_health['nonzero_pcts'].extend(leg_health['nonzero_pcts'])
         else:
             legs = agf_legs
 
@@ -130,12 +135,32 @@ def run_daily(target_date=None):
     n_hippo = len(set(a['hippodrome'] for a in agf_altilis))
     header = format_daily_header(date_str, n_hippo, len(agf_altilis))
     send_daily_sync(header, altili_packages)
+
+    # ── 6. HEALTH REPORT ──
+    if all_health['total'] > 0:
+        h = all_health
+        avg_nz = np.mean(h['nonzero_pcts']) if h['nonzero_pcts'] else 0
+        health_msg = (
+            f"📊 Model Health — {date_str}\n"
+            f"Toplam ayak: {h['total']}\n"
+            f"  ✅ Model: {h['model_ok']}  ⚠️ Fallback: {h['fallback']}  ❌ Hata: {h['error']}\n"
+            f"  📄 PDF veri: {h['pdf_fields_filled']}/{h['total']} ayak\n"
+            f"  📈 Ort. feature doluluğu: {avg_nz:.0%}\n"
+        )
+        logger.info(health_msg)
+        try:
+            send_sync(health_msg)
+        except Exception:
+            pass
+
     logger.info("Done! ✓")
 
 
 def _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date):
     """Her ayak için 82 feature build + 3-ensemble predict."""
     new_legs = []
+    health = {'total': 0, 'model_ok': 0, 'fallback': 0, 'error': 0,
+              'nonzero_pcts': [], 'pdf_fields_filled': 0}
 
     for i, leg in enumerate(agf_legs):
         agf_data = leg.get('agf_data', [])
@@ -186,12 +211,20 @@ def _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date):
 
             # Check: kaç feature non-zero? Çoğu 0 ise model güvenilmez
             nonzero_pct = np.count_nonzero(matrix) / matrix.size if matrix.size > 0 else 0
+            health['total'] += 1
+            health['nonzero_pcts'].append(nonzero_pct)
+
+            # Check if PDF enriched this leg (form/jockey/weight exist)
+            has_pdf = any(feat_dict.get('form', '') for _, _, _, feat_dict in leg['horses'])
+            if has_pdf:
+                health['pdf_fields_filled'] += 1
 
             if nonzero_pct < 0.10:
                 # Çok az veri — AGF sıralamasını koru
                 logger.info(f"  Leg {i+1}: insufficient data ({nonzero_pct:.0%} filled) — using AGF")
                 updated = dict(leg)
                 updated['has_model'] = False
+                health['fallback'] += 1
                 new_legs.append(updated)
                 continue
 
@@ -223,13 +256,16 @@ def _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date):
             updated['confidence'] = conf
             updated['model_agreement'] = agree
             updated['has_model'] = True
+            health['model_ok'] += 1
             new_legs.append(updated)
 
         except Exception as e:
             logger.warning(f"  Leg {i+1} model failed: {e}")
+            health['total'] += 1
+            health['error'] += 1
             new_legs.append(leg)
 
-    return new_legs
+    return new_legs, health
 
 
 def _fetch_pdf_data(target_date):
