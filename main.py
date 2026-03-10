@@ -53,7 +53,11 @@ def run_daily(target_date=None):
     fb_ok = fb.load()
 
     if model_ok and fb_ok:
-        logger.info("Model + features ready")
+        has_stats = bool(fb.stats)
+        if has_stats:
+            logger.info("Model + features + rolling stats ready ✓")
+        else:
+            logger.info("Model + features ready (rolling stats yok — kısıtlı mod)")
     else:
         logger.warning("Model yüklenemedi — AGF-only fallback")
 
@@ -183,8 +187,8 @@ def _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date):
             # Check: kaç feature non-zero? Çoğu 0 ise model güvenilmez
             nonzero_pct = np.count_nonzero(matrix) / matrix.size if matrix.size > 0 else 0
 
-            if nonzero_pct < 0.25:
-                # Çok az veri — AGF sıralamasını koru, model güvenilmez
+            if nonzero_pct < 0.10:
+                # Çok az veri — AGF sıralamasını koru
                 logger.info(f"  Leg {i+1}: insufficient data ({nonzero_pct:.0%} filled) — using AGF")
                 updated = dict(leg)
                 updated['has_model'] = False
