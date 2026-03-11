@@ -51,3 +51,7 @@ MC_MIN_EV_RATIO = 1.2
 
 # AGF Scraper
 AGF_URL = "https://www.agftablosu.com/agf-tablosu"
+
+# Altılı tespit
+ALTILI_LEG_COUNT = 6
+MIN_RACES_FOR_ALTILI = 6

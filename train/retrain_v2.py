@@ -264,7 +264,7 @@ def train_xgb(X, y, groups, **kwargs):
 
 
 def train_lgbm(X, y, groups, **kwargs):
-    """LGBMRanker eğit."""
+    """LGBMRegressor eğit (regression proxy for ranking)."""
     from lightgbm import LGBMRegressor
 
     params = dict(
