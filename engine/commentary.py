@@ -125,6 +125,22 @@ def _build_leg_commentary(ayak_num, leg):
 
     lines = [" | ".join(header_parts)]
 
+    # Model vs AGF karsilastirma
+    if has_model and agf_by_num and horses:
+        model_top = horses[0][2]
+        agf_sorted = sorted(agf_by_num.keys(), key=lambda k: -agf_by_num[k])
+        agf_top = agf_sorted[0] if agf_sorted else None
+        if agf_top and model_top != agf_top:
+            model_name = horses[0][0]
+            if model_name.startswith('#') or model_name.startswith('At_'):
+                model_name = f"#{model_top}"
+            agf_name = f"#{agf_top}"
+            for h in horses:
+                if h[2] == agf_top:
+                    agf_name = h[0] if not h[0].startswith('#') else f"#{agf_top}"
+                    break
+            lines.append(f">> Model: {escape(str(model_name))} | Piyasa: {escape(str(agf_name))} — FARKLI DUSUNUYOR")
+
     n_show = min(3, len(horses))
     for rank in range(n_show):
         h = horses[rank]

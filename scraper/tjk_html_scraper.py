@@ -235,6 +235,13 @@ def _parse_html_horse(cells, col):
             dam = links[1].get_text(strip=True)
         if len(links) >= 3:
             dam_sire = links[2].get_text(strip=True)
+        # Fallback: TJK "Baba - Anne / AnneBabasi" formatindan parse et
+        if not dam_sire:
+            pedigree_text = pc.get_text(strip=True)
+            if '/' in pedigree_text:
+                after_slash = pedigree_text.split('/')[-1].strip()
+                if after_slash and len(after_slash) > 1:
+                    dam_sire = after_slash
 
     # Weight
     wt = text('weight', '57')
@@ -399,9 +406,9 @@ def _parse_csv_to_races(rows):
         'number': find_col('at no', 'no', 'numara'),
         'name': find_col('at adı', 'at adi', 'isim', 'name'),
         'age': find_col('yaş', 'yas', 'age'),
-        'sire': find_col('baba', 'sire'),
-        'dam': find_col('anne', 'dam'),
-        'dam_sire': find_col('anne babası', 'anababa', 'damsire'),
+        'sire': find_col('orijin(baba', 'baba', 'sire'),
+        'dam': find_col('orijin(anne', 'anne', 'dam'),
+        'dam_sire': find_col('anne babası', 'anababa', 'damsire', 'orijin(anne baba'),
         'weight': find_col('kilo', 'sıklet', 'weight'),
         'jockey': find_col('jokey', 'jockey'),
         'trainer': find_col('antrenör', 'antrenor', 'trainer'),
@@ -470,8 +477,8 @@ def _parse_csv_to_races(rows):
             'jockey_name': get(row, 'jockey'),
             'trainer_name': get(row, 'trainer'),
             'sire_name': get(row, 'sire'),
-            'dam_name': get(row, 'dam'),
-            'dam_sire_name': get(row, 'dam_sire'),
+            'dam_name': get(row, 'dam').split('/')[0].strip() if '/' in get(row, 'dam') else get(row, 'dam'),
+            'dam_sire_name': get(row, 'dam').split('/')[-1].strip() if '/' in get(row, 'dam') else get(row, 'dam_sire'),
             'form': get(row, 'form'),
             'equipment': '',
             'kgs': kgs,
