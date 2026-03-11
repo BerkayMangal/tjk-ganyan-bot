@@ -404,33 +404,61 @@ def enrich_legs_from_pdf(legs: List[Dict], pdf_races: List[Dict]) -> List[Dict]:
     PDF'ten çekilen detay bilgileri ile AGF leg'lerini zenginleştir.
 
     Eşleştirme: at numarası üzerinden.
-    PDF koşu numarasına göre eşleştirme (pozisyon değil!).
+    At numarası overlap ile eşleştirme (kayma bug fix).
     """
     if not pdf_races:
         return legs
 
-    # PDF koşularını numara bazlı index'le
-    pdf_by_racenum = {}
+    # Her program koşusu için horse_number set'i oluştur
+    pdf_race_horses = {}
     for pr in pdf_races:
         rn = pr.get('race_number', 0)
         if rn > 0:
-            pdf_by_racenum[rn] = pr
+            horse_nums = set()
+            for h in pr.get('horses', []):
+                if isinstance(h, dict) and h.get('horse_number'):
+                    horse_nums.add(h['horse_number'])
+            pdf_race_horses[rn] = {'race': pr, 'horse_nums': horse_nums}
 
-    # Altılı ayak → koşu numarası eşleştirmesi
-    # AGF leg sırası 1-6, ama koşu numaraları farklı olabilir (3-8, 2-7 vs.)
-    # Eğer leg'te race_number varsa onu kullan, yoksa pozisyon bazlı dene
+
+    # Her AGF leg'i en çok horse_number overlap'i olan koşuyla eşleştir
+    used_races = set()
     for i, leg in enumerate(legs):
-        leg_rn = leg.get('race_number', i + 1)
+        agf_nums = set()
+        for h in leg.get('agf_data', []):
+            if h.get('horse_number'):
+                agf_nums.add(h['horse_number'])
 
-        # Önce race_number ile eşleştir
-        pdf_race = pdf_by_racenum.get(leg_rn)
-
-        # Bulamazsa pozisyon bazlı dene
-        if not pdf_race and i < len(pdf_races):
-            pdf_race = pdf_races[i]
-
-        if not pdf_race:
+        if not agf_nums:
             continue
+
+        # En çok overlap'i olan koşuyu bul
+        best_rn = None
+        best_overlap = 0
+        for rn, data in pdf_race_horses.items():
+            if rn in used_races:
+                continue
+            overlap = len(agf_nums & data['horse_nums'])
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_rn = rn
+
+        if best_rn is None or best_overlap < 2:
+            # Fallback: n_runners eşleştirmesi
+            leg_n = leg.get('n_runners', 0)
+            for rn, data in pdf_race_horses.items():
+                if rn not in used_races and len(data['horse_nums']) == leg_n:
+                    best_rn = rn
+                    break
+
+        if best_rn is None:
+            continue
+
+        used_races.add(best_rn)
+        pdf_race = pdf_race_horses[best_rn]['race']
+
+        logger.debug(f"  Leg {i+1} -> Kosu {best_rn} (overlap: {best_overlap})")
+
 
         # Koşu bilgileri
         leg['distance'] = pdf_race.get('distance', '') or leg.get('distance', '')
@@ -438,7 +466,7 @@ def enrich_legs_from_pdf(legs: List[Dict], pdf_races: List[Dict]) -> List[Dict]:
         leg['race_type'] = pdf_race.get('race_type', '') or leg.get('race_type', '')
         leg['group_name'] = pdf_race.get('group_name', '') or leg.get('group_name', '')
         leg['first_prize'] = pdf_race.get('prize', 0) or leg.get('first_prize', 0)
-        leg['race_number'] = pdf_race.get('race_number', leg_rn)
+        leg['race_number'] = pdf_race.get('race_number', best_rn)
 
         # Cins tespiti
         group = leg.get('group_name', '')
