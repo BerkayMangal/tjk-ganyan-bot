@@ -265,10 +265,10 @@ def train_xgb(X, y, groups, **kwargs):
 
 def train_lgbm(X, y, groups, **kwargs):
     """LGBMRanker eğit."""
-    from lightgbm import LGBMRanker
+    from lightgbm import LGBMRegressor
 
     params = dict(
-        objective="lambdarank",
+        objective="regression_l2",
         n_estimators=600,
         max_depth=5,
         learning_rate=0.035,
@@ -283,8 +283,8 @@ def train_lgbm(X, y, groups, **kwargs):
     )
     params.update(kwargs)
 
-    model = LGBMRanker(**params)
-    model.fit(X, y, group=groups)
+    model = LGBMRegressor(**params)
+    model.fit(X, y)
     return model
 
 
