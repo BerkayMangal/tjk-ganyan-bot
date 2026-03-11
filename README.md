@@ -4,6 +4,8 @@
 
 A production-grade ML pipeline that scrapes race data from TJK, builds 82 engineered features, runs a 4-model ensemble ranker, and delivers automated 6'lı ganyan tickets via Telegram — deployed 24/7 on Railway.
 
+Built for research purposes. Trained on 14,792 entries from 1,517 races across 10 Turkish hippodromes (Sep 2025 – Mar 2026).
+
 ---
 
 ## System Architecture
