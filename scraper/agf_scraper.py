@@ -457,7 +457,7 @@ def enrich_legs_from_pdf(legs: List[Dict], pdf_races: List[Dict]) -> List[Dict]:
         used_races.add(best_rn)
         pdf_race = pdf_race_horses[best_rn]['race']
 
-        logger.debug(f"  Leg {i+1} -> Kosu {best_rn} (overlap: {best_overlap})")
+        logger.info(f"  Leg {i+1} -> Kosu {best_rn} (overlap: {best_overlap}, n_horses: {len(agf_nums)})")
 
 
         # Koşu bilgileri

@@ -1,5 +1,6 @@
-"""Commentary Engine V6 — Temiz, Kisa, Somut
-Format: Yaris Dergisi (kupon) + Sonduzluk (siralama) + Istinye (sebep)
+"""Commentary Engine V6.1 — Gercek kosu numarasi, detayli, temiz
+Kupon: DAR + GENIS ayri, code block
+Yorum: Gercek kosu numarasi (1. ayak != 1. kosu), kisa somut sebepler
 Telegram HTML parse_mode
 """
 import numpy as np
@@ -27,47 +28,34 @@ def generate_kupon_message(sequence_info, dar_ticket, genis_ticket, rating_info)
     lines.append(rating_line)
     lines.append("")
 
-    # Kupon code block (/ sistemi)
-    kupon_lines = _build_kupon_block(dar_ticket, genis_ticket)
+    # DAR + GENIS ayri ayri, tek code block
     lines.append("<pre>")
-    lines.extend(kupon_lines)
+    lines.append(f"DAR ({dar_ticket['cost']:,.0f} TL)")
+    for leg in dar_ticket['legs']:
+        nums = ",".join(str(h[2]) for h in leg['selected'])
+        if leg['is_tek']:
+            name = leg['selected'][0][0]
+            ns = ""
+            if name and not name.startswith('#') and not name.startswith('At_'):
+                ns = f" {name[:12]}"
+            lines.append(f"{leg['leg_number']}A) {nums} TEK{ns}")
+        else:
+            lines.append(f"{leg['leg_number']}A) {nums}")
+    lines.append("")
+    lines.append(f"GENIS ({genis_ticket['cost']:,.0f} TL)")
+    for leg in genis_ticket['legs']:
+        nums = ",".join(str(h[2]) for h in leg['selected'])
+        if leg['is_tek']:
+            name = leg['selected'][0][0]
+            ns = ""
+            if name and not name.startswith('#') and not name.startswith('At_'):
+                ns = f" {name[:12]}"
+            lines.append(f"{leg['leg_number']}A) {nums} TEK{ns}")
+        else:
+            lines.append(f"{leg['leg_number']}A) {nums}")
     lines.append("</pre>")
 
-    lines.append(
-        f"Cati: {dar_ticket['cost']:,.0f} TL ({dar_ticket['combo']:,} kombi) | "
-        f"Genis: {genis_ticket['cost']:,.0f} TL ({genis_ticket['combo']:,} kombi)"
-    )
-
     return "\n".join(lines)
-
-
-def _build_kupon_block(dar_ticket, genis_ticket):
-    kupon_lines = []
-    for i, dar_leg in enumerate(dar_ticket['legs']):
-        leg_num = dar_leg['leg_number']
-        dar_nums = [h[2] for h in dar_leg['selected']]
-
-        genis_nums = []
-        if i < len(genis_ticket['legs']):
-            genis_leg = genis_ticket['legs'][i]
-            all_genis = [h[2] for h in genis_leg['selected']]
-            genis_nums = [n for n in all_genis if n not in dar_nums]
-
-        dar_str = ",".join(str(n) for n in dar_nums)
-
-        if len(dar_nums) == 1 and not genis_nums:
-            name = dar_leg['selected'][0][0]
-            name_str = ""
-            if name and not name.startswith('#') and not name.startswith('At_'):
-                name_str = f" {name[:12]}"
-            kupon_lines.append(f"{leg_num}A) {dar_str} TEK{name_str}")
-        elif genis_nums:
-            genis_str = ",".join(str(n) for n in genis_nums)
-            kupon_lines.append(f"{leg_num}A) {dar_str} / {genis_str}")
-        else:
-            kupon_lines.append(f"{leg_num}A) {dar_str}")
-
-    return kupon_lines
 
 
 def generate_commentary(sequence_info, legs, rating_info, dar_ticket, genis_ticket):
@@ -84,7 +72,7 @@ def generate_commentary(sequence_info, legs, rating_info, dar_ticket, genis_tick
             lines.extend(leg_lines)
             lines.append("")
 
-    # Siralama
+    # Siralama — gercek kosu numaralariyla
     ranking = _build_full_ranking(legs)
     if ranking:
         lines.append(f"<b>Siralama:</b> {ranking}")
@@ -97,7 +85,8 @@ def generate_commentary(sequence_info, legs, rating_info, dar_ticket, genis_tick
     return "\n".join(lines)
 
 
-def _build_leg_commentary(leg_num, leg):
+def _build_leg_commentary(ayak_num, leg):
+    """Tek ayak yorumu. Gercek kosu numarasini gosterir."""
     horses = leg['horses']
     if not horses:
         return []
@@ -108,6 +97,9 @@ def _build_leg_commentary(leg_num, leg):
     has_model = leg.get('has_model', False)
     conf = leg.get('confidence', 0)
 
+    # Gercek kosu numarasi (enrichment'tan geliyor)
+    real_race = leg.get('race_number', ayak_num)
+
     dist = leg.get('distance', '')
     breed = ""
     if leg.get('is_arab'):
@@ -115,7 +107,13 @@ def _build_leg_commentary(leg_num, leg):
     elif leg.get('is_english'):
         breed = "Ingiliz"
 
-    header_parts = [f"<b>{leg_num}. Kosu</b> — {n} at"]
+    # Baslik: "3. Ayak (7. Kosu)" seklinde — adam TJK'da kacinci kosu bilsin
+    if real_race != ayak_num:
+        header_start = f"<b>{ayak_num}. Ayak (Kosu {real_race})</b>"
+    else:
+        header_start = f"<b>{ayak_num}. Ayak</b>"
+
+    header_parts = [header_start, f"{n} at"]
     if dist:
         header_parts.append(f"{dist}m")
     if breed:
@@ -143,7 +141,7 @@ def _build_leg_commentary(leg_num, leg):
         agf_pct = agf_by_num.get(number, feat.get('agf_pct', 0))
         reason = _build_reason(feat, agf_pct, score, rank, n, has_model)
 
-        lines.append(f"<b>{escape(display)} ({number})</b> — {escape(reason)}")
+        lines.append(f"<b>{escape(str(display))} ({number})</b> — {escape(reason)}")
 
     return lines
 
