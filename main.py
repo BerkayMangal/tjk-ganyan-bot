@@ -21,6 +21,7 @@ from scraper.agf_scraper import (
 )
 from scraper.tjk_program import get_todays_races as get_pdf_races
 from scraper.tjk_html_scraper import get_todays_races_html
+from scraper.expert_consensus import fetch_horseturk, build_consensus, format_consensus_message
 from model.ensemble import EnsembleRanker
 from model.features import FeatureBuilder
 from engine.kupon import build_kupon
@@ -126,6 +127,20 @@ def run_daily(target_date=None):
 
         kupon_text = generate_kupon_message(seq_info, dar, genis, rating)
         commentary_text = generate_commentary(seq_info, legs, rating, dar, genis)
+
+        # Consensus
+        try:
+            sehir = hippo.replace(' Hipodromu', '').replace(' Hipodrom', '')
+            expert = fetch_horseturk(target_date, sehir)
+            if expert:
+                consensus = build_consensus(legs, agf_alt, expert)
+                consensus_text = format_consensus_message(consensus, sehir)
+                logger.info(f"  Consensus: {sum(1 for c in consensus if c['all_agree'])} hemfikir, "
+                           f"{sum(1 for c in consensus if not c['model_agrees'])} farkli")
+                commentary_text = commentary_text + "\n\n" + consensus_text
+        except Exception as e:
+            logger.warning(f"  Consensus failed: {e}")
+
         altili_packages.append((kupon_text, commentary_text))
 
         try:
