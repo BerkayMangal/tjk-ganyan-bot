@@ -126,7 +126,7 @@ async def send_daily_package(daily_header, altili_packages, no_play_message=None
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
     # 1. Günlük header
-    await _send_single(bot, daily_header)
+    await _send_single(bot, daily_header, "HTML")
     await asyncio.sleep(INTER_MESSAGE_DELAY)
 
     if no_play_message:
@@ -141,7 +141,7 @@ async def send_daily_package(daily_header, altili_packages, no_play_message=None
             await _send_single(bot, "━" * 25)
             await asyncio.sleep(INTER_MESSAGE_DELAY)
 
-        await send_altili_package(kupon_text, commentary_text)
+        await send_altili_package(kupon_text, commentary_text, "HTML")
 
     # 3. Kapanış
     await asyncio.sleep(INTER_MESSAGE_DELAY)
@@ -213,10 +213,8 @@ def _split_message(text):
 def format_daily_header(date_str, n_hippodromes, n_altilis):
     """Günlük özet header"""
     return (
-        f"🏇🏇🏇 TJK 6'LI GANYAN — {date_str} 🏇🏇🏇\n"
-        f"{'='*35}\n"
-        f"📍 {n_hippodromes} hipodrom, {n_altilis} altılı dizi\n"
-        f"{'='*35}"
+        f"<b>TJK 6'LI GANYAN — {date_str}</b>\n"
+        f"{n_hippodromes} hipodrom, {n_altilis} altili dizi"
     )
 
 
