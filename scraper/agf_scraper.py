@@ -409,55 +409,75 @@ def enrich_legs_from_pdf(legs: List[Dict], pdf_races: List[Dict]) -> List[Dict]:
     if not pdf_races:
         return legs
 
-    # Her program koşusu için horse_number set'i oluştur
-    pdf_race_horses = {}
-    for pr in pdf_races:
-        rn = pr.get('race_number', 0)
-        if rn > 0:
-            horse_nums = set()
-            for h in pr.get('horses', []):
-                if isinstance(h, dict) and h.get('horse_number'):
-                    horse_nums.add(h['horse_number'])
-            pdf_race_horses[rn] = {'race': pr, 'horse_nums': horse_nums}
+    # Kosuları numara sirasina koy
+    sorted_races = sorted(pdf_races, key=lambda r: r.get('race_number', 0))
 
+    if len(sorted_races) < 6:
+        logger.warning(f"  Sadece {len(sorted_races)} kosu var, 6 lazim")
+        return legs
 
-    # Her AGF leg'i en çok horse_number overlap'i olan koşuyla eşleştir
-    used_races = set()
+    # Her kosu icin at sayisi
+    race_counts = {}
+    for r in sorted_races:
+        rn = r.get('race_number', 0)
+        n_horses = len([h for h in r.get('horses', []) if isinstance(h, dict) and h.get('horse_number')])
+        race_counts[rn] = n_horses
+
+    # AGF leg at sayilari
+    agf_counts = []
+    for leg in legs:
+        n = len([h for h in leg.get('agf_data', []) if h.get('horse_number')])
+        agf_counts.append(n)
+
+    # Tum olasi ardisik 6-kosu dizilerini dene
+    best_sequence = None
+    best_score = -1
+
+    for start_idx in range(len(sorted_races) - 5):
+        candidate = sorted_races[start_idx:start_idx + 6]
+        score = 0
+        for i, race in enumerate(candidate):
+            if i < len(agf_counts):
+                race_n = race_counts.get(race.get('race_number', 0), 0)
+                agf_n = agf_counts[i]
+                if race_n == agf_n:
+                    score += 10
+                elif abs(race_n - agf_n) <= 1:
+                    score += 5
+                elif abs(race_n - agf_n) <= 2:
+                    score += 2
+        if score > best_score:
+            best_score = score
+            best_sequence = candidate
+
+    if not best_sequence:
+        logger.warning("  Ardisik dizi bulunamadi")
+        return legs
+
+    start_rn = best_sequence[0].get('race_number', 0)
+    end_rn = best_sequence[-1].get('race_number', 0)
+    logger.info(f"  Ardisik dizi: Kosu {start_rn}-{end_rn} (skor: {best_score})")
+
+    # Sirali eslestirme yap
     for i, leg in enumerate(legs):
+        if i >= len(best_sequence):
+            break
+
+        pdf_race = best_sequence[i]
+        rn = pdf_race.get('race_number', 0)
+
         agf_nums = set()
         for h in leg.get('agf_data', []):
             if h.get('horse_number'):
                 agf_nums.add(h['horse_number'])
 
-        if not agf_nums:
-            continue
+        race_nums_set = set()
+        for h in pdf_race.get('horses', []):
+            if isinstance(h, dict) and h.get('horse_number'):
+                race_nums_set.add(h['horse_number'])
 
-        # En çok overlap'i olan koşuyu bul
-        best_rn = None
-        best_overlap = 0
-        for rn, data in pdf_race_horses.items():
-            if rn in used_races:
-                continue
-            overlap = len(agf_nums & data['horse_nums'])
-            if overlap > best_overlap:
-                best_overlap = overlap
-                best_rn = rn
-
-        if best_rn is None or best_overlap < 2:
-            # Fallback: n_runners eşleştirmesi
-            leg_n = leg.get('n_runners', 0)
-            for rn, data in pdf_race_horses.items():
-                if rn not in used_races and len(data['horse_nums']) == leg_n:
-                    best_rn = rn
-                    break
-
-        if best_rn is None:
-            continue
-
-        used_races.add(best_rn)
-        pdf_race = pdf_race_horses[best_rn]['race']
-
-        logger.info(f"  Leg {i+1} -> Kosu {best_rn} (overlap: {best_overlap}, n_horses: {len(agf_nums)})")
+        overlap = len(agf_nums & race_nums_set) if agf_nums else 0
+        logger.info(f"  Leg {i+1} -> Kosu {rn} (overlap: {overlap}, n_horses: {len(agf_nums)})")
 
 
         # Koşu bilgileri
@@ -466,7 +486,7 @@ def enrich_legs_from_pdf(legs: List[Dict], pdf_races: List[Dict]) -> List[Dict]:
         leg['race_type'] = pdf_race.get('race_type', '') or leg.get('race_type', '')
         leg['group_name'] = pdf_race.get('group_name', '') or leg.get('group_name', '')
         leg['first_prize'] = pdf_race.get('prize', 0) or leg.get('first_prize', 0)
-        leg['race_number'] = pdf_race.get('race_number', best_rn)
+        leg['race_number'] = pdf_race.get('race_number', rn)
 
         # Cins tespiti
         group = leg.get('group_name', '')
