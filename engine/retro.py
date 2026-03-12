@@ -105,7 +105,7 @@ def _ticket_to_dict(ticket):
 
 
 def _legs_agf_summary(legs):
-    """Her ayağın AGF özetini kaydet."""
+    """Her ayagin AGF + model ozeti."""
     summary = []
     for leg in legs:
         agf_data = leg.get('agf_data', [])
@@ -113,10 +113,24 @@ def _legs_agf_summary(legs):
             {'number': h['horse_number'], 'agf_pct': h['agf_pct']}
             for h in agf_data[:3]
         ]
+        # Model top pick
+        model_top = None
+        model_top_name = None
+        if leg.get('horses') and leg.get('has_model'):
+            model_top = leg['horses'][0][2]
+            model_top_name = leg['horses'][0][0]
+
+        # AGF top
+        agf_top = agf_data[0]['horse_number'] if agf_data else None
+
         summary.append({
             'n_runners': leg['n_runners'],
             'top3_agf': top3,
             'top_agf_pct': agf_data[0]['agf_pct'] if agf_data else 0,
+            'model_top': model_top,
+            'model_top_name': model_top_name,
+            'agf_top': agf_top,
+            'model_agrees_agf': model_top == agf_top if model_top and agf_top else None,
         })
     return summary
 
@@ -316,9 +330,104 @@ def _find_hippodrome_for_table(table):
 
 
 def _fetch_tjk_results(target_date) -> List[Dict]:
-    """TJK sonuç sayfasından fallback (yapılacak)."""
-    # TODO: TJK sonuç scraping
-    return []
+    """TJK CDN sonuc CSV fallback — en guvenilir kaynak."""
+    CITY_MAP = {
+        'Istanbul': 'Istanbul', 'Ankara': 'Ankara', 'Izmir': 'Izmir',
+        'Bursa': 'Bursa', 'Adana': 'Adana', 'Antalya': 'Antalya',
+        'Kocaeli': 'Kocaeli', 'Sanliurfa': 'Sanliurfa',
+        'Diyarbakir': 'Diyarbakir', 'Elazig': 'Elazig',
+    }
+    date_str = target_date.strftime('%d.%m.%Y')
+    yyyy = target_date.strftime('%Y')
+    iso = target_date.strftime('%Y-%m-%d')
+    base = f"https://medya-cdn.tjk.org/raporftp/TJKPDF/{yyyy}/{iso}/CSV/GunlukYarisSonuclari"
+
+    all_results = []
+    for city_key, city_url in CITY_MAP.items():
+        url = f"{base}/{date_str}-{city_url}-GunlukYarisSonuclari-TR.csv"
+        try:
+            resp = SESSION.get(url, timeout=15)
+            if resp.status_code != 200:
+                continue
+            text = resp.text
+            if len(text) < 100:
+                continue
+
+            rows = [line.split(';') for line in text.strip().split('\n')]
+            if len(rows) < 7:
+                continue
+
+            # Header bul
+            header = rows[0]
+            hl = [h.strip().lower() for h in header]
+
+            # Kosu gruplarini ayir
+            race_winners = {}
+            current_race = 0
+            for row in rows[1:]:
+                if len(row) < 5:
+                    # Yeni kosu basligi olabilir
+                    txt = ';'.join(row).strip()
+                    rm = re.search(r'(\d+)\. Kosu', txt, re.IGNORECASE)
+                    if rm:
+                        current_race = int(rm.group(1))
+                    continue
+
+                if current_race == 0:
+                    current_race = 1
+
+                # Ilk at = 1. (bitiş sırasına göre)
+                if current_race not in race_winners:
+                    # at no
+                    at_no_idx = next((i for i, h in enumerate(hl) if 'at no' in h or 'no' == h), 0)
+                    at_name_idx = next((i for i, h in enumerate(hl) if 'ismi' in h or 'adi' in h), 1)
+                    ganyan_idx = next((i for i, h in enumerate(hl) if 'ganyan' in h), -1)
+
+                    try:
+                        at_no = int(re.search(r'\d+', row[at_no_idx]).group())
+                        at_name = row[at_name_idx].strip() if at_name_idx < len(row) else ''
+                        ganyan = 0.0
+                        if ganyan_idx > 0 and ganyan_idx < len(row):
+                            gm = re.search(r'[\d,\.]+', row[ganyan_idx])
+                            if gm:
+                                ganyan = float(gm.group().replace(',', '.'))
+                        race_winners[current_race] = {
+                            'horse_number': at_no,
+                            'horse_name': at_name,
+                            'ganyan': ganyan,
+                            'agf_rank': 0,
+                        }
+                    except:
+                        pass
+                    current_race += 1
+
+            if not race_winners:
+                continue
+
+            # Altili dizileri olustur (ardisik 6 kosu)
+            sorted_races = sorted(race_winners.keys())
+            for start_idx in range(len(sorted_races)):
+                seq = sorted_races[start_idx:start_idx+6]
+                if len(seq) == 6 and seq[-1] - seq[0] == 5:
+                    winners = [race_winners[r] for r in seq]
+                    for i, w in enumerate(winners):
+                        w['leg_number'] = i + 1
+                    altili_no = 1 if start_idx == 0 else 2
+                    all_results.append({
+                        'hippodrome': city_key + ' Hipodromu',
+                        'altili_no': altili_no,
+                        'date': iso,
+                        'winners': winners,
+                        'source': 'tjk_cdn',
+                    })
+
+            logger.info(f"TJK CDN results: {city_key} OK")
+
+        except Exception as e:
+            logger.debug(f"TJK CDN {city_key}: {e}")
+            continue
+
+    return all_results
 
 
 # ═══════════════════════════════════════════════════════════
@@ -387,9 +496,23 @@ def run_retro(target_date=None) -> str:
             genis_hit = "✅" if leg_stat['genis_hit'] else "❌"
             agf_fav = "⭐" if leg_stat['agf_fav_won'] else ""
 
+            # Model vs AGF bilgisi
+            model_info = ""
+            if i < len(legs_agf):
+                la = legs_agf[i]
+                m_top = la.get('model_top')
+                a_top = la.get('agf_top')
+                if m_top and a_top:
+                    m_hit = "HIT" if m_top == winner else "MISS"
+                    a_hit = "HIT" if a_top == winner else "MISS"
+                    if m_top != a_top:
+                        model_info = f" | M:{m_top}({m_hit}) A:{a_top}({a_hit}) FARKLI"
+                    else:
+                        model_info = f" | M=A:{m_top}({m_hit})"
+
             report_lines.append(
                 f"   {leg_no}. Ayak: #{winner} {winner_name[:12]} "
-                f"| DAR:{dar_hit} GENİŞ:{genis_hit} {agf_fav}"
+                f"| DAR:{dar_hit} GENIS:{genis_hit}{model_info}"
             )
 
         # Özet
@@ -422,6 +545,34 @@ def run_retro(target_date=None) -> str:
                            f"(%{total_genis/total_legs*100:.0f})")
         report_lines.append(f"   AGF favori: {total_agf}/{total_legs} "
                            f"(%{total_agf/total_legs*100:.0f})")
+
+        # Model vs AGF karsilastirma
+        model_hits = 0
+        model_diff = 0
+        model_diff_hits = 0
+        for s in all_stats:
+            pred = next((p for p in predictions if p['hippodrome'] == s['hippodrome'] and p['altili_no'] == s['altili_no']), None)
+            if pred:
+                for i, ls in enumerate(s['legs']):
+                    la = pred.get('legs_agf', [])
+                    if i < len(la):
+                        m_top = la[i].get('model_top')
+                        a_top = la[i].get('agf_top')
+                        w = ls['winner_number']
+                        if m_top:
+                            if m_top == w:
+                                model_hits += 1
+                            if m_top != a_top:
+                                model_diff += 1
+                                if m_top == w:
+                                    model_diff_hits += 1
+
+        if model_hits > 0 or model_diff > 0:
+            report_lines.append(f"   Model 1. secim: {model_hits}/{total_legs} "
+                               f"(%{model_hits/total_legs*100:.0f})")
+            if model_diff > 0:
+                report_lines.append(f"   Model != AGF: {model_diff} ayak, "
+                                   f"model hakli: {model_diff_hits}")
 
         if dar_kupons:
             report_lines.append(f"   🎉 {dar_kupons} DAR KUPON TUTTU!")

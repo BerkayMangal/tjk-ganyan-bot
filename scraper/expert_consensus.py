@@ -24,10 +24,26 @@ def fetch_horseturk(target_date: date, sehir: str) -> dict:
         sehir_lower = sehir_lower.replace(c_from, c_to)
     ay = ay_map.get(target_date.month, 'mart')
 
+    # Birden fazla URL pattern dene
+    day = target_date.day
+    year = target_date.year
     urls = [
-        f"https://www.horseturk.com/at-yarisi-tahminleri-{sehir_lower}-{target_date.day}-{ay}-{target_date.year}/",
-        f"https://www.horseturk.com/altili-ganyan-tahmin-{sehir_lower}-{target_date.day}-{ay}-{target_date.year}/",
+        f"https://www.horseturk.com/at-yarisi-tahminleri-{sehir_lower}-{day}-{ay}-{year}/",
+        f"https://www.horseturk.com/altili-ganyan-tahmin-{sehir_lower}-{day}-{ay}-{year}/",
+        f"https://www.horseturk.com/at-yarisi-tahmin-{sehir_lower}-{day}-{ay}-{year}/",
+        f"https://www.horseturk.com/{sehir_lower}-at-yarisi-tahminleri-{day}-{ay}-{year}/",
+        f"https://www.horseturk.com/{sehir_lower}-altili-ganyan-{day}-{ay}-{year}/",
     ]
+    # Sehir varyantlari da dene
+    alt_names = {
+        'istanbul': ['veliefendi'],
+        'izmir': ['sirinyer'],
+        'ankara': ['75-yil'],
+        'sanliurfa': ['urfa', 's-urfa'],
+    }
+    for alt in alt_names.get(sehir_lower, []):
+        urls.append(f"https://www.horseturk.com/at-yarisi-tahminleri-{alt}-{day}-{ay}-{year}/")
+        urls.append(f"https://www.horseturk.com/altili-ganyan-tahmin-{alt}-{day}-{ay}-{year}/")
 
     html = None
     for url in urls:
