@@ -61,6 +61,22 @@ class FeatureBuilder:
         else:
             logger.warning("feature_columns.json not found!")
             return False
+        # Pedigree lookup (sire_sire, dam_dam, earnings)
+        lookup_path = os.path.join(os.path.dirname(path), 'pedigree_lookup.json')
+        if os.path.exists(lookup_path):
+            try:
+                with open(lookup_path, 'r', encoding='utf-8') as lf:
+                    self.lookup = json.load(lf)
+                logger.info(f"Pedigree lookup loaded: "
+                           f"sire_sire={len(self.lookup.get('sire_to_sire_sire',{}))} "
+                           f"dam_dam={len(self.lookup.get('dam_to_dam_dam',{}))} "
+                           f"earnings={len(self.lookup.get('horse_earnings',{}))}")
+            except Exception as e:
+                logger.warning(f"Pedigree lookup error: {e}")
+                self.lookup = {}
+        else:
+            self.lookup = {}
+
         return True
 
     def build_race_features(self, horses, race_info, agf_data=None):
@@ -215,6 +231,9 @@ class FeatureBuilder:
             f['f_gender_stallion'] = 1.0 if (f['f_gender_mare'] == 0 and f['f_gender_gelding'] == 0) else 0.0
 
             total_earnings = float(h.get('total_earnings', 0) or 0)
+            if total_earnings == 0 and hasattr(self, 'lookup'):
+                horse_name = h.get('horse_name', '')
+                total_earnings = float(self.lookup.get('horse_earnings', {}).get(horse_name, 0))
             f['f_earnings'] = np.log1p(total_earnings) / np.log1p(g.get('earnings_max', 42593220))
 
             kgs = float(h.get('kgs', 0) or 0)
@@ -259,6 +278,8 @@ class FeatureBuilder:
             dam_sire = h.get('dam_sire', '') or ''
             dam_dam = h.get('dam_dam', '') or ''
             sire_sire = h.get('sire_sire', '') or ''
+            if not sire_sire and sire and hasattr(self, 'lookup'):
+                sire_sire = self.lookup.get('sire_to_sire_sire', {}).get(sire, '')
 
             f['f_sire_win_rate'] = self.stats.get('sire', {}).get(sire, {}).get('win_rate', 0)
             f['f_dam_sire_win_rate'] = self.stats.get('dam_sire', {}).get(dam_sire, {}).get('win_rate', 0)

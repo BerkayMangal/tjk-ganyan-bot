@@ -154,7 +154,7 @@ def run_daily(target_date=None):
                 value_text = format_value_message(hippo, date_str, value_horses)
                 if value_text:
                     try:
-                        send_sync(value_text)
+                        send_sync(value_text, parse_mode='HTML')
                         logger.info(f"  Ganyan value: {len(value_horses)} at bulundu")
                     except Exception as ve:
                         logger.warning(f"  Value mesaj gonderilemedi: {ve}")
