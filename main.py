@@ -30,6 +30,7 @@ from engine.commentary import generate_commentary, generate_kupon_message
 from engine.summary import build_summary_message
 from engine.retro import save_predictions, run_retro
 from engine.ganyan_value import find_value_horses, format_value_message
+from engine.summary import build_final_summary
 from bot.telegram_sender import (
     send_sync, send_daily_sync,
     format_daily_header, format_no_play_message,
@@ -79,6 +80,7 @@ def run_daily(target_date=None):
 
     # ── 4. PROCESS ──
     altili_packages = []
+    all_results = []
     all_health = {'total': 0, 'model_ok': 0, 'fallback': 0, 'error': 0,
                   'nonzero_pcts': [], 'pdf_fields_filled': 0}
 
@@ -94,6 +96,9 @@ def run_daily(target_date=None):
                 agf_legs = enrich_legs_from_pdf(agf_legs, prog_races)
             except Exception as e:
                 logger.warning(f"  Enrichment failed for {hippo}: {e} — using AGF only")
+
+        consensus = None
+        value_horses = None
 
         # Model predict
         if model_ok and fb_ok:
@@ -167,6 +172,15 @@ def run_daily(target_date=None):
         except Exception as e:
             logger.warning(f"Retro save failed: {e}")
 
+        # Collect for final summary
+        all_results.append({
+            'hippo': hippo, 'altili_no': altili_no,
+            'dar': dar, 'genis': genis, 'rating': rating,
+            'consensus': consensus,
+            'value_horses': value_horses,
+            'legs': legs,
+        })
+
         logger.info(f"  {rating['stars']} DAR: {dar['cost']:.0f} TL | GENİŞ: {genis['cost']:.0f} TL")
 
     # ── 5. SEND ──
@@ -190,6 +204,16 @@ def run_daily(target_date=None):
             send_sync(health_msg)
         except Exception:
             pass
+
+    # ── 7. FINAL SUMMARY ──
+    if all_results:
+        try:
+            final_msg = build_final_summary(all_results, date_str)
+            send_sync(final_msg, parse_mode='HTML')
+            logger.info("Final summary gonderildi ✓")
+        except Exception as e:
+            logger.warning(f"Final summary failed: {e}")
+            import traceback; traceback.print_exc()
 
     logger.info("Done! ✓")
 
