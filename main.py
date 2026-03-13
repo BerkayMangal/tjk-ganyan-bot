@@ -277,7 +277,7 @@ def _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date, breed=
                 pass
 
             # Model agreement
-            indiv = model.predict_individual(matrix)
+            indiv = model.predict_individual(matrix, breed=breed)
             top_set = set()
             for key in ['xgb_top_idx', 'lgbm_top_idx', 'cb_top_idx']:
                 if key in indiv:
