@@ -1,11 +1,8 @@
 """
-Ensemble Model — 4-Model Ranker (XGB + LGBM + CatBoost + AGF-Ablated)
-========================================================================
-Railway'deki pkl dosyalarını yükle, 82 feature al, sıralama skoru döndür.
-
-V2: AGF-ablated model eklendi (4. ensemble üyesi, opsiyonel).
-    Ablated model sadece non-AGF feature'larla çalışır.
-    AGF verisi yoksa/güvenilmezse ablated modele daha çok ağırlık verilir.
+Ensemble Model V5 — Breed-Split + Calibrated Probability
+==========================================================
+Arab ve Ingiliz icin ayri model.
+Ranking model (siralama) + Probability model (ganyan value).
 """
 import os
 import json
@@ -13,166 +10,139 @@ import logging
 import numpy as np
 
 logger = logging.getLogger(__name__)
-
 MODEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'trained')
-
-# Ağırlıklar: normal mod (AGF var) vs AGF-güvenilmez mod
-WEIGHTS_NORMAL = (0.35, 0.30, 0.20, 0.15)  # XGB, LGBM, CB, Ablated
-WEIGHTS_NO_CB = (0.40, 0.35, 0.0, 0.25)     # CB yokken
-WEIGHTS_NO_ABL = (0.40, 0.35, 0.25, 0.0)    # Ablated yokken (V1 compat)
-
-# AGF-related features (ablated modelden çıkarılanlar)
-AGF_RELATED_FEATURES = {
-    'f_agf_log', 'f_agf_implied_prob', 'f_agf_rank', 'f_agf_fav_margin',
-    'f_race_odds_cv', 'f_odds_entropy', 'f_avg_winner_odds', 'f_fav1v2_gap',
-    'f_X_surprise_agf', 'f_X_agf_form', 'f_X_agf_jockey',
-}
 
 
 class EnsembleRanker:
-    """4-model ensemble ranker for TJK horse racing."""
+    """Breed-split ensemble ranker + probability model."""
 
     def __init__(self, model_dir=None):
         self.model_dir = model_dir or MODEL_DIR
-        self.xgb = None
-        self.lgbm = None
-        self.cb = None
-        self.ablated = None
-        self.scaler = None
+        self.models = {}  # {'arab': {...}, 'english': {...}}
+        self.prob_models = {}  # calibrated probability models
         self.feature_cols = None
-        self.ablated_cols = None
-        self.ablated_indices = None  # mapping: ablated feature → full feature matrix index
         self.loaded = False
 
     def load(self):
-        """Load all model files from disk."""
         import joblib
-
         try:
-            self.xgb = joblib.load(os.path.join(self.model_dir, 'xgb_ranker.pkl'))
-            self.lgbm = joblib.load(os.path.join(self.model_dir, 'lgbm_ranker.pkl'))
-            self.scaler = joblib.load(os.path.join(self.model_dir, 'scaler.pkl'))
-
             # Feature columns
-            json_path = os.path.join(self.model_dir, 'feature_columns.json')
-            if os.path.exists(json_path):
-                with open(json_path) as f:
-                    self.feature_cols = json.load(f)
-            else:
-                self.feature_cols = joblib.load(
-                    os.path.join(self.model_dir, 'feature_cols.pkl')
-                )
+            fc_path = os.path.join(self.model_dir, 'feature_columns.json')
+            with open(fc_path) as f:
+                self.feature_cols = json.load(f)
 
-            # CatBoost optional
-            cb_path = os.path.join(self.model_dir, 'cb_ranker.pkl')
-            if os.path.exists(cb_path):
-                self.cb = joblib.load(cb_path)
+            # Breed bazli modeller
+            for breed in ['arab', 'english']:
+                xgb_path = os.path.join(self.model_dir, f'xgb_ranker_{breed}.pkl')
+                lgbm_path = os.path.join(self.model_dir, f'lgbm_ranker_{breed}.pkl')
+                scaler_path = os.path.join(self.model_dir, f'scaler_{breed}.pkl')
 
-            # AGF-Ablated model optional (V2)
-            abl_path = os.path.join(self.model_dir, 'ablated_ranker.pkl')
-            abl_cols_path = os.path.join(self.model_dir, 'ablated_columns.json')
-            if os.path.exists(abl_path) and os.path.exists(abl_cols_path):
-                self.ablated = joblib.load(abl_path)
-                with open(abl_cols_path) as f:
-                    self.ablated_cols = json.load(f)
-                # Pre-compute index mapping
-                self.ablated_indices = [
-                    self.feature_cols.index(c)
-                    for c in self.ablated_cols
-                    if c in self.feature_cols
-                ]
+                if os.path.exists(xgb_path):
+                    self.models[breed] = {
+                        'xgb': joblib.load(xgb_path),
+                        'lgbm': joblib.load(lgbm_path),
+                        'scaler': joblib.load(scaler_path),
+                    }
+                    logger.info(f"  {breed} ranking model OK")
 
-            self.loaded = True
-            logger.info(
-                f"Model loaded: {len(self.feature_cols)} features, "
-                f"CB={'OK' if self.cb else 'YOK'}, "
-                f"Ablated={'OK' if self.ablated else 'YOK'}"
-            )
-            return True
+                # Probability model (ganyan value icin)
+                xgb_prob_path = os.path.join(self.model_dir, f'xgb_prob_{breed}.pkl')
+                lgbm_prob_path = os.path.join(self.model_dir, f'lgbm_prob_{breed}.pkl')
+                scaler_prob_path = os.path.join(self.model_dir, f'scaler_prob_{breed}.pkl')
+
+                if os.path.exists(xgb_prob_path):
+                    self.prob_models[breed] = {
+                        'xgb': joblib.load(xgb_prob_path),
+                        'lgbm': joblib.load(lgbm_prob_path),
+                        'scaler': joblib.load(scaler_prob_path),
+                    }
+                    logger.info(f"  {breed} probability model OK")
+
+            # Fallback: eski V2 model (breed-split yoksa)
+            if not self.models:
+                logger.info("Breed modeller yok, V2 fallback deneniyor...")
+                xgb_path = os.path.join(self.model_dir, 'xgb_ranker.pkl')
+                if os.path.exists(xgb_path):
+                    self.models['default'] = {
+                        'xgb': joblib.load(xgb_path),
+                        'lgbm': joblib.load(os.path.join(self.model_dir, 'lgbm_ranker.pkl')),
+                        'scaler': joblib.load(os.path.join(self.model_dir, 'scaler.pkl')),
+                    }
+                    logger.info("  V2 fallback model OK")
+
+            self.loaded = bool(self.models)
+            logger.info(f"Model loaded: {len(self.feature_cols)} features, "
+                       f"breeds: {list(self.models.keys())}, "
+                       f"prob: {list(self.prob_models.keys())}")
+            return self.loaded
 
         except Exception as e:
             logger.error(f"Model load failed: {e}")
-            self.loaded = False
+            import traceback; traceback.print_exc()
             return False
 
-    def _get_weights(self):
-        """Mevcut modellere göre ağırlık seç."""
-        has_cb = self.cb is not None
-        has_abl = self.ablated is not None
+    def detect_breed(self, group_name):
+        """group_name'den breed tespit et."""
+        g = str(group_name).lower() if group_name else ''
+        if 'arap' in g:
+            return 'arab'
+        elif 'ngiliz' in g:
+            return 'english'
+        return 'default'
 
-        if has_cb and has_abl:
-            return WEIGHTS_NORMAL
-        elif has_cb and not has_abl:
-            return WEIGHTS_NO_ABL
-        elif not has_cb and has_abl:
-            return WEIGHTS_NO_CB
-        else:
-            # Sadece XGB + LGBM
-            return (0.53, 0.47, 0.0, 0.0)
+    def _get_model(self, breed):
+        """Breed'e gore model sec, yoksa fallback."""
+        if breed in self.models:
+            return self.models[breed]
+        if 'english' in self.models:
+            return self.models['english']  # default fallback
+        if 'default' in self.models:
+            return self.models['default']
+        return None
 
-    def predict(self, feature_matrix):
-        """
-        Ensemble predict: returns normalized 0-1 scores.
-
-        Args:
-            feature_matrix: numpy array (n_horses, n_features) in correct column order
-
-        Returns:
-            numpy array of scores (higher = better)
-        """
+    def predict(self, feature_matrix, breed='english'):
+        """Ensemble ranking predict — normalized 0-1 scores."""
         if not self.loaded:
-            raise RuntimeError("Model not loaded! Call load() first.")
+            raise RuntimeError("Model not loaded!")
 
-        X_s = self.scaler.transform(feature_matrix)
-        weights = self._get_weights()
+        m = self._get_model(breed)
+        if m is None:
+            raise RuntimeError(f"No model for breed: {breed}")
 
-        xgb_n = self._norm01(self.xgb.predict(X_s))
-        lgbm_n = self._norm01(self.lgbm.predict(X_s))
-
-        scores = weights[0] * xgb_n + weights[1] * lgbm_n
-
-        if self.cb is not None and weights[2] > 0:
-            cb_n = self._norm01(self.cb.predict(X_s))
-            scores += weights[2] * cb_n
-
-        if self.ablated is not None and weights[3] > 0 and self.ablated_indices:
-            X_abl = X_s[:, self.ablated_indices]
-            abl_n = self._norm01(self.ablated.predict(X_abl))
-            scores += weights[3] * abl_n
-
-        # Renormalize
-        w_total = sum(w for w in weights if w > 0)
-        if w_total > 0:
-            scores /= w_total
-
+        X_s = m['scaler'].transform(feature_matrix)
+        xgb_pred = self._norm01(m['xgb'].predict(X_s))
+        lgbm_pred = self._norm01(m['lgbm'].predict(X_s))
+        scores = 0.50 * xgb_pred + 0.50 * lgbm_pred
         return scores
 
-    def predict_individual(self, feature_matrix):
-        """
-        Her modelin ayrı ayrı top-1 seçimini döndür (model agreement için).
+    def predict_proba(self, feature_matrix, breed='english'):
+        """Calibrated probability predict — gercek olasilik (ganyan value icin)."""
+        if breed not in self.prob_models:
+            # Fallback: ranking skorunu normalize et
+            scores = self.predict(feature_matrix, breed)
+            return scores / scores.sum() if scores.sum() > 0 else scores
 
-        Returns: dict with top indices per model
-        """
+        m = self.prob_models[breed]
+        X_s = m['scaler'].transform(feature_matrix)
+        xgb_prob = m['xgb'].predict_proba(X_s)[:, 1]
+        lgbm_prob = m['lgbm'].predict_proba(X_s)[:, 1]
+        return 0.50 * xgb_prob + 0.50 * lgbm_prob
+
+    def predict_individual(self, feature_matrix, breed='english'):
+        """Her modelin ayri top-1 secimi (agreement icin)."""
         if not self.loaded:
             return {}
-
-        X_s = self.scaler.transform(feature_matrix)
-
-        result = {
-            'xgb_top_idx': int(np.argmax(self.xgb.predict(X_s))),
-            'lgbm_top_idx': int(np.argmax(self.lgbm.predict(X_s))),
+        m = self._get_model(breed)
+        if m is None:
+            return {}
+        X_s = m['scaler'].transform(feature_matrix)
+        return {
+            'xgb_top_idx': int(np.argmax(m['xgb'].predict(X_s))),
+            'lgbm_top_idx': int(np.argmax(m['lgbm'].predict(X_s))),
         }
-        if self.cb is not None:
-            result['cb_top_idx'] = int(np.argmax(self.cb.predict(X_s)))
-        if self.ablated is not None and self.ablated_indices:
-            X_abl = X_s[:, self.ablated_indices]
-            result['ablated_top_idx'] = int(np.argmax(self.ablated.predict(X_abl)))
-
-        return result
 
     @staticmethod
     def _norm01(arr):
-        """Normalize array to 0-1 range."""
         mn, mx = arr.min(), arr.max()
         if mx - mn < 1e-8:
             return np.full_like(arr, 0.5)

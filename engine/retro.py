@@ -175,19 +175,34 @@ def _fetch_agftablosu_results(target_date) -> List[Dict]:
     """
     try:
         # Sonuçlar sayfası — tarih formatı: MM/DD/YYYY
-        date_path = target_date.strftime('%m/%d/%Y')
-        url = f"https://www.agftablosu.com/at-yarisi-sonuclar/{date_path}"
+        # Birden fazla URL pattern dene
+        date_paths = [
+            target_date.strftime('%m/%d/%Y'),
+            target_date.strftime('%d-%m-%Y'),
+            target_date.strftime('%Y-%m-%d'),
+        ]
+        # Birden fazla URL dene
+        for dp in date_paths:
+            url = f"https://www.agftablosu.com/at-yarisi-sonuclar/{dp}"
+            try:
+                resp = SESSION.get(url, timeout=30)
+                if resp.status_code == 200 and len(resp.text) > 5000:
+                    results = _parse_agf_results(resp.text, target_date)
+                    if results:
+                        return results
+            except:
+                continue
 
-        resp = SESSION.get(url, timeout=30)
-        if resp.status_code != 200:
-            # Ana sayfa dene (bugün için)
+        # Ana sayfa (bugun icin)
+        try:
             url = "https://www.agftablosu.com/at-yarisi-sonuclar"
             resp = SESSION.get(url, timeout=30)
+            if resp.status_code == 200:
+                return _parse_agf_results(resp.text, target_date)
+        except:
+            pass
 
-        if resp.status_code != 200:
-            return []
-
-        return _parse_agf_results(resp.text, target_date)
+        return []
 
     except Exception as e:
         logger.error(f"agftablosu results error: {e}")

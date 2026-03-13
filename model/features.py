@@ -1,22 +1,8 @@
 """
-Feature Builder — Canlı yarış verisi → 82 feature
-====================================================
-AGF scraper + PDF parser + rolling_stats.json → model input
-
-Her at için V3 backtest'teki aynı 82 feature'ı üretir.
-Kaynak eşleştirmesi:
-  - Market (8): AGF scraper'dan (odds, implied prob, rank vs.)
-  - Form (7): PDF'ten (last_6_races, last_20_score)
-  - Physical (7): PDF + AGF'den (weight, distance, gate, handicap)
-  - HorseProfile (7): PDF'ten (age, gender, earnings, rest days)
-  - Jockey/Trainer (6): rolling_stats.json
-  - Pedigree + Family (9): rolling_stats.json
-  - Conditions (9): PDF + rolling_stats
-  - Equipment (5): PDF'ten
-  - Pace (3): tarihsel ortalama (rolling_stats), canlıda yaklaşık
-  - Surprise (2): rolling_stats race profiles
-  - Interactions (18): yukarıdakilerin çarpımları
-  - model_vs_market (1): 2. pass'ta hesaplanır
+Feature Builder V5 — Taydex verisiyle uyumlu
+===============================================
+Colab pipeline ile birebir ayni feature'lari uretir.
+rstats_v2.json kullanir.
 """
 import numpy as np
 import json
@@ -28,12 +14,15 @@ from typing import Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 STATS_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), 'trained', 'rstats.json'
+    os.path.dirname(os.path.abspath(__file__)), 'trained', 'rstats_v2.json'
+)
+FEATURE_COLS_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), 'trained', 'feature_columns.json'
 )
 
 
 class FeatureBuilder:
-    """Builds 82 features for each horse in a race."""
+    """Builds features matching V5 Colab pipeline exactly."""
 
     def __init__(self, stats_path=None):
         self.stats_path = stats_path or STATS_PATH
@@ -41,338 +30,208 @@ class FeatureBuilder:
         self.feature_cols = None
 
     def load(self):
-        """Load rolling stats and feature column order."""
-        # Rolling stats — optional, model works without it (just fewer features filled)
-        if os.path.exists(self.stats_path):
+        # Rolling stats
+        path = self.stats_path
+        # Fallback: eski isim
+        if not os.path.exists(path):
+            old_path = path.replace('rstats_v2.json', 'rstats.json')
+            if os.path.exists(old_path):
+                path = old_path
+        if os.path.exists(path):
             try:
-                with open(self.stats_path, 'r', encoding='utf-8') as f:
+                with open(path, 'r', encoding='utf-8') as f:
                     self.stats = json.load(f)
                 logger.info(f"Rolling stats loaded: {list(self.stats.keys())}")
             except Exception as e:
-                logger.warning(f"Rolling stats parse error: {e}")
+                logger.warning(f"Rolling stats error: {e}")
                 self.stats = {}
         else:
-            logger.warning(f"Rolling stats not found: {self.stats_path} — using defaults")
+            logger.warning(f"Rolling stats not found: {path}")
             self.stats = {}
 
-        # Feature column order — required
-        json_path = os.path.join(
-            os.path.dirname(self.stats_path), 'feature_columns.json'
-        )
-        if os.path.exists(json_path):
-            with open(json_path) as f:
+        # Feature columns
+        fc_path = os.path.join(os.path.dirname(path), 'feature_columns.json')
+        if os.path.exists(fc_path):
+            with open(fc_path) as f:
                 self.feature_cols = json.load(f)
             logger.info(f"Feature columns: {len(self.feature_cols)}")
         else:
-            logger.error("feature_columns.json not found!")
-            self.feature_cols = []
+            logger.warning("feature_columns.json not found!")
+            return False
 
-        # Feature cols yeterliyse True dön — stats olmasa da çalışabiliriz
-        return bool(self.feature_cols)
+        return True
 
     def build_race_features(self, horses, race_info, agf_data=None):
-        """
-        Tek bir koşu için tüm atların feature matrix'ini üret.
-
+        """Build feature matrix for one race.
+        
         Args:
-            horses: list of dicts from PDF parser, each with:
-                horse_name, horse_number, jockey_name, trainer_name,
-                weight, age, form (last_6_races string), equipment, etc.
-            race_info: dict with:
-                distance, track_type, group_name, hippodrome_name,
-                first_prize, temperature, humidity, race_date
-            agf_data: list of dicts from AGF scraper:
-                [{horse_number, agf_pct, is_ekuri}, ...]
-
+            horses: list of horse dicts from scraper
+            race_info: dict with distance, track_type, group_name, etc.
+            agf_data: list of AGF dicts [{horse_number, agf_pct}, ...]
+        
         Returns:
-            numpy array (n_horses, 82) in correct column order
-            list of horse names in same order
+            (numpy matrix, list of horse names)
         """
         if not self.feature_cols:
-            raise RuntimeError("Feature columns not loaded! Call load() first.")
+            raise RuntimeError("Feature columns not loaded!")
 
-        # ── Sanitize: tüm numeric alanları float'a çevir ──
-        def to_float(val, default=0.0):
-            if val is None:
-                return default
-            try:
-                return float(val)
-            except (ValueError, TypeError):
-                return default
-
-        g = self.stats.get('global', {})
+        g = self.stats.get('global', {
+            'distance_min': 800, 'distance_max': 2400,
+            'prize_max': 1000000, 'earnings_max': 5000000
+        })
         n_horses = len(horses)
-        field_size = n_horses
 
-        # AGF lookup by horse number
+        # AGF lookup
         agf_by_num = {}
         if agf_data:
             for h in agf_data:
                 agf_by_num[h['horse_number']] = h
 
-        # Pre-compute AGF rank by horse number (highest pct = rank 1)
-        agf_rank_by_num = {}
-        if agf_data:
-            sorted_agf = sorted(agf_data, key=lambda a: a.get('agf_pct', 0), reverse=True)
-            for rank_i, a in enumerate(sorted_agf, 1):
-                agf_rank_by_num[a['horse_number']] = rank_i
-
-        # All odds for race-level features
+        # All odds
         all_odds = []
         for h in horses:
             num = h.get('horse_number', 0)
             agf = agf_by_num.get(num, {})
             pct = agf.get('agf_pct', 0)
-            if pct > 0:
-                odds = 100.0 / pct
-            else:
-                odds = 20.0  # default high odds
+            odds = 100.0 / pct if pct > 0 else 20.0
             all_odds.append(odds)
 
-        # Race-level features
-        min_odds = min(all_odds) if all_odds else 1.0
-        odds_std = np.std(all_odds) if len(all_odds) > 1 else 0
-        odds_mean = np.mean(all_odds) if all_odds else 10.0
-        race_odds_cv = odds_std / (odds_mean + 0.01)
+        # Race-level
+        odds_arr = np.array(all_odds)
+        odds_std = np.std(odds_arr) if len(odds_arr) > 1 else 0
+        odds_mean = np.mean(odds_arr) if len(odds_arr) > 0 else 10.0
+        odds_cv = odds_std / (odds_mean + 0.01)
 
-        # Odds entropy
-        if all_odds and sum(all_odds) > 0:
-            probs = np.array([1.0/o if o > 0 else 0.01 for o in all_odds])
-            probs = probs / probs.sum()
-            odds_entropy = -np.sum(probs * np.log(probs + 1e-10))
+        agf_pcts = np.array([agf_by_num.get(h.get('horse_number',0), {}).get('agf_pct', 0) for h in horses])
+        sorted_agf = np.sort(agf_pcts)[::-1]
+        fav_gap = (sorted_agf[0] - sorted_agf[1]) / 100.0 if len(sorted_agf) >= 2 else 0
+
+        # Entropy
+        probs = agf_pcts[agf_pcts > 0] / 100.0
+        if len(probs) > 0:
+            probs_n = probs / probs.sum()
+            entropy = float(-np.sum(probs_n * np.log(probs_n + 1e-10)))
         else:
-            odds_entropy = 0.5
+            entropy = 0.5
 
-        # Avg winner odds (from upset_rate profile)
-        avg_winner_odds = 5.0  # default
+        # HP stats
+        hps = np.array([float(h.get('handicap', 0) or 0) for h in horses])
+        hp_std = np.std(hps) if len(hps) > 1 else 0
+        hp_mean = np.mean(hps) if len(hps) > 0 else 60
+        field_strength = hp_std / (hp_mean + 1)
+        hp_range = (hps.max() - hps.min()) / 100.0 if len(hps) > 0 else 0.5
 
-        # Race surprise score
-        surprise_key = self._build_surprise_key(field_size, race_info)
-        surprise_data = self.stats.get('race_surprise', {}).get(surprise_key, {})
-        surprise_score = surprise_data.get('surprise_rate', 0.5)
+        # Race info
+        distance = float(race_info.get('distance', 1400) or 1400)
+        track_type = str(race_info.get('track_type', 'dirt') or 'dirt').lower()
+        track_map = {'kum': 'dirt', 'cim': 'turf', 'sentetik': 'synthetic',
+                     'dirt': 'dirt', 'turf': 'turf', 'synthetic': 'synthetic'}
+        track_type = track_map.get(track_type, 'dirt')
+        first_prize = float(race_info.get('first_prize', 100000) or 100000)
+        temperature = race_info.get('temperature', None)
+        humidity = race_info.get('humidity', None)
+        hippo = race_info.get('hippodrome_name', '')
+        group_name = race_info.get('group_name', '')
 
-        # Upset rate for hippodrome
-        hippo_name = race_info.get('hippodrome_name', '')
-        upset_rate = self.stats.get('upset_rate', {}).get(hippo_name, 0.3)
-
-        # Race conditions — sanitize
-        distance = to_float(race_info.get('distance', 1400), 1400)
-        _track_map = {'kum': 'dirt', 'çim': 'turf', 'sentetik': 'synthetic',
-                      'dirt': 'dirt', 'turf': 'turf', 'synthetic': 'synthetic'}
-        track_type = _track_map.get(
-            (race_info.get('track_type', '') or '').lower().strip(), 'dirt'
-        )
-        first_prize = to_float(race_info.get('first_prize', 100000), 100000)
-        temperature = to_float(race_info.get('temperature', 15), 15)
-        humidity = to_float(race_info.get('humidity', 60), 60)
-        race_date = race_info.get('race_date', None)
-
-        is_dirt = 1.0 if track_type == 'dirt' else 0.0
-        is_synthetic = 1.0 if track_type == 'synthetic' else 0.0
-        hippo_enc = self.stats.get('hippodrome_encoding', {}).get(hippo_name, 0.5)
-        race_class = self._safe_norm_val(np.log1p(first_prize), 0, np.log1p(g.get('prize_max', 1000000)))
-        f_field_size = self._safe_norm_val(field_size, 2, 18)
-        is_weekend = 0.0
-        day_of_week = 0.0
-        if race_date:
-            import datetime
-            if isinstance(race_date, str):
-                race_date = datetime.datetime.strptime(race_date[:10], '%Y-%m-%d')
-            is_weekend = 1.0 if race_date.weekday() >= 5 else 0.0
-            day_of_week = race_date.weekday() / 6.0
-
-        f_temperature = self._safe_norm_val(temperature, -5, 45)
-        f_humidity = self._safe_norm_val(humidity, 10, 100)
-        f_distance = self._safe_norm_val(distance, g.get('distance_min', 800), g.get('distance_max', 2400))
-        f_dist_mid = 1.0 if 1200 < distance <= 1600 else 0.0
-        f_dist_mile = 1.0 if 1600 < distance <= 2000 else 0.0
-
-        # Fav1 vs fav2 gap
-        sorted_odds = sorted(all_odds)
-        if len(sorted_odds) >= 2 and sorted_odds[0] > 0:
-            fav1v2_gap = sorted_odds[1] / sorted_odds[0]
-        else:
-            fav1v2_gap = 1.0
-        fav1v2_gap = self._safe_norm_val(fav1v2_gap, 1.0, 10.0)
-
-        # ── Build per-horse features ──
+        # Build per-horse features
         rows = []
         horse_names = []
 
         for h in horses:
             f = {}
-            num = int(to_float(h.get('horse_number', 0), 0))
-            name = h.get('horse_name', f'#{num}')
-            horse_names.append(name)
-
-            # ── MARKET (from AGF) ──
+            num = h.get('horse_number', 0)
             agf = agf_by_num.get(num, {})
-            agf_pct = agf.get('agf_pct', 5.0)
+            agf_pct = agf.get('agf_pct', 0)
             odds = 100.0 / agf_pct if agf_pct > 0 else 20.0
 
-            f['f_agf_log'] = self._safe_norm_val(np.log1p(min(odds, 200)), 0, np.log1p(200))
-            f['f_agf_implied_prob'] = min(1.0 / (odds + 0.01), 1.0) if odds > 0 else 0.0
-            f['f_agf_rank'] = self._safe_norm_val(
-                agf_rank_by_num.get(num, len(horses)),
-                1, len(horses)
-            )
-            f['f_agf_fav_margin'] = self._safe_norm_val(
-                odds / (min_odds + 0.01), 1.0, 50.0
-            )
-            f['f_race_odds_cv'] = self._safe_norm_val(race_odds_cv, 0, 3)
-            f['f_odds_entropy'] = self._safe_norm_val(odds_entropy, 0, 3)
-            f['f_avg_winner_odds'] = self._safe_norm_val(avg_winner_odds, 1, 50)
-            f['f_fav1v2_gap'] = fav1v2_gap
-            f['f_is_favorite'] = 1.0 if abs(odds - min_odds) < 0.01 else 0.0  # extra, not in 82
+            # AGF
+            f['f_agf_prob'] = agf_pct / 100.0
+            f['f_agf_log'] = np.log1p(odds) / np.log1p(50)  # normalize
+            agf_rank = 0
+            if agf_pcts.max() > 0:
+                rank_pos = np.sum(agf_pcts > agf_pct) + 1
+                agf_rank = rank_pos / n_horses
+            f['f_agf_rank'] = agf_rank
 
-            # ── FORM (from PDF or default) ──
-            form_str = h.get('form', h.get('last_6_races', ''))
-            parsed = self._parse_form(form_str)
-            positions = [p for _, p in parsed if p > 0]
+            # Race level
+            f['f_fav_gap'] = fav_gap
+            f['f_field_size'] = min(n_horses, 18) / 18.0
+            f['f_distance'] = self._norm(distance, g.get('distance_min', 800), g.get('distance_max', 2400))
+            f['f_is_dirt'] = 1.0 if track_type == 'dirt' else 0.0
+            f['f_is_synthetic'] = 1.0 if track_type == 'synthetic' else 0.0
+            f['f_race_class'] = np.log1p(first_prize) / np.log1p(g.get('prize_max', 1000000))
+            f['f_temperature'] = self._norm(temperature, -5, 45) if temperature else 0.5
+            f['f_humidity'] = self._norm(humidity, 10, 100) if humidity else 0.5
+            f['f_field_strength'] = field_strength
+            f['f_hp_range'] = hp_range
+            f['f_upset_rate'] = self.stats.get('upset_rate', {}).get(hippo, 0.35)
 
-            f['f_form_last1'] = 1.0 / (parsed[-1][1] + 1) if parsed and parsed[-1][1] > 0 else 0.0
-            f['f_form_best'] = 1.0 / (min(positions, default=10) + 1)
-            f['f_form_consistency'] = 1.0 / (np.std(positions) + 1) if len(positions) >= 2 else 0.0
-            f['f_form_trend'] = self._calc_form_trend(parsed)
-            known = [(t, p) for t, p in parsed if t in ('K', 'C')]
-            f['f_form_dirt_pct'] = sum(1 for t, _ in known if t == 'K') / max(len(known), 1) if known else 0.5
-            f['f_surface_match'] = self._calc_surface_match(parsed, track_type)
-            f['f_last20_score'] = to_float(h.get('last_20_score', 10), 10) / 20.0
+            # Horse
+            weight = float(h.get('weight', 57) or 57)
+            f['f_weight'] = self._norm(weight, 50, 62)
+            f['f_extra_weight'] = float(h.get('extra_weight', 0) or 0) / 5.0
+            f['f_gate'] = float(h.get('gate_number', num) or num) / 18.0
+            hp = float(h.get('handicap', 0) or 0)
+            f['f_handicap'] = self._norm(hp, 40, 100) if hp > 0 else 0.5
+            age_text = str(h.get('age_text', '4') or '4')
+            am = re.search(r'(\d)', age_text)
+            age = int(am.group(1)) if am else 4
+            f['f_age'] = age / 10.0
+            f['f_gender_mare'] = 1.0 if 'k' in age_text.lower() else 0.0
+            f['f_breed_arab'] = 1.0 if 'arap' in str(group_name).lower() else 0.0
+            f['f_earnings'] = np.log1p(float(h.get('total_earnings', 0) or 0)) / np.log1p(g.get('earnings_max', 5000000))
+            kgs = float(h.get('kgs', 0) or 0)
+            f['f_days_rest'] = self._norm(kgs, 0, 200) if kgs > 0 else 0.5
+            f['f_last20_score'] = float(h.get('last_20_score', 0) or 0) / 20.0
 
-            # ── PHYSICAL ──
-            weight = to_float(h.get('weight', 57), 57)
-            f['f_weight'] = self._safe_norm_val(weight, g.get('weight_min', 50), g.get('weight_max', 62))
-            f['f_distance'] = f_distance
-            f['f_dist_mid'] = f_dist_mid
-            f['f_dist_mile'] = f_dist_mile
-            f['f_gate'] = self._safe_norm_val(to_float(h.get('gate_number', h.get('start_position', 5)), 5),
-                                               g.get('gate_min', 1), g.get('gate_max', 18))
-            f['f_handicap'] = self._safe_norm_val(to_float(h.get('handicap', 60), 60),
-                                                   g.get('handicap_min', 0), g.get('handicap_max', 100))
-            f['f_extra_weight'] = self._safe_norm_val(to_float(h.get('extra_weight', 0), 0),
-                                                       g.get('extra_weight_min', 0), g.get('extra_weight_max', 5))
+            # Form — K/C parse
+            form_str = str(h.get('form', '') or '')
+            ku, ci, sm, fl, fb, fc, ft = self._parse_form(form_str, track_type)
+            f['f_kumcu'] = ku
+            f['f_cimci'] = ci
+            f['f_surface_match'] = sm
+            f['f_form_last1'] = fl
+            f['f_form_best'] = fb
+            f['f_form_consistency'] = fc
+            f['f_form_trend'] = ft
 
-            # ── HORSE PROFILE ──
-            age = to_float(h.get('age', 4), 4)
-            f['f_age'] = self._safe_norm_val(age, 2, 10)
-            f['f_gender_mare'] = 1.0 if h.get('gender') == 'female' or 'k' in str(h.get('age_text', '')) else 0.0
-            f['f_gender_stallion'] = 1.0 if 'a' in str(h.get('age_text', '')) else 0.0
-            f['f_gender_gelding'] = 1.0 if 'e' in str(h.get('age_text', '')) else 0.0
-            earnings = to_float(h.get('total_earnings', 0), 0)
-            f['f_earnings'] = self._safe_norm_val(earnings, 0, g.get('earnings_max', 5000000))
-            kgs = to_float(h.get('kgs', 30), 30)
-            f['f_days_rest'] = self._safe_norm_val(min(kgs, 200), 0, 200)
-            f['f_rested'] = 1.0 if kgs >= 30 else 0.0
+            # Jokey/Trainer from stats
+            jockey = h.get('jockey_name', '') or h.get('jockey', '') or ''
+            trainer = h.get('trainer_name', '') or h.get('trainer', '') or ''
+            sire = h.get('sire', '') or h.get('sire_name', '') or ''
+            dam = h.get('dam', '') or h.get('dam_name', '') or ''
+            dam_sire = h.get('dam_sire', '') or h.get('dam_sire_name', '') or ''
+            dam_dam = h.get('dam_dam', '') or ''
+            sire_sire = h.get('sire_sire', '') or ''
 
-            # ── JOCKEY ──
-            jockey = h.get('jockey_name', '')
             j_stats = self.stats.get('jockey', {}).get(jockey, {})
-            f['f_jockey_win_rate'] = j_stats.get('win_rate', 0)
-            f['f_jockey_top3_rate'] = j_stats.get('top3_rate', 0)
-            f['f_jockey_experience'] = min(j_stats.get('experience', 0) / 200.0, 1.0)
-
-            # ── TRAINER ──
-            trainer = h.get('trainer_name', '')
-            t_stats = self.stats.get('trainer', {}).get(trainer, {})
-            f['f_trainer_win_rate'] = t_stats.get('win_rate', 0)
-            f['f_trainer_experience'] = min(t_stats.get('experience', 0) / 100.0, 1.0)
-
-            # ── PEDIGREE ──
-            sire = h.get('sire', '')
-            dam_sire = h.get('dam_sire', '')
-            sire_sire = h.get('sire_sire', '')
-            f['f_sire_win_rate'] = self.stats.get('sire', {}).get(sire, {}).get('win_rate', 0)
-            f['f_dam_sire_win_rate'] = self.stats.get('dam_sire', {}).get(dam_sire, {}).get('win_rate', 0)
-            f['f_sire_sire_win_rate'] = self.stats.get('sire_sire', {}).get(sire_sire, {}).get('win_rate', 0)
-
-            # ── PEDIGREE FAMILY ──
-            dam = h.get('dam', '')
-            # Try rolling stats first, then horse_dam mapping
-            if not dam:
-                dam = self.stats.get('horse_dam', {}).get(name, '')
-            dp = self.stats.get('dam_produce', {}).get(dam, {})
-            f['f_dam_produce_wr'] = dp.get('win_rate', 0)
-            f['f_dam_produce_top3'] = dp.get('top3_rate', 0)
-            f['f_dam_n_offspring'] = min(dp.get('n_offspring', 0) / 5.0, 1.0)
-            f['f_dam_best_earner'] = min(dp.get('best_earner', 0) / 500000.0, 1.0)
-
-            damdam = h.get('dam_dam', '')
-            if not damdam:
-                damdam = self.stats.get('horse_damdam', {}).get(name, '')
-            f['f_damdam_family_wr'] = self.stats.get('damdam', {}).get(damdam, {}).get('win_rate', 0)
-
-            # Sibling
-            sib = self.stats.get('sibling', {}).get(dam, {})
-            sibling_top3 = sib.get('top3_rate', 0)
-
-            # ── CONDITIONS ──
-            f['f_is_dirt'] = is_dirt
-            f['f_is_synthetic'] = is_synthetic
-            f['f_hippodrome'] = hippo_enc
-            f['f_temperature'] = f_temperature
-            f['f_humidity'] = f_humidity
-            f['f_race_class'] = race_class
-            f['f_field_size'] = f_field_size
-            f['f_is_weekend'] = is_weekend
-            f['f_day_of_week'] = day_of_week
-
-            # ── EQUIPMENT ──
-            eq = str(h.get('equipment', '') or '')
-            f['f_equip_kg'] = 1.0 if 'KG' in eq else 0.0
-            f['f_equip_db'] = 1.0 if 'DB' in eq else 0.0
-            f['f_equip_skg'] = 1.0 if 'SKG' in eq else 0.0
-            f['f_equip_sk'] = 1.0 if re.search(r'\bSK\b', eq) else 0.0
-            f['f_equip_count'] = len(eq.split()) / 4.0 if eq else 0.0
-
-            # ── PACE (approximate from historical) ──
-            f['f_pace_relative'] = 0.5  # neutral — no live pace data
-            f['f_pace_best_time'] = 0.5
-            f['f_pace_race_avg'] = 0.5
-            # If best_time available from taydex
-            best_time = h.get('best_time', None)
-            if best_time:
-                bt = to_float(best_time, 0)
-                if bt > 0:
-                    f['f_pace_best_time'] = self._safe_norm_val(bt, 60, 160)
-
-            # ── SURPRISE ──
-            f['f_surprise_v2'] = surprise_score
-            f['f_upset_rate'] = upset_rate
-
-            # ── INTERACTIONS ──
-            form_avg_pos = 1.0 / (np.mean(positions) + 1) if positions else 0.125
-            form_top3 = sum(1 for p in positions if 1 <= p <= 3) / max(len(positions), 1) if positions else 0
-            form_wins = sum(1 for p in positions if p == 1) / max(len(positions), 1) if positions else 0
-            earnings_log = self._safe_norm_val(np.log1p(earnings), 0, np.log1p(g.get('earnings_max', 5000000)))
+            f['f_jockey_wr'] = j_stats.get('win_rate', 0)
+            f['f_jockey_t3r'] = j_stats.get('top3_rate', 0)
+            f['f_jockey_exp'] = j_stats.get('experience', 0)
+            f['f_trainer_wr'] = self.stats.get('trainer', {}).get(trainer, {}).get('win_rate', 0)
+            f['f_sire_wr'] = self.stats.get('sire', {}).get(sire, {}).get('win_rate', 0)
+            f['f_dam_sire_wr'] = self.stats.get('dam_sire', {}).get(dam_sire, {}).get('win_rate', 0)
+            f['f_dam_wr'] = self.stats.get('dam', {}).get(dam, {}).get('win_rate', 0)
+            f['f_dam_t3r'] = self.stats.get('dam', {}).get(dam, {}).get('top3_rate', 0)
+            f['f_damdam_wr'] = self.stats.get('damdam', {}).get(dam_dam, {}).get('win_rate', 0)
 
             jt_key = f"{jockey}||{trainer}"
-            jt_wr = self.stats.get('jockey_trainer', {}).get(jt_key, {}).get('win_rate', 0)
+            f['f_jt_wr'] = self.stats.get('jockey_trainer', {}).get(jt_key, {}).get('win_rate', 0)
 
-            f['f_X_surprise_agf'] = surprise_score * f['f_agf_implied_prob']
-            f['f_X_jockey_form'] = f['f_jockey_win_rate'] * form_wins
-            f['f_X_dam_jockey'] = f['f_dam_produce_wr'] * f['f_jockey_win_rate']
-            f['f_X_earnings_class'] = earnings_log * race_class
-            f['f_X_earnings_form'] = earnings_log * form_avg_pos
-            f['f_X_form_field'] = form_avg_pos * f_field_size
-            f['f_X_surface_form'] = f['f_surface_match'] * form_avg_pos
-            f['f_X_agf_form'] = f['f_agf_implied_prob'] * form_top3
-            f['f_X_form_class'] = form_avg_pos * race_class
-            f['f_X_sibling_form'] = sibling_top3 * form_top3
-            f['f_X_surprise_field'] = surprise_score * f_field_size
-            f['f_X_pace_form'] = f['f_pace_relative'] * form_avg_pos
-            f['f_X_trainer_form'] = f['f_trainer_win_rate'] * form_avg_pos
-            f['f_X_jockey_trainer'] = f['f_jockey_win_rate'] * f['f_trainer_win_rate']
-            f['f_X_agf_jockey'] = f['f_agf_implied_prob'] * f['f_jockey_win_rate']
-            f['f_X_jockey_class'] = f['f_jockey_win_rate'] * race_class
-            f['f_X_jt_combo_form'] = jt_wr * form_top3
-            f['f_X_age_trend'] = f['f_age'] * f['f_form_trend']
-            f['f_X_sire_dist'] = f['f_sire_win_rate'] * f_distance
-            f['f_X_dam_class'] = f['f_dam_produce_wr'] * race_class
-
-            # model_vs_market: placeholder, computed after first predict pass
-            f['f_model_vs_market'] = 0.0
+            # Interactions
+            f['f_X_jockey_agf'] = f['f_jockey_wr'] * f['f_agf_prob']
+            f['f_X_sire_dist'] = f['f_sire_wr'] * f['f_distance']
+            f['f_X_form_agf'] = f['f_form_best'] * f['f_agf_prob']
+            f['f_X_weight_dist'] = f['f_weight'] * f['f_distance']
+            f['f_X_kumcu_dirt'] = f['f_kumcu'] * f['f_is_dirt']
+            f['f_X_jt_form'] = f['f_jt_wr'] * f['f_form_best']
+            f['f_X_dam_form'] = f['f_dam_wr'] * f['f_form_best']
+            f['f_X_earnings_class'] = f['f_earnings'] * f['f_race_class']
+            f['f_X_upset_field'] = f['f_upset_rate'] * f['f_field_size']
 
             rows.append(f)
+            name = h.get('horse_name', f'At_{num}')
+            horse_names.append(name)
 
         # Build matrix in correct column order
         matrix = np.zeros((n_horses, len(self.feature_cols)))
@@ -380,102 +239,42 @@ class FeatureBuilder:
             for j, col in enumerate(self.feature_cols):
                 matrix[i, j] = row.get(col, 0.0)
 
-        # Replace NaN/inf
         matrix = np.nan_to_num(matrix, nan=0.0, posinf=1.0, neginf=0.0)
-
         return matrix, horse_names
 
-    def update_model_vs_market(self, matrix, model_scores):
-        """
-        2nd pass: f_model_vs_market = AGF rank − model rank (per horse).
-        Positive → model thinks horse is better than market does.
-        
-        NOTE: Only call this after retrain that includes real model_vs_market
-        values. Current trained models saw this feature as 0.0.
-        """
-        if 'f_model_vs_market' not in self.feature_cols:
-            return matrix
-
-        col_idx = self.feature_cols.index('f_model_vs_market')
-        agf_rank_idx = self.feature_cols.index('f_agf_rank') if 'f_agf_rank' in self.feature_cols else None
-
-        if agf_rank_idx is None:
-            return matrix
-
-        n = len(model_scores)
-        # Model rank (1 = best)
-        model_ranks = np.argsort(np.argsort(-model_scores)) + 1
-        # Denormalize AGF rank from [0,1] back to [1, n]
-        agf_ranks = matrix[:, agf_rank_idx] * (n - 1) + 1
-
-        # Per-horse diff, normalized to ~[-1, 1]
-        diff = (agf_ranks - model_ranks) / max(n, 1)
-        matrix[:, col_idx] = diff
-
-        return matrix
-
-    # ── Helper methods ──
-
-    def _parse_form(self, form_str):
-        """Parse form string into [(surface, position), ...].
-        
-        Handles two formats:
-          'K4K1C1K7C3' → [('K',4), ('K',1), ('C',1), ('K',7), ('C',3)]
-          '7-54436'    → [('U',7), ('U',5), ('U',4), ('U',4), ('U',3), ('U',6)]
-        'U' = unknown surface (no K/C info available from PDF).
-        """
+    def _parse_form(self, form_str, track_type='dirt'):
+        """Parse form string — K/C harflerini koru!"""
         if not form_str or not isinstance(form_str, str):
-            return []
-        # Try K/C format first
-        kc_parsed = re.findall(r'([KC])(\d+)', form_str)
-        if kc_parsed:
-            return [(t, int(p)) for t, p in kc_parsed]
-        # Fallback: digit-dash format from PDF  ("7-54436" or "12345")
-        digits = [int(ch) for ch in form_str if ch.isdigit() and ch != '0']
-        if digits:
-            return [('U', d) for d in digits]
-        return []
-
-    def _calc_form_trend(self, parsed):
-        if len(parsed) < 4:
-            return 0.0
-        half = len(parsed) // 2
-        first = [p for _, p in parsed[:half] if p > 0]
-        second = [p for _, p in parsed[half:] if p > 0]
-        if not first or not second:
-            return 0.0
-        avg_first = np.mean(first)
-        avg_second = np.mean(second)
-        return (avg_first - avg_second) / (avg_first + 1)
-
-    def _calc_surface_match(self, parsed, track_type):
-        if not parsed:
-            return 0.5
-        # Only count entries where surface is known (K or C)
-        known = [(t, p) for t, p in parsed if t in ('K', 'C')]
-        if not known:
-            return 0.5  # All unknown → neutral
-        if track_type == 'dirt':
-            return sum(1 for t, _ in known if t == 'K') / len(known)
+            return 0.5, 0.5, 0.5, 0, 0, 0, 0.5
+        matches = re.findall(r'([KC])(\d+)', form_str)
+        if not matches:
+            return 0.5, 0.5, 0.5, 0, 0, 0, 0.5
+        kum_pos = [int(p) for s, p in matches if s == 'K']
+        cim_pos = [int(p) for s, p in matches if s == 'C']
+        all_pos = [int(p) for _, p in matches]
+        kumcu = sum(1 for p in kum_pos if p <= 3) / max(len(kum_pos), 1) if kum_pos else 0.5
+        cimci = sum(1 for p in cim_pos if p <= 3) / max(len(cim_pos), 1) if cim_pos else 0.5
+        if track_type in ('dirt', 'kum'):
+            sm = kumcu
+        elif track_type in ('turf', 'cim', 'grass'):
+            sm = cimci
         else:
-            return sum(1 for t, _ in known if t == 'C') / len(known)
-
-    def _build_surprise_key(self, field_size, race_info):
-        fs_bucket = 'small' if field_size <= 7 else ('medium' if field_size <= 11 else 'large')
-        group = race_info.get('group_name', '')
-        is_arab = 1 if 'arap' in group.lower() else 0
-        _tm = {'kum': 'dirt', 'çim': 'turf', 'sentetik': 'synthetic',
-               'dirt': 'dirt', 'turf': 'turf', 'synthetic': 'synthetic'}
-        track = _tm.get((race_info.get('track_type', '') or '').lower().strip(), 'dirt')
-        hippo = race_info.get('hippodrome_name', 'UNK')
-        return f"{fs_bucket}|{is_arab}|{track}|{hippo}"
+            sm = 0.5
+        fl = 1.0 / (all_pos[-1] + 1) if all_pos else 0
+        fb = 1.0 / (min(all_pos) + 1) if all_pos else 0
+        fc = 1.0 / (np.std(all_pos) + 1) if len(all_pos) >= 2 else 0
+        ft = 0.5
+        if len(all_pos) >= 4:
+            half = len(all_pos) // 2
+            ft = (np.mean(all_pos[:half]) - np.mean(all_pos[half:])) / (np.mean(all_pos[:half]) + 1)
+        return kumcu, cimci, sm, fl, fb, fc, ft
 
     @staticmethod
-    def _safe_norm_val(val, mn, mx):
+    def _norm(val, mn, mx):
+        if val is None:
+            return 0.5
         try:
             val = float(val)
-            mn = float(mn)
-            mx = float(mx)
         except (ValueError, TypeError):
             return 0.5
         if mx == mn:

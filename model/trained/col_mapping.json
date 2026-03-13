@@ -1,0 +1,29 @@
+{
+  "bot_to_taydex": {
+    "horse_name": "horse_name",
+    "horse_number": "horse_number",
+    "jockey": "jockey_name",
+    "trainer": "trainer_name",
+    "sire": "sire",
+    "dam": "dam",
+    "dam_sire": "dam_sire",
+    "form": "last_6_races",
+    "weight": "weight",
+    "handicap": "handicap",
+    "age": "age",
+    "age_text": "age_text",
+    "equipment": "equipment",
+    "kgs": "kgs",
+    "last_20_score": "last_20_score",
+    "gate_number": "gate_number",
+    "extra_weight": "extra_weight",
+    "distance": "distance",
+    "track_type": "track_type",
+    "group_name": "group_name",
+    "first_prize": "first_prize",
+    "temperature": "temperature",
+    "humidity": "humidity",
+    "hippodrome_name": "hippodrome_name",
+    "agf_pct": "agf_value"
+  }
+}

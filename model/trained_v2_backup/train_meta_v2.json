@@ -1,0 +1,53 @@
+{
+  "trained_at": "2026-03-11T08:45:02.277822",
+  "version": "v2",
+  "label_method": "exponential",
+  "agf_noise": 0.05,
+  "two_pass": true,
+  "has_ablated": true,
+  "split_date": "2026-02-03",
+  "train_records": 12001,
+  "test_records": 2791,
+  "n_features": 82,
+  "eval": {
+    "xgb": {
+      "ndcg1": 0.7245614948716889,
+      "ndcg3": 0.799735322604885,
+      "top1_accuracy": 0.5087108013937283,
+      "top3_accuracy": 0.7735191637630662,
+      "n_races": 287
+    },
+    "lgbm": {
+      "ndcg1": 0.7222929607899478,
+      "ndcg3": 0.7997796150219635,
+      "top1_accuracy": 0.5052264808362369,
+      "top3_accuracy": 0.794425087108014,
+      "n_races": 287
+    },
+    "cb": {
+      "ndcg1": 0.71920886046301,
+      "ndcg3": 0.8013618828490109,
+      "top1_accuracy": 0.49825783972125437,
+      "top3_accuracy": 0.7839721254355401,
+      "n_races": 287
+    },
+    "ensemble": {
+      "ndcg1": 0.7274370111354689,
+      "ndcg3": 0.800782984122403,
+      "top1_accuracy": 0.5121951219512195,
+      "top3_accuracy": 0.7804878048780488,
+      "n_races": 287
+    },
+    "ablated": {
+      "ndcg1": 0.6508923215206821,
+      "ndcg3": 0.7428031325354912,
+      "top1_accuracy": 0.4146341463414634,
+      "top3_accuracy": 0.7073170731707317,
+      "n_races": 287
+    }
+  },
+  "agf_importance": {
+    "xgb": "0.21376151",
+    "lgbm": 0.33558796589868006
+  }
+}

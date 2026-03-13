@@ -28,6 +28,7 @@ from engine.kupon import build_kupon
 from engine.rating import rate_sequence
 from engine.commentary import generate_commentary, generate_kupon_message
 from engine.retro import save_predictions, run_retro
+from engine.ganyan_value import find_value_horses, format_value_message
 from bot.telegram_sender import (
     send_sync, send_daily_sync,
     format_daily_header, format_no_play_message,
@@ -95,7 +96,10 @@ def run_daily(target_date=None):
 
         # Model predict
         if model_ok and fb_ok:
-            legs, leg_health = _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date)
+            # Breed detection
+            group_names = [leg.get('group_name', '') for leg in agf_legs]
+            breed = 'arab' if any('arap' in str(g).lower() for g in group_names) else 'english'
+            legs, leg_health = _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date, breed)
             for k in ('total', 'model_ok', 'fallback', 'error', 'pdf_fields_filled'):
                 all_health[k] += leg_health[k]
             all_health['nonzero_pcts'].extend(leg_health['nonzero_pcts'])
@@ -143,6 +147,20 @@ def run_daily(target_date=None):
 
         altili_packages.append((kupon_text, commentary_text))
 
+        # Ganyan value
+        try:
+            value_horses = find_value_horses(legs, model, fb, agf_alt)
+            if value_horses:
+                value_text = format_value_message(hippo, date_str, value_horses)
+                if value_text:
+                    try:
+                        send_sync(value_text)
+                        logger.info(f"  Ganyan value: {len(value_horses)} at bulundu")
+                    except Exception as ve:
+                        logger.warning(f"  Value mesaj gonderilemedi: {ve}")
+        except Exception as e:
+            logger.warning(f"  Ganyan value failed: {e}")
+
         try:
             save_predictions(hippo, altili_no, dar, genis, legs, rating, target_date)
         except Exception as e:
@@ -175,7 +193,7 @@ def run_daily(target_date=None):
     logger.info("Done! ✓")
 
 
-def _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date):
+def _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date, breed='english'):
     """Her ayak için 82 feature build + 3-ensemble predict."""
     new_legs = []
     health = {'total': 0, 'model_ok': 0, 'fallback': 0, 'error': 0,
@@ -248,7 +266,15 @@ def _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date):
                 new_legs.append(updated)
                 continue
 
-            scores = model.predict(matrix)
+            scores = model.predict(matrix, breed=breed)
+            # Probability (ganyan value icin)
+            try:
+                probs = model.predict_proba(matrix, breed=breed)
+                for jj in range(len(probs)):
+                    if jj < len(leg['horses']):
+                        leg['horses'][jj][3]['model_prob'] = float(probs[jj])
+            except Exception:
+                pass
 
             # Model agreement
             indiv = model.predict_individual(matrix)
