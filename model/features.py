@@ -27,6 +27,14 @@ HIPPO_INDEX = {
 }
 
 
+def _normalize_name(name):
+    n = str(name).strip().upper()
+    for old, new in [('İ','I'),('Ş','S'),('Ğ','G'),('Ü','U'),('Ö','O'),('Ç','C'),
+                     ('ı','I'),('ş','S'),('ğ','G'),('ü','U'),('ö','O'),('ç','C')]:
+        n = n.replace(old, new)
+    return n
+
+
 class FeatureBuilder:
     """Builds 96 features matching V5 Colab pipeline exactly."""
 
@@ -160,7 +168,11 @@ class FeatureBuilder:
                 hippo_enc = val
                 break
 
-        avg_winner_odds = self.stats.get('upset_rate', {}).get(hippo, 0.5)
+        avg_winner_odds = 0.5
+        if hasattr(self, 'lookup') and self.lookup.get('upset_rates_v2'):
+            avg_winner_odds = self.lookup['upset_rates_v2'].get(hippo, 0.5)
+        if avg_winner_odds == 0.5:
+            avg_winner_odds = self.stats.get('upset_rate', {}).get(hippo, 0.5)
         f_dist = self._norm(distance, g.get('distance_min', 800), g.get('distance_max', 2800))
         f_is_dirt = 1.0 if track_type == 'dirt' else 0.0
         f_is_synthetic = 1.0 if track_type == 'synthetic' else 0.0
@@ -234,6 +246,8 @@ class FeatureBuilder:
             if total_earnings == 0 and hasattr(self, 'lookup'):
                 horse_name = h.get('horse_name', '')
                 total_earnings = float(self.lookup.get('horse_earnings', {}).get(horse_name, 0))
+                if total_earnings == 0:
+                    total_earnings = float(self.lookup.get('horse_earnings_normalized', {}).get(_normalize_name(horse_name), 0))
             f['f_earnings'] = np.log1p(total_earnings) / np.log1p(g.get('earnings_max', 42593220))
 
             kgs = float(h.get('kgs', 0) or 0)
@@ -280,6 +294,8 @@ class FeatureBuilder:
             sire_sire = h.get('sire_sire', '') or ''
             if not sire_sire and sire and hasattr(self, 'lookup'):
                 sire_sire = self.lookup.get('sire_to_sire_sire', {}).get(sire, '')
+                if not sire_sire:
+                    sire_sire = self.lookup.get('sire_to_sire_sire_normalized', {}).get(_normalize_name(sire), '')
 
             f['f_sire_win_rate'] = self.stats.get('sire', {}).get(sire, {}).get('win_rate', 0)
             f['f_dam_sire_win_rate'] = self.stats.get('dam_sire', {}).get(dam_sire, {}).get('win_rate', 0)
@@ -291,10 +307,18 @@ class FeatureBuilder:
             f['f_dam_best_earner'] = np.log1p(d_st.get('best_earner', 0)) / np.log1p(g.get('earnings_max', 42593220))
             f['f_damdam_family_wr'] = self.stats.get('damdam', {}).get(dam_dam, {}).get('win_rate', 0)
 
-            # Pace (placeholder)
+            # Pace — lookup'tan breed x distance ortalamasi
             f['f_pace_best_time'] = 0.5
             f['f_pace_relative'] = 0.0
             f['f_pace_race_avg'] = 0.0
+            if hasattr(self, 'lookup') and self.lookup.get('pace_averages'):
+                _breed_key = 'arab' if is_arab else 'english'
+                _dist_bucket = int((distance // 200) * 200)
+                _pace_key = f"{_breed_key}_{_dist_bucket}"
+                _pace = self.lookup['pace_averages'].get(_pace_key, {})
+                if _pace:
+                    f['f_pace_race_avg'] = self._norm(_pace.get('mean', 0), 60, 200)
+                    f['f_pace_best_time'] = self._norm(_pace.get('median', 0), 60, 200)
             f['f_model_vs_market'] = 0.0
 
             # Interactions
