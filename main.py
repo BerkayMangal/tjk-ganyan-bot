@@ -27,6 +27,7 @@ from model.features import FeatureBuilder
 from engine.kupon import build_kupon
 from engine.rating import rate_sequence
 from engine.commentary import generate_commentary, generate_kupon_message
+from engine.summary import build_summary_message
 from engine.retro import save_predictions, run_retro
 from engine.ganyan_value import find_value_horses, format_value_message
 from bot.telegram_sender import (
