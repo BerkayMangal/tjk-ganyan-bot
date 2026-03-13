@@ -1,216 +1,253 @@
 # TJK 6'lı Ganyan Prediction System 🏇
 
-**Ensemble Learning-Based Horse Racing Prediction & Automated Betting System for Turkish Jockey Club (TJK)**
+**Ensemble Learning + Value Betting — Turkish Horse Racing Intelligence Platform**
 
-A production-grade ML pipeline that scrapes race data from TJK, builds 82 engineered features, runs a 4-model ensemble ranker, and delivers automated 6'lı ganyan tickets via Telegram — deployed 24/7 on Railway.
+ML pipeline that predicts Turkish horse races using 401K historical records, delivers automated 6'lı ganyan tickets + ganyan value bets via Telegram. Deployed 24/7 on Railway.
 
-Built for research purposes. Trained on 14,792 entries from 1,517 races across 10 Turkish hippodromes (Sep 2025 – Mar 2026).
+Trained on **401,190 entries** from **40,966 races** across **10 Turkish hippodromes** (2016–2026), powered by Taydex data.
+
+---
+
+## What's New in V5
+
+- **Breed-split models**: Separate Arab & English models — different racing dynamics
+- **Ganyan Value Bot**: Finds undervalued horses where model disagrees with market (ROI +89%)
+- **Taydex data**: 401K records vs old 14K — 671 jockeys, 1,602 dam-sires, 10 hippodromes
+- **Real K/C form parsing**: Kumcu/çimci (dirt/turf specialist) features actually work now
+- **Calibrated probabilities**: Isotonic regression for true win probability estimation
+- **Expert consensus**: HorseTurk scraping + multi-source agreement engine
 
 ---
 
 ## System Architecture
-
 ```
 ┌─────────────┐     ┌──────────────┐     ┌───────────────┐     ┌──────────────┐
-│  TJK / AGF  │────▶│   Scraper    │────▶│   Feature     │────▶│  4-Model     │
+│  TJK / AGF  │────▶│   Scraper    │────▶│   Feature     │────▶│  Breed-Split │
 │  Data Layer │     │  HTML + CSV  │     │  Engineering  │     │  Ensemble    │
-└─────────────┘     └──────────────┘     │  (82 feat.)   │     │  Ranker      │
+└─────────────┘     └──────────────┘     │  (48 feat.)   │     │  (Arab/Eng)  │
                                          └───────────────┘     └──────┬───────┘
                                                                       │
 ┌─────────────┐     ┌──────────────┐     ┌───────────────┐           │
-│  Telegram   │◀────│   Kupon      │◀────│   Rating &    │◀──────────┘
-│  Delivery   │     │  Generator   │     │  Commentary   │
+│  Telegram   │◀────│  Kupon +     │◀────│   Rating &    │◀──────────┘
+│  Delivery   │     │  Value Bot   │     │  Commentary   │
 └─────────────┘     └──────────────┘     └───────────────┘
 ```
 
-## Model Performance
+## Two Betting Modes
 
-### Retrain V2 — Test Set Evaluation (287 races, temporal split)
+### 1. 6'lı Ganyan (Altılı) — Content + Prediction
+Daily automated tickets for Turkey's 6-leg accumulator bet. Model ranks horses, generates DAR (conservative) and GENİŞ (wide) tickets with commentary.
 
-| Model | NDCG@1 | NDCG@3 | Top-1 Accuracy | Top-3 Accuracy |
-|-------|--------|--------|----------------|----------------|
-| XGBRanker | 0.725 | 0.800 | 50.9% | 77.4% |
-| LGBMRegressor | 0.722 | 0.800 | 50.5% | 79.4% |
-| CatBoostRanker | 0.719 | 0.801 | 49.8% | 78.4% |
-| **Ensemble (weighted)** | **0.727** | **0.801** | **51.2%** | **78.0%** |
-| AGF-Ablated (no market data) | 0.651 | 0.743 | 41.5% | 70.7% |
+### 2. Ganyan Value Bot — Edge Betting 🎯
+Finds horses where `model_probability > market_probability`. Backtest results (leakage-free):
 
-### Backtest Results (180 altılı sequences, Sep 2025 – Mar 2026)
+| Threshold | Horses | Win Rate | Avg Odds | ROI |
+|-----------|--------|----------|----------|-----|
+| value ≥ 0.05 | 3,624 | 16.1% | 16.8x | **+89%** |
+| value ≥ 0.08 | 2,512 | 17.4% | 14.9x | **+93%** |
+| value ≥ 0.10 | 1,984 | 18.0% | 13.9x | **+105%** |
 
-| Metric | DAR Ticket | GENİŞ Ticket |
-|--------|-----------|--------------|
-| Per-leg hit rate | 74.3% | 84.2% |
-| Full ticket hit rate | 13.3% | 35.0% |
-| 5-of-6 rate | 36.7% | 40.0% |
-| Zero miss (0/6 or 1/6) | 0.0% | 0.0% |
+Every hippodrome is profitable:
 
-**Winner prediction**: Top-1 = 38.8%, Top-3 = 71.1% across 1,080 individual races.
+| Hippodrome | Bets | ROI |
+|------------|------|-----|
+| Antalya | 277 | **+257%** |
+| Şanlıurfa | 444 | **+110%** |
+| İstanbul | 618 | **+104%** |
+| Ankara | 298 | +81% |
+| Bursa | 369 | +58% |
+| İzmir | 640 | +54% |
+| Adana | 553 | +56% |
+| Elazığ | 178 | +49% |
 
-### AGF Dependency Analysis
+---
 
-A key contribution of Retrain V2 is breaking the model's over-reliance on AGF (market consensus) features:
+## Model Performance (V5 — Leakage-Free)
 
-| Model | AGF Feature Importance | Status |
-|-------|----------------------|--------|
-| XGBRanker | 21.4% | ✅ Independent |
-| LGBMRegressor | 33.6% | ✅ Independent |
-| AGF-Ablated | 0.0% | ✅ Pure fundamentals |
+### Walk-Forward Validation (6 time windows)
 
-The ablated model (trained without any market features) achieves 41.5% Top-1 accuracy using only form, pedigree, jockey/trainer stats, handicap, and race conditions — confirming the model learns genuine racing signals beyond market consensus.
+| Window | Test Races | Model Top-1 | AGF Top-1 | Edge |
+|--------|-----------|-------------|-----------|------|
+| W1 (2023 H1) | 423 | 25.8% | 22.7% | +3.1 |
+| W2 (2023 H2) | 471 | 22.3% | 20.6% | +1.7 |
+| W3 (2024 H1) | 454 | 22.9% | 24.7% | -1.8 |
+| W4 (2024 H2) | 545 | 18.0% | 24.0% | -6.1 |
+| W5 (2025 H1) | 3,082 | 19.2% | 25.8% | -6.5 |
+| W6 (2025 H2) | 3,184 | 22.7% | 27.8% | -5.0 |
 
-### Top Feature Importances (XGB, post-retrain)
+> **Honest note**: The model does NOT consistently beat AGF on raw Top-1 prediction. AGF (market consensus) is very efficient. The real edge is in **value detection** — finding specific horses the market underprices.
 
+### Breed-Split Results (Test: Sep 2025 – Mar 2026)
+
+| Breed | Races | Model Top-1 | Model Top-3 | AGF Top-1 |
+|-------|-------|-------------|-------------|-----------|
+| Arab | 1,441 | 27.1% | 59.1% | 28.7% |
+| English | 1,743 | 28.7% | 63.0% | 30.7% |
+
+### Field Size Analysis
+
+| Field Size | Top-1 | Top-2 | Top-3 | Top-4 | Top-5 |
+|-----------|-------|-------|-------|-------|-------|
+| 2-6 horses | 41.4% | 68.3% | **83.1%** | 91.2% | 97.6% |
+| 7-9 horses | 30.0% | 52.3% | 67.8% | 79.4% | 87.7% |
+| 10-12 horses | 30.3% | 51.0% | 65.9% | 74.4% | 82.5% |
+| 13+ horses | 27.1% | 42.4% | 56.4% | 64.4% | 71.2% |
+
+### Surprise & Payout Analysis (40K races)
+
+| Surprise Legs | Avg Payout | Strategy |
+|--------------|-----------|----------|
+| 0 surprises | 610 TL | Don't play |
+| 1 surprise | 2,812 TL | Low value |
+| 2 surprises | 15,812 TL | Medium |
+| 3 surprises | **82,163 TL** | Sweet spot |
+| 4 surprises | 266,324 TL | High risk/reward |
+
+---
+
+## Feature Engineering (48 Features, V5)
+
+| Category | Key Features | Source |
+|----------|-------------|--------|
+| Market | AGF prob, log odds, rank, fav gap | AGF Scraper |
+| Form | Kumcu/çimci (K/C parse), last1, best, trend, consistency | TJK HTML |
+| Physical | Weight, distance, gate, handicap, extra weight | TJK HTML |
+| Pedigree | Sire WR, dam-sire WR, sire-sire WR, dam produce, damdam | Rolling Stats (Taydex) |
+| Jockey/Trainer | Win rate, Top-3 rate, experience, J+T combo WR | Rolling Stats (Taydex) |
+| Conditions | Track type, hippodrome, temperature, humidity, upset rate | Race Info |
+| Interactions | Jockey×AGF, sire×distance, kumcu×dirt, form×AGF, J+T×form | Computed |
+
+### Rolling Statistics (from 401K records)
+
+| Entity | Count | vs V2 |
+|--------|-------|-------|
+| Jockeys | 671 | was 17 |
+| Trainers | 1,217 | was 65 |
+| Sires | 1,611 | was 183 |
+| Dam-sires | 1,602 | was 0 |
+| Sire-sires | 555 | was 0 |
+| Dams | 10,783 | was ~100 |
+| Dam-dams | 6,529 | was 0 |
+| J+T combos | 29,556 | was ~50 |
+
+### Top SHAP Features (V5)
+
+**Arab model:**
 ```
- 1. f_model_vs_market     0.059   ← 2-pass training signal
- 2. f_agf_rank            0.055
- 3. f_dam_produce_wr      0.019   ← pedigree signal
- 4. f_form_best           0.015   ← form signal
- 5. f_is_dirt             0.016   ← track surface
- 6. f_field_size          0.014
- 7. f_last20_score        0.014   ← recent performance
- 8. f_jockey_win_rate     0.014   ← jockey quality
-```
-
-## Feature Engineering (82 Features)
-
-Features are organized into 10 categories, built from 4 data sources:
-
-| Category | Count | Source | Description |
-|----------|-------|--------|-------------|
-| Market | 8 | AGF Scraper | Implied probabilities, rank, odds entropy, fav margins |
-| Form | 7 | TJK Program CSV | Last 6 positions, trend, consistency, surface match |
-| Physical | 7 | TJK HTML/CSV | Weight, distance preference, gate position, handicap |
-| Horse Profile | 7 | TJK + Rolling Stats | Age, gender, earnings, rest days |
-| Jockey/Trainer | 5 | Rolling Stats | Win rates, top-3 rates, experience |
-| Pedigree | 9 | Rolling Stats | Sire, dam-sire, dam produce, sibling performance |
-| Conditions | 9 | Race Info | Track type, hippodrome, weather, field size, class |
-| Equipment | 5 | TJK Program | Blinkers (KG), shadow roll (DB), tongue tie (SK) |
-| Pace/Surprise | 5 | Historical Stats | Race surprise rate, upset rate, pace proxies |
-| Interactions | 20 | Computed | Cross-category feature products (e.g. jockey × form) |
-
-**Rolling statistics** cover 446 sires, 622 dam-sires, 2,583 dams, 180 jockeys, 489 trainers — computed from 30,147 historical races.
-
-## Training Pipeline
-
-### Data Collection
-- **Source**: TJK CDN CSV (Sonuç + Program) for 180 days
-- **Volume**: 14,792 race entries across 1,517 races, 10 hippodromes
-- **Fields**: Finish position, ganyan odds, AGF%, jockey, trainer, sire, dam, weight, form, KGS, S20, equipment, handicap
-
-### Retrain V2 Methodology
-
-```
-Phase 1: Temporal Split
-  └─ 80% train / 20% test (date-ordered, no leakage)
-
-Phase 2: AGF Noise Injection (σ = 0.05)
-  └─ Gaussian noise on 11 AGF features → breaks memorization
-
-Phase 3: Pass 1 Training
-  └─ XGBRanker + LGBMRegressor + CatBoostRanker
-
-Phase 4: model_vs_market Computation
-  └─ Pass 1 predictions → AGF rank – model rank → real signal
-
-Phase 5: Pass 2 Training (with model_vs_market)
-  └─ All 3 models retrained with enriched features
-
-Phase 6: AGF-Ablated Model
-  └─ LGBMRegressor on 71 features (no AGF) → 4th ensemble member
-
-Phase 7: Evaluation
-  └─ NDCG@1, NDCG@3, Top-1/Top-3 accuracy, AGF dependency audit
-```
-
-**Label engineering**: Exponential relevance scoring `y = 1 / pos^0.7` provides more granular signal than binary win/loss labels.
-
-## Ensemble Architecture
-
-```
-                    ┌─────────────┐
-                    │  XGBRanker  │ weight: 0.35
-                    │  (pairwise) │
-                    └──────┬──────┘
-                           │
-┌──────────────┐    ┌──────┴──────┐    ┌───────────────┐
-│ 82 Features  │───▶│  Weighted   │───▶│  Normalized   │
-│ + Scaler     │    │  Average    │    │  Scores [0,1] │
-└──────────────┘    ┌──────┴──────┐    └───────────────┘
-                    │ LGBMRegres. │ weight: 0.30
-                    │ (regression)│
-                    └──────┬──────┘
-                           │
-                    ┌──────┴──────┐
-                    │ CatBoost   │ weight: 0.20
-                    │ (PairLogit)│
-                    └──────┬──────┘
-                           │
-                    ┌──────┴──────┐
-                    │ AGF-Ablated│ weight: 0.15
-                    │ (71 feat.) │
-                    └─────────────┘
+ 1. f_agf_log              0.124   ← market signal
+ 2. f_X_jt_combo_form      0.084   ← jockey-trainer combo
+ 3. f_earnings             0.081   ← career earnings (NEW)
+ 4. f_odds_entropy         0.066   ← race competitiveness
+ 5. f_dam_produce_top3     0.060   ← dam produce (NEW)
 ```
 
-The ablated model acts as a regularizer — when market data is noisy or unavailable, the fundamentals-only model provides a stable baseline.
+**English model:**
+```
+ 1. f_agf_log              0.144
+ 2. f_earnings             0.107   ← career earnings (NEW)
+ 3. f_X_jt_combo_form      0.086
+ 4. f_dam_produce_top3     0.074   ← dam produce (NEW)
+ 5. f_odds_entropy         0.073
+```
 
-## Ticket Generation
+---
 
-Score-coverage algorithm with Monte Carlo validation:
+## Upset Predictor
 
-- **DAR** (conservative): 60% score coverage per leg, max 4 horses, budget ~1,500 TL
-- **GENİŞ** (wide): 75% score coverage per leg, max 6 horses, budget ~4,000 TL
-- **TEK rule**: Score gap > 0.25 AND 3-model agreement ≥ 67% → single pick (banker)
+Binary classifier: "Will the AGF favorite lose this race?"
 
-## Day Rating System
+- **AUC**: 0.643
+- **Top feature**: `agf_entropy` (82.3% importance) — the more competitive the race, the more likely an upset
+- Calibrated: When model says 80% upset → actually 79% upset
 
-| Rating | Score | Verdict | Action |
-|--------|-------|---------|--------|
-| ⭐ | < 2.0 | Weak day — high variance | PASS |
-| ⭐⭐ | 2.0 – 4.0 | Normal day | DAR only |
-| ⭐⭐⭐ | > 4.0 | Strong day — model confident | DAR + GENİŞ |
-
-Scoring factors: model confidence, 3-model agreement, banker leg count, field sizes, breed composition.
+---
 
 ## Project Structure
-
 ```
 tjk-ganyan-bot/
-├── main.py                    # Daily orchestrator
+├── main.py                    # Daily orchestrator + ganyan value
 ├── config.py                  # Configuration & thresholds
 │
 ├── scraper/
-│   ├── agf_scraper.py         # AGF market data (agftablosu.com)
-│   ├── tjk_html_scraper.py    # TJK HTML + CSV program parser
-│   └── tjk_program.py         # TJK PDF program parser (legacy)
+│   ├── agf_scraper.py         # AGF market data (sequential 6-race matching)
+│   ├── tjk_html_scraper.py    # TJK HTML + CSV parser (K/C form preserved)
+│   ├── tjk_program.py         # TJK PDF parser (legacy fallback)
+│   └── expert_consensus.py    # HorseTurk expert predictions
 │
 ├── model/
-│   ├── features.py            # 82-feature builder
-│   ├── ensemble.py            # 4-model weighted ensemble
-│   └── trained/               # Serialized models (.pkl)
-│       ├── xgb_ranker.pkl
-│       ├── lgbm_ranker.pkl
-│       ├── cb_ranker.pkl
-│       ├── ablated_ranker.pkl # AGF-free model
-│       ├── scaler.pkl
-│       ├── rstats.json        # Rolling statistics (30K+ races)
+│   ├── features.py            # V5 feature builder (Taydex-compatible)
+│   ├── ensemble.py            # Breed-split ensemble + calibrated probability
+│   └── trained/
+│       ├── xgb_ranker_arab.pkl
+│       ├── xgb_ranker_english.pkl
+│       ├── lgbm_ranker_arab.pkl
+│       ├── lgbm_ranker_english.pkl
+│       ├── scaler_arab.pkl / scaler_english.pkl
+│       ├── xgb_prob_arab.pkl / xgb_prob_english.pkl  # calibrated (value)
+│       ├── lgbm_prob_arab.pkl / lgbm_prob_english.pkl
+│       ├── rstats_v2.json     # Rolling stats (401K records)
 │       └── feature_columns.json
 │
 ├── engine/
 │   ├── kupon.py               # Score-coverage ticket generator
 │   ├── rating.py              # Day rating (1-3 stars)
-│   ├── commentary.py          # Race-by-race commentary
-│   └── retro.py               # Post-race result comparison
+│   ├── commentary.py          # Race-by-race commentary (V6.1)
+│   ├── retro.py               # Post-race comparison + cumulative stats
+│   ├── altili_detect.py       # Altılı sequence detection
+│   └── ganyan_value.py        # Value horse finder (NEW)
 │
 ├── train/
-│   ├── retrain_v2.py          # Full retrain pipeline (AGF-breaking)
-│   ├── backtester.py          # Historical ticket simulation
-│   └── feature_audit.py       # Feature importance & drift analysis
+│   ├── retrain_v2.py          # Training pipeline
+│   ├── backtester.py          # Historical simulation
+│   └── feature_audit.py       # SHAP + drift analysis
 │
 ├── bot/
 │   └── telegram_sender.py     # Telegram delivery
 │
-└── TJK_Training_Pipeline_V4.ipynb  # Colab notebook (scrape → train → deploy)
+└── data/
+    └── predictions/           # Saved predictions for retro
 ```
+
+---
+
+## Telegram Output
+
+### Altılı Ticket
+```
+İSTANBUL 1. ALTILI
+13.03.2026 — 13:30
+GUCLU GUN — Model emin, oyna
+
+DAR (480 TL)
+1A) 2,7,12
+2A) 4 TEK
+...
+
+GENİŞ (2.160 TL)
+1A) 2,7,12,1,9
+...
+```
+
+### Ganyan Value Alert
+```
+🎯 GANYAN VALUE — İZMİR
+
+3. Koşu — SHARP STORM (#1) **
+  Value: +0.08 | Model: %16 | Piyasa: %8 | Odds: 12.5x
+  Jokey: KADİR TOKAÇOĞLU (%27 WR)
+
+📊 2 value at | Önerilen: 10₺/bet
+```
+
+### Expert Consensus
+```
+KONSENSÜS — İSTANBUL
+1. ayak: Model=4 AGF=7 HorseTurk=7 — FARKLI
+2. ayak: 7 — HERKES HEMFİKİR
+SUPER BANKO: 1,3. ayak
+```
+
+---
 
 ## Quick Start
 
@@ -227,31 +264,14 @@ TELEGRAM_CHAT_ID=your_chat_id
 
 ### Run
 ```bash
-# Today's predictions
+# Today's predictions + value bets
 python main.py
 
 # Specific date
-python main.py 2026-03-11
+python main.py 2026-03-13
 
-# Scheduled (Railway/server) — daily at 11:00 Istanbul time
+# Scheduled (Railway) — predictions 11:00, retro 21:00 Istanbul
 python main.py --schedule
-```
-
-### Retrain
-```bash
-# Full pipeline (use Colab notebook for data scraping)
-python train/retrain_v2.py \
-  --data data/races_featured.csv \
-  --output model/trained \
-  --labels exponential \
-  --agf-noise 0.05 \
-  --test-ratio 0.20
-
-# Feature audit
-python train/feature_audit.py --data data/races_featured.csv --model-dir model/trained
-
-# Backtest
-python train/backtester.py --data data/races_featured.csv --model-dir model/trained
 ```
 
 ## Deployment
@@ -259,29 +279,41 @@ python train/backtester.py --data data/races_featured.csv --model-dir model/trai
 Railway auto-deploys on `git push`:
 
 1. Connect GitHub repo to Railway
-2. Set environment variables (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`)
-3. Start command: `python main.py --schedule`
+2. Set environment variables
+3. Start command: `bash -c "apt-get update && apt-get install -y --no-install-recommends libgomp1 && python main.py --schedule"`
 
-Daily schedule: predictions at 11:00, retro analysis at 21:00 (Europe/Istanbul).
+---
 
 ## Technology Stack
 
 | Component | Technology |
 |-----------|------------|
-| Ranking Models | XGBoost (pairwise), LightGBM (regression), CatBoost (PairLogit) |
-| Feature Engineering | NumPy, Pandas, custom rolling statistics |
-| Data Sources | TJK CDN CSV, TJK HTML, agftablosu.com |
-| Validation | Temporal walk-forward split, NDCG@k, Monte Carlo simulation |
-| Deployment | Railway (Docker), APScheduler |
+| Models | XGBoost, LightGBM (breed-split) |
+| Calibration | Isotonic regression (sklearn) |
+| Data | Taydex (401K records), TJK HTML, AGF |
+| Features | 48 engineered, K/C form parse, rolling stats |
+| Validation | Walk-forward (6 windows), SHAP analysis |
+| Deployment | Railway, APScheduler |
 | Delivery | Telegram Bot API |
 
-## Limitations & Future Work
+## Data Sources
 
-- **No earnings data**: TJK CSV doesn't include career earnings — requires separate scraping
-- **Pace features**: Currently placeholder (0.5) — no live pace data available
-- **dam_sire**: Program CSV column parsing incomplete — partial coverage
-- **Rolling stats lag**: Updated to 2026-03-06 — needs automated weekly refresh
-- **Single-market**: Currently Turkey only (10 hippodromes)
+| Source | What | Coverage |
+|--------|------|----------|
+| Taydex | Historical races, horses, pedigree | 2016–2026, 401K records |
+| TJK HTML | Live program (jockey, form, weight) | Daily |
+| AGF (agftablosu.com) | Market consensus odds | Daily |
+| HorseTurk | Expert predictions | Daily (when available) |
+
+---
+
+## Key Learnings
+
+1. **Market is efficient**: AGF already prices in most public information. Raw prediction can't beat it.
+2. **Value exists in specifics**: When model disagrees with market on specific horses, there's +15% expected value.
+3. **Breed matters**: Arab and English races have different dynamics — separate models help.
+4. **Data > Model**: Going from 14K to 401K records, filling jockey (3%→99%), dam-sire (0%→99%) was bigger than any algorithm change.
+5. **Altılı is hard**: 6-leg accumulator magnifies errors. Single-race value betting is more profitable.
 
 ## License
 
