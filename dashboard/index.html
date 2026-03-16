@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TJK ARB — Yabancı Yarış AGF Arbitraj</title>
+<title>TJK ARB v2 — AGF Arbitraj + FLB + Dutch</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root{--bg:#080808;--bg1:#0c0c0c;--bg2:#0f0f0f;--border:#1a1a1a;--border2:#222;--text:#e0e0e0;--text2:#888;--text3:#555;--text4:#333;--green:#00e68a;--red:#ff3b3b;--yellow:#FFD60A;--blue:#3b9fff;--purple:#a78bfa;--orange:#f59e0b;--mono:'JetBrains Mono',monospace;--sans:'DM Sans',-apple-system,sans-serif}
@@ -11,32 +11,30 @@
 ::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:#0a0a0a}::-webkit-scrollbar-thumb{background:#222;border-radius:3px}
 input:focus{outline:1px solid #333}input[type=number]{-moz-appearance:textfield}input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes glow{0%,100%{box-shadow:0 0 4px var(--green)44}50%{box-shadow:0 0 14px var(--green)66}}
 .pulse{display:inline-block;width:7px;height:7px;border-radius:50%;animation:pulse 2s infinite}
 .badge{padding:2px 7px;border-radius:2px;font-size:10px;font-weight:800;letter-spacing:.8px;white-space:nowrap;display:inline-block}
-.tab-btn{background:transparent;border:1px solid transparent;color:var(--text3);padding:5px 14px;border-radius:3px;font-size:11px;cursor:pointer;font-weight:400;letter-spacing:.5px;font-family:var(--sans)}
+.tab-btn{background:transparent;border:1px solid transparent;color:var(--text3);padding:5px 14px;border-radius:3px;font-size:11px;cursor:pointer;font-weight:400;letter-spacing:.5px;font-family:var(--sans);transition:all .2s}
 .tab-btn.active{background:var(--border);border-color:var(--border2);color:#fff;font-weight:700}
-.region-btn{background:transparent;border:1px solid #141414;color:var(--text3);padding:4px 12px;border-radius:3px;font-size:11px;cursor:pointer;font-weight:600;font-family:var(--sans)}
+.tab-btn:hover{color:var(--text2)}
+.region-btn{background:transparent;border:1px solid #141414;color:var(--text3);padding:4px 12px;border-radius:3px;font-size:11px;cursor:pointer;font-weight:600;font-family:var(--sans);transition:all .2s}
 .region-btn.active{background:var(--border);border-color:var(--border2);color:#fff}
 .ctrl-input{background:#111;border:1px solid var(--border);color:#ccc;padding:4px 8px;border-radius:3px;font-size:12px;font-family:var(--mono);text-align:right}
-.src-chip{display:flex;align-items:center;gap:5px;padding:4px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:3px;font-size:11px}
+.src-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:3px;font-size:11px}
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:6px;overflow:hidden;animation:fadeIn .3s ease}
 .sum-card{background:var(--bg1);border:1px solid var(--border);border-radius:4px;padding:12px 14px}
-.sum-card .label{font-size:10px;color:var(--text3);font-weight:700;letter-spacing:1px;margin-bottom:4px}
-.sum-card .value{font-size:18px;font-weight:800;font-family:var(--mono)}
-.race-card{background:var(--bg1);border:1px solid var(--border);border-radius:6px;margin-bottom:16px;overflow:hidden;animation:fadeIn .3s ease}
-.race-header{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--bg2)}
-.race-num{font-family:var(--mono);font-size:18px;font-weight:800;color:#fff;background:var(--border);padding:2px 10px;border-radius:3px;border:1px solid var(--border2)}
-.race-table{width:100%;border-collapse:collapse;font-size:13px}
-.race-table th{padding:8px 6px;font-size:10px;font-weight:700;letter-spacing:.8px;color:var(--text3);text-align:center;white-space:nowrap;border-bottom:1px solid var(--border)}
-.race-table td{padding:8px 6px;border-bottom:1px solid #111}
-.race-table tr.vstrong{background:rgba(0,230,138,.04)}.race-table tr.vsignal{background:rgba(255,214,10,.03)}
-.odds{font-family:var(--mono);font-size:13px;font-weight:600;text-align:center}
-.odds .mini{font-size:9px;display:block;margin-top:1px}
-.edge-wrap{display:flex;align-items:center;gap:6px}
-.edge-track{width:60px;height:4px;background:var(--border);border-radius:2px;overflow:hidden}
-.edge-fill{height:100%;border-radius:2px;transition:width .4s}
-.edge-pct{font-family:var(--mono);font-size:12px;font-weight:700;min-width:48px;text-align:right}
-.strat-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:20px}
-.strat-card{background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:16px}
+.sum-card .lb{font-size:10px;color:var(--text3);font-weight:700;letter-spacing:1px;margin-bottom:4px}
+.sum-card .vl{font-size:18px;font-weight:800;font-family:var(--mono)}
+.race-table{width:100%;border-collapse:collapse;font-size:12px}
+.race-table th{padding:7px 5px;font-size:9px;font-weight:700;letter-spacing:.7px;color:var(--text3);text-align:center;white-space:nowrap;border-bottom:1px solid var(--border)}
+.race-table td{padding:7px 5px;border-bottom:1px solid #111;font-size:12px}
+.race-table tr.vstrong{background:rgba(0,230,138,.04)}
+.race-table tr.vsignal{background:rgba(255,214,10,.03)}
+.race-table tr.vanti{background:rgba(255,59,59,.03)}
+.flb-bar{display:inline-block;width:32px;height:6px;border-radius:3px;vertical-align:middle;margin-right:4px}
+.warn-tag{font-size:9px;padding:1px 5px;border-radius:2px;font-weight:700;letter-spacing:.5px;display:inline-block;margin:1px 0}
+.dutch-panel{background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:16px;margin-top:16px}
+.strat-card{background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:16px;margin-bottom:12px}
 .strat-card .st{font-size:11px;font-weight:700;letter-spacing:1px;margin-bottom:10px}
 .strat-card pre{font-family:var(--mono);font-size:12px;color:var(--text2);line-height:1.8;white-space:pre-wrap}
 .strat-card .stxt{font-size:12px;color:#777;line-height:1.8}
@@ -45,131 +43,180 @@ input:focus{outline:1px solid #333}input[type=number]{-moz-appearance:textfield}
 .t-row .tb{flex:1;height:8px;background:#111;border-radius:4px;overflow:hidden}
 .t-row .tf{height:100%;border-radius:4px;transition:width .6s}
 .t-row .tp{font-size:12px;font-family:var(--mono);font-weight:700;width:40px;text-align:right}
-@media(max-width:900px){#summary{grid-template-columns:repeat(3,1fr)!important}.strat-grid{grid-template-columns:1fr}}
+@media(max-width:900px){#summary{grid-template-columns:repeat(3,1fr)!important}}
 @media(max-width:600px){#summary{grid-template-columns:repeat(2,1fr)!important}}
 </style>
 </head>
 <body>
 
-<div id="topbar" style="border-bottom:1px solid var(--border);padding:10px 20px;display:flex;justify-content:space-between;align-items:center;background:#0a0a0a">
+<!-- TOPBAR -->
+<div style="border-bottom:1px solid var(--border);padding:10px 20px;display:flex;justify-content:space-between;align-items:center;background:#0a0a0a;flex-wrap:wrap;gap:8px">
   <div style="display:flex;align-items:center;gap:8px">
     <span class="pulse" style="background:var(--green);box-shadow:0 0 7px rgba(0,230,138,.4)"></span>
     <span style="font-size:16px;font-weight:800;letter-spacing:3px;color:#fff">TJK ARB</span>
-    <span style="font-size:10px;color:var(--text4);letter-spacing:1px;border-left:1px solid var(--border);padding-left:14px">YABANCI YARIŞ AGF ARBİTRAJ</span>
+    <span style="font-size:10px;color:var(--text4);letter-spacing:1px;border-left:1px solid var(--border);padding-left:14px">v2 | FLB + DUTCH + TREND</span>
   </div>
-  <div style="display:flex;align-items:center;gap:16px">
+  <div style="display:flex;align-items:center;gap:12px">
     <span id="clock" style="font-family:var(--mono);font-size:12px;color:var(--text4)"></span>
+    <span id="srcBadge" class="badge" style="background:#111;color:var(--text3);border:1px solid var(--border2)">DEMO</span>
     <div style="display:flex;gap:2px">
       <button class="tab-btn active" onclick="switchView('races')">YARISLAR</button>
-      <button class="tab-btn" onclick="switchView('strategy')">STRATEJİ</button>
+      <button class="tab-btn" onclick="switchView('dutch')">DUTCH</button>
+      <button class="tab-btn" onclick="switchView('strategy')">STRATEJI</button>
     </div>
   </div>
 </div>
 
-<div id="controls" style="padding:12px 20px;border-bottom:1px solid #111;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
-  <div style="display:flex;gap:6px" id="regionBtns"></div>
-  <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+<!-- CONTROLS -->
+<div style="padding:10px 20px;border-bottom:1px solid #111;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+  <div style="display:flex;gap:5px;flex-wrap:wrap" id="regionBtns"></div>
+  <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
     <div style="display:flex;align-items:center;gap:4px">
-      <span style="font-size:10px;color:var(--text3);font-weight:700">BANKROLL</span>
-      <input type="number" id="bankroll" value="5000" class="ctrl-input" style="width:70px" onchange="render()">
-      <span style="font-size:10px;color:var(--text4)">₺</span>
+      <span style="font-size:10px;color:var(--text3);font-weight:700">BANK</span>
+      <input type="number" id="bankroll" value="5000" class="ctrl-input" style="width:65px" onchange="render()">
+      <span style="font-size:9px;color:var(--text4)">TL</span>
     </div>
     <div style="display:flex;align-items:center;gap:4px">
-      <span style="font-size:10px;color:var(--text2);font-weight:700">İZLE≥</span>
-      <input type="number" id="thWatch" value="5" class="ctrl-input" style="width:36px" onchange="render()">
+      <span style="font-size:9px;color:var(--text2);font-weight:700">IZLE</span>
+      <input type="number" id="thWatch" value="5" class="ctrl-input" style="width:34px" onchange="render()">
     </div>
     <div style="display:flex;align-items:center;gap:4px">
-      <span style="font-size:10px;color:var(--yellow);font-weight:700">SİNYAL≥</span>
-      <input type="number" id="thSignal" value="10" class="ctrl-input" style="width:36px;color:var(--yellow)" onchange="render()">
+      <span style="font-size:9px;color:var(--yellow);font-weight:700">SINYAL</span>
+      <input type="number" id="thSignal" value="10" class="ctrl-input" style="width:34px;color:var(--yellow)" onchange="render()">
     </div>
     <div style="display:flex;align-items:center;gap:4px">
-      <span style="font-size:10px;color:var(--green);font-weight:700">GÜÇLÜ≥</span>
-      <input type="number" id="thStrong" value="20" class="ctrl-input" style="width:36px;color:var(--green)" onchange="render()">
+      <span style="font-size:9px;color:var(--green);font-weight:700">GUCLU</span>
+      <input type="number" id="thStrong" value="20" class="ctrl-input" style="width:34px;color:var(--green)" onchange="render()">
     </div>
+    <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
+      <input type="checkbox" id="showFLB" checked onchange="render()" style="accent-color:var(--purple)">
+      <span style="font-size:10px;color:var(--purple);font-weight:700">FLB</span>
+    </label>
   </div>
 </div>
 
-<div id="sources" style="padding:10px 20px;border-bottom:1px solid #111;display:flex;gap:6px;flex-wrap:wrap"></div>
+<!-- SOURCE STATUS -->
+<div id="sources" style="padding:8px 20px;border-bottom:1px solid #111;display:flex;gap:5px;flex-wrap:wrap"></div>
+
+<!-- MAIN -->
 <div id="main" style="padding:16px 20px"></div>
+
+<!-- FOOTER -->
 <div style="border-top:1px solid #111;padding:10px 20px;display:flex;justify-content:space-between;font-size:10px;color:#222;margin-top:40px">
-  <span>TJK AGF ARBİTRAJ — github.com/BerkayMangal/tjk-ganyan-bot</span>
-  <span id="footNote">DEMO VERİ</span>
+  <span>TJK AGF ARB v2 | FLB: Griffith (1949) | Trend: Shin (1993) | Edge: Hausch & Ziemba (1990)</span>
+  <span id="footNote">DEMO</span>
 </div>
 
 <script>
-const TJK_TO=0.27;
-const SRC={tjk:{n:"TJK AGF",c:"#ff3b3b",to:.27,t:"tote"},tab_au:{n:"TAB.com.au",c:"#00e68a",to:.16,t:"tote"},betfair:{n:"Betfair Exc",c:"#FFD60A",to:.02,t:"exchange"},oddschk:{n:"Oddschecker",c:"#a78bfa",to:.08,t:"bookmaker"},twinspires:{n:"TwinSpires",c:"#3b9fff",to:.20,t:"tote"},betfair_uk:{n:"Betfair UK",c:"#f59e0b",to:.02,t:"exchange"}};
-const SRCSTAT=[{n:"TJK HTML",s:"live",l:"2.1s"},{n:"TAB.com.au",s:"live",l:"340ms"},{n:"Betfair API",s:"live",l:"180ms"},{n:"Oddschecker",s:"live",l:"1.8s"},{n:"TwinSpires",s:"idle",l:"—"},{n:"Betfair UK",s:"live",l:"210ms"}];
-const REGIONS=["ALL","AUS","UAE","USA","HKG","GBR"];
-let view="races",region="ALL",D=null;
+const TJK_TO=.27;
+const SRC={tjk:{n:"TJK AGF",c:"#ff3b3b",to:.27},tab_au:{n:"TAB.com.au",c:"#00e68a",to:.16},betfair:{n:"Betfair Exc",c:"#FFD60A",to:.02},oddschk:{n:"Oddschecker",c:"#a78bfa",to:.08},twinspires:{n:"TwinSpires",c:"#3b9fff",to:.20},betfair_uk:{n:"Betfair UK",c:"#f59e0b",to:.02}};
+const ST={"betfair":"exchange","betfair_uk":"exchange","tab_au":"tote","twinspires":"tote","oddschk":"bookmaker"};
+const REGIONS=["ALL","USA","FRA","AUS","UAE","GBR"];
+let view="races",region="ALL",D=null,dutchSelected=[];
 
+// ─── MATH ───
 function nP(o,t){return(!o||o<=1)?0:(1/o)/(1+t)}
 function cE(tjk,ref,rt){return nP(ref,rt)-nP(tjk,TJK_TO)}
 function hK(e,o){if(e<=0)return 0;let b=o-1,p=nP(o,TJK_TO)+e,q=1-p;if(b<=0||p<=0||p>=1)return 0;return Math.max(0,Math.min((b*p-q)/b/2,.15))}
 
+function flbAdj(odds,edge){
+  let pen,score;
+  if(odds>50){pen=.50;score=20}
+  else if(odds>30){pen=.35;score=35}
+  else if(odds>20){pen=.20;score=50}
+  else if(odds>10){pen=.10;score=70}
+  else if(odds>5){pen=0;score=85}
+  else if(odds>3){pen=-.05;score=90}
+  else{pen=-.10;score=95}
+  let adj=pen>0?edge*(1-pen):edge*(1+Math.abs(pen));
+  let warn=odds>30&&edge>0?"LONGSHOT TRAP":"";
+  return{raw:edge,adj,score,pen,warn}
+}
+
 function bestRef(h,srcs){
   let best=null,bp=0;
-  let pri=srcs.filter(s=>SRC[s]?.t==="exchange").concat(srcs.filter(s=>SRC[s]?.t==="tote")).concat(srcs.filter(s=>SRC[s]?.t==="bookmaker"));
-  for(let s of pri){let o=h[s];if(o&&o>1){let p=nP(o,SRC[s].to);if(p>bp){bp=p;best={src:s,odds:o,prob:p}}}}
-  return best;
+  let pri=srcs.filter(s=>ST[s]==="exchange").concat(srcs.filter(s=>ST[s]==="tote")).concat(srcs.filter(s=>ST[s]==="bookmaker"));
+  for(let s of pri){let o=h[s];if(o&&o>1){let p=nP(o,SRC[s]?.to||.1);if(p>bp){bp=p;best={src:s,odds:o,prob:p}}}}
+  return best
 }
 
 function analyze(h,srcs){
-  let tjk=h.tjk;if(!tjk||tjk<=1)return{...h,edge:0,signal:"none",kelly:0,stake:0};
-  let ref=bestRef(h,srcs),tjkP=nP(tjk,TJK_TO);
-  let edge=ref?(ref.prob-tjkP)*100:0;
-  let kelly=ref&&(ref.prob-tjkP)>0?hK(ref.prob-tjkP,tjk):0;
-  let bank=+(document.getElementById("bankroll").value)||5000;
-  let stake=kelly*bank;
-  let tw=+(document.getElementById("thWatch").value)||5;
-  let ts=+(document.getElementById("thSignal").value)||10;
-  let tg=+(document.getElementById("thStrong").value)||20;
-  let sig=edge>=tg?"strong":edge>=ts?"signal":edge>=tw?"watch":"none";
-  return{...h,edge,signal:sig,kelly:kelly*100,stake,ref};
+  let tjk=h.tjk;if(!tjk||tjk<=1)return{...h,edge:0,adjEdge:0,flbScore:0,flbPen:0,kelly:0,stake:0,signal:"none",warnings:[],srcCount:0};
+  let ref=bestRef(h,srcs);
+  if(!ref)return{...h,edge:0,adjEdge:0,flbScore:0,flbPen:0,kelly:0,stake:0,signal:"none",warnings:["NO REF"],srcCount:0};
+  
+  let tjkP=nP(tjk,TJK_TO), rawEdge=(ref.prob-tjkP)*100;
+  let useFLB=document.getElementById("showFLB")?.checked!==false;
+  let flb=useFLB?flbAdj(tjk,rawEdge):{raw:rawEdge,adj:rawEdge,score:85,pen:0,warn:""};
+  let adj=flb.adj;
+  let k=adj>0?hK(adj/100,tjk)*100:0;
+  let bank=+(document.getElementById("bankroll")?.value)||5000;
+  let stk=k/100*bank;
+  let tw=+(document.getElementById("thWatch")?.value)||5;
+  let ts=+(document.getElementById("thSignal")?.value)||10;
+  let tg=+(document.getElementById("thStrong")?.value)||20;
+  let sig=adj>=tg?"strong":adj>=ts?"signal":adj>=tw?"watch":"none";
+  
+  let warns=[];
+  if(flb.warn)warns.push(flb.warn);
+  if(rawEdge<-5)warns.push("ANTI-VALUE");
+  let sc=srcs.filter(s=>h[s]&&h[s]>1).length;
+  if(sc>=3&&adj>0)warns.push("MULTI-SRC "+sc);
+  
+  return{...h,edge:rawEdge,adjEdge:adj,flbScore:flb.score,flbPen:flb.pen,kelly:k,stake:stk,signal:sig,warnings:warns,ref,srcCount:sc}
 }
 
+function dutchCalc(horses,total){
+  if(!horses.length)return{horses:[],total,profit:0};
+  let tp=horses.reduce((s,h)=>s+(h.tjk>1?1/h.tjk:0),0);
+  if(tp<=0)return{horses:[],total,profit:0};
+  let res=horses.filter(h=>h.tjk>1).map(h=>{
+    let share=(1/h.tjk)/tp, stk=total*share, prf=stk*h.tjk-total;
+    return{name:h.name,num:h.num,odds:h.tjk,stake:Math.round(stk),profit:Math.round(prf)}
+  });
+  let avg=res.reduce((s,r)=>s+r.profit,0)/res.length;
+  return{horses:res,total,profit:Math.round(avg),probSum:Math.round(tp*100)}
+}
+
+// ─── FETCH ───
 async function fetchData(){
-  try{let r=await fetch("/api/races");if(r.ok)D=await r.json()}catch(e){D=null}
+  try{let r=await fetch("/api/races");if(r.ok){D=await r.json()}}catch(e){D=null}
   if(!D)D=getDemoData();
-  render();
+  document.getElementById("srcBadge").textContent=D.source==="live"?"CANLI":"DEMO";
+  document.getElementById("srcBadge").style.color=D.source==="live"?"var(--green)":"var(--text3)";
+  document.getElementById("srcBadge").style.borderColor=D.source==="live"?"var(--green)":"var(--border2)";
+  document.getElementById("footNote").textContent=D.source==="live"?"CANLI VERI - "+new Date(D.timestamp).toLocaleTimeString("tr-TR"):"DEMO VERI";
+  render()
 }
 
-function getDemoData(){
-  return{timestamp:new Date().toISOString(),source:"local",tracks:[
-    {id:"cranbourne",name:"Cranbourne",country:"AUS",flag:"🇦🇺",sources:["tab_au","betfair","oddschk"],races:[
-      {number:3,time:"06:30",distance:"1400m",type:"HCP",pool_tl:48200,horses:[
-        {num:1,name:"Anamoe",jockey:"J. McDonald",tjk:2.80,tab_au:3.40,betfair:3.55,oddschk:3.30},
-        {num:2,name:"Shinzo",jockey:"D. Lane",tjk:5.00,tab_au:4.20,betfair:4.00,oddschk:4.50},
-        {num:3,name:"Hilal",jockey:"C. Williams",tjk:8.50,tab_au:12.00,betfair:13.50,oddschk:11.00},
-        {num:4,name:"Regal Lion",jockey:"M. Zahra",tjk:12.00,tab_au:7.50,betfair:7.00,oddschk:8.00},
-        {num:5,name:"Dark Flag",jockey:"B. Avdulla",tjk:35.00,tab_au:15.00,betfair:16.00,oddschk:14.00},
-        {num:6,name:"Ceebee Dee",jockey:"L. Currie",tjk:18.00,tab_au:26.00,betfair:28.00,oddschk:22.00}]},
-      {number:5,time:"07:30",distance:"2000m",type:"G3",pool_tl:112500,horses:[
-        {num:1,name:"Verry Elleegant",jockey:"J. McDonald",tjk:1.90,tab_au:2.50,betfair:2.60,oddschk:2.40},
-        {num:3,name:"Montefilia",jockey:"G. Boss",tjk:6.00,tab_au:5.00,betfair:4.80,oddschk:5.50},
-        {num:5,name:"Duais",jockey:"H. Bowman",tjk:9.00,tab_au:14.00,betfair:15.00,oddschk:12.00},
-        {num:7,name:"Atishu",jockey:"D. Oliver",tjk:22.00,tab_au:10.00,betfair:9.50,oddschk:11.00}]}]},
-    {id:"meydan",name:"Meydan",country:"UAE",flag:"🇦🇪",sources:["betfair_uk","oddschk"],races:[
-      {number:4,time:"19:15",distance:"1800m",type:"G2",pool_tl:35800,horses:[
-        {num:1,name:"Romantic Warrior",jockey:"J. McDonald",tjk:1.50,betfair_uk:1.80,oddschk:1.75},
-        {num:3,name:"Rebel's Romance",jockey:"W. Buick",tjk:4.50,betfair_uk:5.50,oddschk:5.00},
-        {num:5,name:"Nations Pride",jockey:"M. Barzalona",tjk:7.00,betfair_uk:11.00,oddschk:10.00},
-        {num:7,name:"Ottoman Fleet",jockey:"R. Moore",tjk:15.00,betfair_uk:8.00,oddschk:9.00},
-        {num:9,name:"Al Nefud",jockey:"P. Dobbs",tjk:40.00,betfair_uk:21.00,oddschk:18.00}]}]},
-    {id:"gulfstream",name:"Gulfstream Park",country:"USA",flag:"🇺🇸",sources:["twinspires","betfair","oddschk"],races:[
-      {number:7,time:"22:40",distance:"1700m",type:"CLM",pool_tl:22100,horses:[
-        {num:2,name:"Forte",jockey:"I. Ortiz Jr",tjk:3.20,twinspires:4.00,betfair:4.20,oddschk:3.80},
-        {num:4,name:"Hit Show",jockey:"J. Rosario",tjk:4.50,twinspires:3.50,betfair:3.30,oddschk:3.60},
-        {num:6,name:"Blazing Sevens",jockey:"L. Saez",tjk:8.00,twinspires:12.00,betfair:13.00,oddschk:11.00},
-        {num:8,name:"Verifying",jockey:"J. Velazquez",tjk:20.00,twinspires:9.00,betfair:8.50,oddschk:10.00}]}]}
-  ]};
-}
+function getDemoData(){return{timestamp:new Date().toISOString(),source:"demo",tracks:[
+  {id:"chantilly",name:"Chantilly Fransa",country:"FRA",flag:"\ud83c\uddeb\ud83c\uddf7",sources:["betfair_uk","oddschk"],races:[{number:3,time:"15:30",distance:"2000m",type:"HCP",pool_tl:28500,horses:[
+    {num:1,name:"Doyen d'Or",jockey:"M. Guyon",tjk:3.50,betfair_uk:4.20,oddschk:4.00},
+    {num:3,name:"Doha Dream",jockey:"C. Demuro",tjk:5.80,betfair_uk:4.50,oddschk:4.80},
+    {num:5,name:"Doha Star",jockey:"P. Boudot",tjk:8.00,betfair_uk:12.00,oddschk:10.00},
+    {num:7,name:"French Kiss",jockey:"S. Pasquier",tjk:15.00,betfair_uk:8.50,oddschk:9.00},
+    {num:9,name:"Le Magnifique",jockey:"A. Hamelin",tjk:28.00,betfair_uk:18.00,oddschk:15.00}]}]},
+  {id:"mahoning",name:"Mahoning Valley ABD",country:"USA",flag:"\ud83c\uddfa\ud83c\uddf8",sources:["twinspires","betfair","oddschk"],races:[{number:5,time:"21:15",distance:"1600m",type:"CLM",pool_tl:18200,horses:[
+    {num:2,name:"Thunder Road",jockey:"L. Rivera",tjk:2.90,twinspires:3.50,betfair:3.80,oddschk:3.40},
+    {num:4,name:"Storm Chaser",jockey:"A. Gallardo",tjk:6.50,twinspires:5.00,betfair:4.80,oddschk:5.20},
+    {num:6,name:"Wild Spirit",jockey:"C. Lanerie",tjk:9.00,twinspires:14.00,betfair:15.00,oddschk:12.00},
+    {num:8,name:"Desert Runner",jockey:"T. Pompell",tjk:18.00,twinspires:9.50,betfair:8.50,oddschk:10.00},
+    {num:10,name:"Lucky Seven",jockey:"E. Esquivel",tjk:35.00,twinspires:22.00,betfair:20.00,oddschk:18.00}]}]},
+  {id:"sunland",name:"Sunland Park ABD",country:"USA",flag:"\ud83c\uddfa\ud83c\uddf8",sources:["twinspires","oddschk"],races:[{number:4,time:"22:00",distance:"1400m",type:"ALW",pool_tl:15800,horses:[
+    {num:1,name:"Copper Mine",jockey:"S. Elliott",tjk:4.20,twinspires:5.50,oddschk:5.00},
+    {num:3,name:"Rio Bravo",jockey:"E. Meza",tjk:7.50,twinspires:6.00,oddschk:6.50},
+    {num:5,name:"Silver Bullet",jockey:"L. Quinonez",tjk:12.00,twinspires:18.00,oddschk:15.00},
+    {num:7,name:"Mesa Sunrise",jockey:"K. Escobedo",tjk:20.00,twinspires:10.00,oddschk:11.00}]}]},
+  {id:"turf_paradise",name:"Turf Paradise ABD",country:"USA",flag:"\ud83c\uddfa\ud83c\uddf8",sources:["twinspires","oddschk"],races:[{number:6,time:"23:30",distance:"1200m",type:"MCL",pool_tl:12400,horses:[
+    {num:1,name:"Arizona Blaze",jockey:"K. Journet",tjk:3.80,twinspires:4.50,oddschk:4.20},
+    {num:3,name:"Cactus Jack",jockey:"H. Figueroa",tjk:5.50,twinspires:4.00,oddschk:4.50},
+    {num:5,name:"Desert Mirage",jockey:"L. Valenzuela",tjk:11.00,twinspires:16.00,oddschk:14.00},
+    {num:7,name:"Sunset Ridge",jockey:"R. Baze",tjk:22.00,twinspires:12.00,oddschk:13.00},
+    {num:9,name:"Tumble Dust",jockey:"A. Arroyo",tjk:40.00,twinspires:25.00,oddschk:20.00}]}]}
+]}}
 
-function render(){
-  if(!D)return;
-  let m=document.getElementById("main");
-  if(view==="races")renderRaces(m);else renderStrategy(m);
-}
+// ─── RENDER ───
+function render(){if(!D)return;let m=document.getElementById("main");if(view==="races")renderRaces(m);else if(view==="dutch")renderDutch(m);else renderStrategy(m)}
 
 function renderRaces(el){
   let tracks=region==="ALL"?D.tracks:D.tracks.filter(t=>t.country===region);
@@ -177,149 +224,236 @@ function renderRaces(el){
   tracks.forEach(t=>t.races.forEach(r=>r.horses.forEach(h=>all.push(analyze(h,t.sources)))));
   let sigs=all.filter(h=>h.signal==="signal"||h.signal==="strong");
   let strs=all.filter(h=>h.signal==="strong");
+  let antis=all.filter(h=>h.edge<-5);
   let totStk=all.reduce((s,h)=>s+(h.stake>0?h.stake:0),0);
-  let bE=all.length?Math.max(...all.map(h=>h.edge)):0;
-  let bH=all.find(h=>h.edge===bE);
+  let bE=all.length?Math.max(...all.map(h=>h.adjEdge)):0;
+  let bH=all.find(h=>h.adjEdge===bE);
 
-  let html=`<div id="summary" style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:20px">
-    <div class="sum-card"><div class="label">TOPLAM AT</div><div class="value" style="color:var(--text2)">${all.length}</div></div>
-    <div class="sum-card"><div class="label">SİNYAL</div><div class="value" style="color:var(--yellow)">${sigs.length}</div></div>
-    <div class="sum-card"><div class="label">GÜÇLÜ</div><div class="value" style="color:var(--green)">${strs.length}</div></div>
-    <div class="sum-card"><div class="label">TOPLAM STAKE</div><div class="value" style="color:var(--blue)">₺${totStk.toFixed(0)}</div></div>
-    <div class="sum-card"><div class="label">EN İYİ EDGE</div><div class="value" style="color:var(--green)">${bE>0?'+'+bE.toFixed(1)+'%':'—'}</div></div>
-    <div class="sum-card"><div class="label">EN İYİ AT</div><div class="value" style="color:#fff;font-family:var(--sans);font-size:14px">${bH?.name||'—'}</div></div></div>`;
+  let html=`<div id="summary" style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:16px">
+    <div class="sum-card"><div class="lb">TOPLAM AT</div><div class="vl" style="color:var(--text2)">${all.length}</div></div>
+    <div class="sum-card"><div class="lb">SINYAL</div><div class="vl" style="color:var(--yellow)">${sigs.length}</div></div>
+    <div class="sum-card"><div class="lb">GUCLU</div><div class="vl" style="color:var(--green)">${strs.length}</div></div>
+    <div class="sum-card"><div class="lb">ANTI-VALUE</div><div class="vl" style="color:var(--red)">${antis.length}</div></div>
+    <div class="sum-card"><div class="lb">STAKE</div><div class="vl" style="color:var(--blue)">${totStk.toFixed(0)} TL</div></div>
+    <div class="sum-card"><div class="lb">EN IYI EDGE</div><div class="vl" style="color:var(--green)">${bE>0?'+'+bE.toFixed(1)+'%':'\u2014'}</div></div>
+    <div class="sum-card"><div class="lb">EN IYI AT</div><div class="vl" style="color:#fff;font-family:var(--sans);font-size:13px">${bH?.name||'\u2014'}</div></div>
+  </div>`;
 
-  if(!tracks.length){html+=`<div style="text-align:center;padding:60px;color:var(--text4)">Bu bölgede aktif yabancı yarış yok</div>`;el.innerHTML=html;return}
+  if(!tracks.length){html+=`<div style="text-align:center;padding:60px;color:var(--text4)">Bu bolgede yaris yok</div>`;el.innerHTML=html;return}
 
   tracks.forEach(track=>{
-    let sc=track.sources.map(s=>`<span style="font-size:10px;color:${SRC[s].c};background:${SRC[s].c}10;padding:2px 6px;border-radius:2px;border:1px solid ${SRC[s].c}20">${SRC[s].n}</span>`).join("");
-    html+=`<div style="margin-bottom:24px"><div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-      <span style="font-size:20px">${track.flag}</span><span style="font-size:16px;font-weight:800;color:#fff">${track.name}</span>
+    let sc=track.sources.map(s=>`<span style="font-size:9px;color:${SRC[s]?.c||'#666'};background:${(SRC[s]?.c||'#666')}10;padding:2px 6px;border-radius:2px;border:1px solid ${(SRC[s]?.c||'#666')}20">${SRC[s]?.n||s}</span>`).join("");
+    html+=`<div style="margin-bottom:20px"><div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <span style="font-size:18px">${track.flag}</span><span style="font-size:15px;font-weight:800;color:#fff">${track.name}</span>
       <span class="badge" style="background:var(--border);color:var(--text2)">${track.country}</span>
-      <div style="display:flex;gap:4px;margin-left:auto">${sc}</div></div>`;
+      <div style="display:flex;gap:3px;margin-left:auto">${sc}</div></div>`;
 
     track.races.forEach(race=>{
-      let an=race.horses.map(h=>analyze(h,track.sources)).sort((a,b)=>b.edge-a.edge);
+      let an=race.horses.map(h=>analyze(h,track.sources)).sort((a,b)=>b.adjEdge-a.adjEdge);
       let vc=an.filter(h=>h.signal!=="none").length;
-      let sh=track.sources.map(s=>`<th style="color:${SRC[s].c};border-left:1px solid #141414">${SRC[s].n.split(' ')[0]}</th>`).join("");
+      let ac=an.filter(h=>h.edge<-5).length;
+      let sh=track.sources.map(s=>`<th style="color:${SRC[s]?.c||'#666'};border-left:1px solid #141414;min-width:62px">${(SRC[s]?.n||s).split(' ')[0]}</th>`).join("");
 
-      html+=`<div class="race-card"><div class="race-header">
-        <div style="display:flex;align-items:center;gap:10px">
-          <span class="race-num">R${race.number}</span>
-          <span style="font-size:13px;color:var(--text2)">${race.time}</span>
-          <span style="font-size:12px;color:var(--text3);font-family:var(--mono)">${race.distance}</span>
-          <span class="badge" style="background:rgba(167,139,250,.1);color:var(--purple);border:1px solid rgba(167,139,250,.2)">${race.type}</span></div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <span style="font-size:11px;color:var(--text3)">Havuz: <span style="color:var(--text2);font-family:var(--mono)">₺${(race.pool_tl||0).toLocaleString('tr-TR')}</span></span>
-          ${vc>0?`<span class="badge" style="background:rgba(0,230,138,.1);color:var(--green);border:1px solid rgba(0,230,138,.2)">${vc} VALUE</span>`:''}</div></div>
+      html+=`<div class="card" style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 14px;border-bottom:1px solid var(--border);background:var(--bg2)">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-family:var(--mono);font-size:16px;font-weight:800;color:#fff;background:var(--border);padding:2px 8px;border-radius:3px;border:1px solid var(--border2)">R${race.number}</span>
+            <span style="font-size:12px;color:var(--text2)">${race.time}</span>
+            <span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${race.distance||''}</span>
+            ${race.type?`<span class="badge" style="background:rgba(167,139,250,.1);color:var(--purple);border:1px solid rgba(167,139,250,.2)">${race.type}</span>`:''}
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            ${race.pool_tl?`<span style="font-size:10px;color:var(--text3)">Havuz: <span style="color:var(--text2);font-family:var(--mono)">${race.pool_tl.toLocaleString('tr-TR')} TL</span></span>`:''}
+            ${vc>0?`<span class="badge" style="background:rgba(0,230,138,.1);color:var(--green);border:1px solid rgba(0,230,138,.2)">${vc} VALUE</span>`:''}
+            ${ac>0?`<span class="badge" style="background:rgba(255,59,59,.1);color:var(--red);border:1px solid rgba(255,59,59,.2)">${ac} ANTI</span>`:''}
+          </div>
+        </div>
         <div style="overflow-x:auto"><table class="race-table"><thead><tr>
-          <th style="width:30px">#</th><th style="text-align:left;min-width:130px">AT</th><th style="text-align:left;min-width:100px">JOKEY</th>
-          <th style="width:70px;color:var(--red)">TJK AGF</th>${sh}
-          <th style="width:120px">EDGE</th><th style="width:55px">KELLY</th><th style="width:65px">STAKE</th><th style="width:70px">SİNYAL</th>
+          <th style="width:24px">#</th><th style="text-align:left;min-width:110px">AT</th><th style="text-align:left;min-width:80px">JOKEY</th>
+          <th style="width:58px;color:var(--red)">TJK</th>${sh}
+          <th style="width:55px">RAW</th><th style="width:55px">ADJ</th>
+          <th style="width:40px;color:var(--purple)">FLB</th>
+          <th style="width:45px">KELLY</th><th style="width:55px">STAKE</th><th style="width:65px">SINYAL</th><th style="width:24px">D</th>
         </tr></thead><tbody>`;
 
       an.forEach(h=>{
-        let rc=h.signal==="strong"?"vstrong":h.signal==="signal"?"vsignal":"";
+        let rc=h.warnings.includes("ANTI-VALUE")?"vanti":h.signal==="strong"?"vstrong":h.signal==="signal"?"vsignal":"";
         let oc=track.sources.map(s=>{
-          let o=h[s];if(!o)return`<td class="odds" style="color:var(--text4);border-left:1px solid #141414">—</td>`;
-          let e=cE(h.tjk,o,SRC[s].to)*100;
+          let o=h[s];if(!o)return`<td style="color:var(--text4);text-align:center;border-left:1px solid #141414;font-family:var(--mono);font-size:11px">\u2014</td>`;
+          let e=cE(h.tjk,o,SRC[s]?.to||.1)*100;
           let col=e>5?"var(--green)":e<-5?"rgba(255,59,59,.5)":"var(--text2)";
-          let bg=e>5?"rgba(0,230,138,.06)":"transparent";
-          let mi=e>5?`<span class="mini" style="color:rgba(0,230,138,.5)">+${e.toFixed(0)}%</span>`:e<-5?`<span class="mini" style="color:rgba(255,59,59,.4)">⚠</span>`:'';
-          return`<td class="odds" style="color:${col};background:${bg};border-left:1px solid #141414">${o.toFixed(2)}${mi}</td>`;
+          let bg=e>5?"rgba(0,230,138,.05)":"transparent";
+          return`<td style="color:${col};background:${bg};text-align:center;border-left:1px solid #141414;font-family:var(--mono);font-size:11px">${o.toFixed(1)}</td>`;
         }).join("");
-        let ew=Math.min(Math.abs(h.edge)*3,100);
-        let ec=h.edge>=20?"var(--green)":h.edge>=10?"var(--yellow)":h.edge>=5?"var(--orange)":h.edge>0?"#666":"var(--red)";
+
+        // FLB bar
+        let flbCol=h.flbScore>=80?"var(--green)":h.flbScore>=60?"var(--yellow)":h.flbScore>=40?"var(--orange)":"var(--red)";
+        let flbW=Math.max(h.flbScore/100*32,4);
+
+        // Warnings
+        let warnHtml=h.warnings.map(w=>{
+          let c=w.includes("ANTI")?"var(--red)":w.includes("LONGSHOT")?"var(--orange)":w.includes("MULTI")?"var(--green)":"var(--text3)";
+          let bg=w.includes("ANTI")?"rgba(255,59,59,.1)":w.includes("LONGSHOT")?"rgba(245,158,11,.1)":w.includes("MULTI")?"rgba(0,230,138,.1)":"transparent";
+          return`<span class="warn-tag" style="color:${c};background:${bg};border:1px solid ${c}30">${w}</span>`;
+        }).join(" ");
+
+        // Signal badge
         let sb='';
-        if(h.signal==="strong")sb=`<span class="badge" style="background:rgba(0,230,138,.1);color:var(--green);border:1px solid rgba(0,230,138,.2)">GÜÇLÜ</span>`;
-        else if(h.signal==="signal")sb=`<span class="badge" style="background:rgba(255,214,10,.1);color:var(--yellow);border:1px solid rgba(255,214,10,.2)">SİNYAL</span>`;
-        else if(h.signal==="watch")sb=`<span class="badge" style="background:var(--border);color:var(--text2);border:1px solid var(--border2)">İZLE</span>`;
+        if(h.signal==="strong")sb=`<span class="badge" style="background:rgba(0,230,138,.1);color:var(--green);border:1px solid rgba(0,230,138,.2);animation:glow 2s infinite">GUCLU</span>`;
+        else if(h.signal==="signal")sb=`<span class="badge" style="background:rgba(255,214,10,.1);color:var(--yellow);border:1px solid rgba(255,214,10,.2)">SINYAL</span>`;
+        else if(h.signal==="watch")sb=`<span class="badge" style="background:var(--border);color:var(--text2);border:1px solid var(--border2)">IZLE</span>`;
+        else if(h.warnings.includes("ANTI-VALUE"))sb=`<span class="badge" style="background:rgba(255,59,59,.1);color:var(--red);border:1px solid rgba(255,59,59,.2)">KACIN</span>`;
+
+        let edgeCol=h.edge>=10?"var(--green)":h.edge>=5?"var(--yellow)":h.edge>0?"var(--text2)":"var(--red)";
+        let adjCol=h.adjEdge>=10?"var(--green)":h.adjEdge>=5?"var(--yellow)":h.adjEdge>0?"var(--text2)":"var(--red)";
+
+        // Dutch checkbox
+        let dId=`d_${track.id}_${race.number}_${h.num}`;
+        let dChecked=h.adjEdge>0?'':'disabled';
 
         html+=`<tr class="${rc}">
-          <td style="text-align:center;color:var(--text3);font-family:var(--mono);font-size:11px">${h.num}</td>
-          <td style="font-weight:600;color:${h.signal!=='none'?'#fff':'#bbb'}">${h.name}</td>
-          <td style="color:var(--text3);font-size:12px">${h.jockey}</td>
-          <td style="text-align:center;font-family:var(--mono);font-weight:700;color:var(--red);font-size:14px">${h.tjk.toFixed(2)}</td>
+          <td style="text-align:center;color:var(--text3);font-family:var(--mono);font-size:10px">${h.num}</td>
+          <td><span style="font-weight:600;color:${h.signal!=='none'?'#fff':h.warnings.includes('ANTI-VALUE')?'rgba(255,59,59,.6)':'#bbb'};font-size:12px">${h.name}</span>${warnHtml?' <br>'+warnHtml:''}</td>
+          <td style="color:var(--text3);font-size:11px">${h.jockey}</td>
+          <td style="text-align:center;font-family:var(--mono);font-weight:700;color:var(--red);font-size:13px">${h.tjk.toFixed(1)}</td>
           ${oc}
-          <td style="padding:6px 8px"><div class="edge-wrap"><div class="edge-track"><div class="edge-fill" style="width:${ew}%;background:${ec}"></div></div><span class="edge-pct" style="color:${ec}">${h.edge>0?'+':''}${h.edge.toFixed(1)}%</span></div></td>
-          <td style="text-align:center;font-family:var(--mono);font-size:12px;color:${h.kelly>0?'var(--blue)':'var(--text4)'}">${h.kelly>0?h.kelly.toFixed(1)+'%':'—'}</td>
-          <td style="text-align:center;font-family:var(--mono);font-size:12px;font-weight:700;color:${h.stake>=10?'var(--yellow)':'var(--text4)'}">${h.stake>=1?'₺'+h.stake.toFixed(0):'—'}</td>
-          <td style="text-align:center">${sb}</td></tr>`;
+          <td style="text-align:center;font-family:var(--mono);font-size:11px;color:${edgeCol}">${h.edge>0?'+':''}${h.edge.toFixed(1)}%</td>
+          <td style="text-align:center;font-family:var(--mono);font-size:11px;font-weight:700;color:${adjCol}">${h.adjEdge>0?'+':''}${h.adjEdge.toFixed(1)}%</td>
+          <td style="text-align:center"><span class="flb-bar" style="background:${flbCol};width:${flbW}px"></span><span style="font-size:10px;color:${flbCol};font-family:var(--mono)">${h.flbScore}</span></td>
+          <td style="text-align:center;font-family:var(--mono);font-size:11px;color:${h.kelly>0?'var(--blue)':'var(--text4)'}">${h.kelly>0?h.kelly.toFixed(1)+'%':'\u2014'}</td>
+          <td style="text-align:center;font-family:var(--mono);font-size:11px;font-weight:700;color:${h.stake>=10?'var(--yellow)':'var(--text4)'}">${h.stake>=1?Math.round(h.stake)+'':'\u2014'}</td>
+          <td style="text-align:center">${sb}</td>
+          <td style="text-align:center"><input type="checkbox" ${dChecked} data-horse='${JSON.stringify({name:h.name,num:h.num,tjk:h.tjk})}' onchange="toggleDutch(this)" style="accent-color:var(--yellow);cursor:pointer"></td>
+        </tr>`;
       });
       html+=`</tbody></table></div></div>`;
     });
     html+=`</div>`;
   });
-  el.innerHTML=html;
+  el.innerHTML=html
 }
 
+// ─── DUTCH ───
+function toggleDutch(cb){
+  let h=JSON.parse(cb.dataset.horse);
+  if(cb.checked)dutchSelected.push(h);
+  else dutchSelected=dutchSelected.filter(d=>d.num!==h.num||d.name!==h.name)
+}
+
+function renderDutch(el){
+  let bank=+(document.getElementById("bankroll")?.value)||5000;
+  let stake=Math.round(bank*0.1);
+  
+  el.innerHTML=`<div style="max-width:700px">
+    <div style="font-size:18px;font-weight:800;color:#fff;margin-bottom:16px">Dutch Calculator</div>
+    <p style="color:var(--text2);font-size:13px;margin-bottom:16px;line-height:1.6">Yarislar tab'inda son sutundaki (D) checkbox'lari isaretleyerek atlari sec. Birden fazla value ata stake dagit, hangisi kazanirsa kazansin esit kar elde et.</p>
+    
+    <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+      <span style="font-size:11px;color:var(--text3);font-weight:700">DUTCH STAKE</span>
+      <input type="number" id="dutchStake" value="${stake}" class="ctrl-input" style="width:80px">
+      <span style="font-size:10px;color:var(--text4)">TL</span>
+      <button onclick="calcDutch()" style="background:var(--yellow);color:#000;border:none;padding:6px 16px;border-radius:3px;font-size:12px;font-weight:700;cursor:pointer;font-family:var(--sans)">HESAPLA</button>
+    </div>
+    
+    <div id="dutchResult"></div>
+    
+    ${dutchSelected.length===0?'<div style="padding:40px;text-align:center;color:var(--text4);border:1px dashed var(--border);border-radius:6px">Yarislar tab\'indan at sec (D sutunu)</div>':''}
+    ${dutchSelected.length>0?`<div style="margin-bottom:12px"><span style="font-size:12px;color:var(--text2)">${dutchSelected.length} at secili:</span> ${dutchSelected.map(h=>`<span class="badge" style="background:var(--border);color:var(--yellow);border:1px solid var(--border2)">${h.num}. ${h.name} (${h.tjk})</span>`).join(' ')}</div>`:''}
+  </div>`;
+}
+
+function calcDutch(){
+  let stake=+(document.getElementById("dutchStake")?.value)||500;
+  let result=dutchCalc(dutchSelected,stake);
+  let el=document.getElementById("dutchResult");
+  if(!el)return;
+  
+  if(!result.horses.length){el.innerHTML=`<div style="color:var(--red);font-size:13px">At sec (Yarislar > D sutunu)</div>`;return}
+  
+  let profitCol=result.profit>0?"var(--green)":"var(--red)";
+  el.innerHTML=`<div class="card" style="padding:16px;margin-bottom:16px">
+    <div style="font-size:11px;color:var(--yellow);font-weight:700;letter-spacing:1px;margin-bottom:10px">DUTCH SONUCU</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">
+      <div class="sum-card"><div class="lb">TOPLAM</div><div class="vl" style="color:var(--yellow)">${result.total} TL</div></div>
+      <div class="sum-card"><div class="lb">PROB SUM</div><div class="vl" style="color:var(--text2)">${result.probSum}%</div></div>
+      <div class="sum-card"><div class="lb">KAR (HER AT)</div><div class="vl" style="color:${profitCol}">${result.profit>0?'+':''}${result.profit} TL</div></div>
+    </div>
+    ${result.horses.map(h=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #111">
+      <span style="color:#ccc;font-size:13px">${h.num}. ${h.name}</span>
+      <div style="display:flex;gap:16px;align-items:center">
+        <span style="color:var(--text3);font-family:var(--mono);font-size:12px">odds: ${h.odds}</span>
+        <span style="color:var(--yellow);font-family:var(--mono);font-size:13px;font-weight:700">${h.stake} TL</span>
+        <span style="color:${h.profit>0?'var(--green)':'var(--red)'};font-family:var(--mono);font-size:12px">${h.profit>0?'+':''}${h.profit} TL</span>
+      </div>
+    </div>`).join("")}
+  </div>`;
+}
+
+// ─── STRATEGY ───
 function renderStrategy(el){
-  let takeouts=[
-    {n:"TJK Ganyan",p:27,c:"var(--red)"},{n:"TJK Altılı",p:30,c:"var(--red)"},
-    {n:"US Tote (Win)",p:20,c:"var(--blue)"},{n:"HK Jockey Club",p:17.5,c:"var(--purple)"},
-    {n:"AU TAB (Win)",p:16,c:"var(--green)"},{n:"UK Tote",p:16.5,c:"var(--orange)"},
-    {n:"Betfair Exchange",p:2,c:"var(--yellow)"}
-  ];
+  let takeouts=[{n:"TJK Ganyan",p:27,c:"var(--red)"},{n:"TJK Altili",p:30,c:"var(--red)"},{n:"US Tote",p:20,c:"var(--blue)"},{n:"HK Jockey",p:17.5,c:"var(--purple)"},{n:"AU TAB",p:16,c:"var(--green)"},{n:"UK Tote",p:16.5,c:"var(--orange)"},{n:"Betfair",p:2,c:"var(--yellow)"}];
   let tb=takeouts.map(p=>`<div class="t-row"><span class="tn">${p.n}</span><div class="tb"><div class="tf" style="width:${p.p*3}%;background:${p.c}"></div></div><span class="tp" style="color:${p.c}">${p.p}%</span></div>`).join("");
+  
+  let flbRows=[{o:"< 3",p:"-10% (bonus)",s:"95",a:"En guvenilir",c:"var(--green)"},{o:"3-5",p:"-5%",s:"90",a:"Guvenilir",c:"var(--green)"},{o:"5-10",p:"0%",s:"85",a:"Notr",c:"var(--text2)"},{o:"10-20",p:"+10%",s:"70",a:"Dikkat",c:"var(--orange)"},{o:"20-30",p:"+20%",s:"50",a:"Riskli",c:"var(--orange)"},{o:"30-50",p:"+35%",s:"35",a:"TRAP",c:"var(--red)"},{o:"> 50",p:"+50%",s:"20",a:"COK RISKLI",c:"var(--red)"}];
+  let flbTable=flbRows.map(r=>`<div style="display:grid;grid-template-columns:60px 80px 40px 1fr;gap:8px;padding:3px 0;border-bottom:1px solid #111;font-size:12px">
+    <span style="color:var(--text2);font-family:var(--mono)">${r.o}</span>
+    <span style="color:${r.c};font-family:var(--mono)">${r.p}</span>
+    <span style="color:${r.c};font-family:var(--mono);font-weight:700">${r.s}</span>
+    <span style="color:var(--text3)">${r.a}</span></div>`).join("");
 
   el.innerHTML=`<div style="max-width:900px">
-    <div class="strat-card" style="margin-bottom:16px"><div class="st" style="color:var(--red)">TEZ</div>
-      <div style="font-size:15px;color:#ccc;line-height:1.8">TJK'da yabancı yarışlara çok az kişi oynuyor → AGF havuzu küçük → oranlar verimsiz.
-        Avustralya, Dubai, ABD, İngiltere yerel piyasaları <span style="color:var(--yellow)">50-100x daha likit</span> → oranlar verimli.
-        İkisi arasındaki fark = <span style="color:var(--green);font-weight:700">value</span>.
-        Birden fazla kaynaktan çapraz doğrulama. Akademik olarak kanıtlanmış, ama <span style="color:var(--red)">TJK'ya karşı yapan kimse yok</span>.</div></div>
-    <div class="strat-grid">
-      <div class="strat-card"><div class="st" style="color:var(--green)">EDGE FORMÜLÜ</div>
-        <pre>tjk_prob   = 1/AGF_odds
-tjk_norm   = tjk_prob / (1 + 0.27)
-ref_prob   = 1/foreign_odds
-ref_norm   = ref_prob / (1 + takeout)
-edge       = ref_norm - tjk_norm
-½kelly     = (b·p - q) / (2·b)
+    <div class="strat-card"><div class="st" style="color:var(--red)">TEZ</div>
+      <div style="font-size:14px;color:#ccc;line-height:1.8">TJK yabanci yarislarinda havuz kucuk, kimse oynamiyor, oranlar verimsiz. Yurtdisi piyasalar <span style="color:var(--yellow)">50-100x likit</span>. Fark = <span style="color:var(--green);font-weight:700">value</span>. Birden fazla kaynaktan capraz dogrulama. <span style="color:var(--red)">TJK'ya karsi yapan kimse yok.</span></div></div>
+    
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="strat-card"><div class="st" style="color:var(--green)">EDGE FORMULU</div>
+        <pre>tjk_norm   = (1/AGF) / (1 + 0.27)
+ref_norm   = (1/foreign) / (1 + takeout)
+raw_edge   = ref_norm - tjk_norm
+adj_edge   = raw_edge * (1 - FLB_penalty)
+half_kelly = (b*p - q) / (2*b)
 
-Referans öncelik:
-  Betfair Exchange > Tote > Bookmaker
-
-Birden fazla kaynak → en yüksek ref_norm al
-(en konservatif edge tahmini)</pre></div>
-      <div class="strat-card"><div class="st" style="color:var(--yellow)">AKADEMİK DAYANAK</div><div class="stxt">
-        <div style="margin-bottom:6px"><span style="color:var(--yellow)">▸</span> Hausch & Ziemba (1990) — Cross-track arbitrage, %9.2 ortalama getiri</div>
-        <div style="margin-bottom:6px"><span style="color:var(--yellow)">▸</span> Edelman & O'Brian (2004) — Avustralya tote arbitraj fırsatları düzenli</div>
-        <div style="margin-bottom:6px"><span style="color:var(--yellow)">▸</span> Franck et al. (2009) — Inter-market arbitraj: 1,450 bookmaker+exchange fırsat</div>
-        <div style="margin-bottom:6px"><span style="color:var(--yellow)">▸</span> HKJC World Pool — TJK dahil değil = izole, verimsiz havuz</div>
-        <div><span style="color:var(--yellow)">▸</span> TJK %27 takeout — dünyada en yükseklerden</div></div></div>
-      <div class="strat-card"><div class="st" style="color:var(--purple)">GANYAN STRATEJİSİ</div><div class="stxt">
-        <div>• Edge ≥ %10 → ½ Kelly stake ile ganyan oyna</div>
-        <div>• Edge ≥ %20 → güçlü sinyal, max ½ Kelly</div>
-        <div>• Betfair referansı varsa ona güven (exchange = en verimli)</div>
-        <div>• TJK prob > tüm ref → at TJK'da overbet, KAÇIN</div>
-        <div>• İlk 3 hafta sadece log → retro → threshold ayarla</div>
-        <div>• AGF ~30dk önce stabilize — o zaman çek</div>
-        <div>• At ismi fuzzy match — TJK transliterasyonu farklı</div></div></div>
-      <div class="strat-card"><div class="st" style="color:var(--red)">ALTILI STRATEJİSİ</div><div class="stxt">
-        <div>• Edge negatif atları altılı'dan ELE (TJK'da şişik favori)</div>
-        <div>• Edge pozitif + düşük odds → favori doğru, atla</div>
-        <div>• Edge yüksek + orta odds → VALUE BACAK, kupona al</div>
-        <div>• 1-2 value bacak = altılı'da çarpan etkisi</div>
-        <div>• Herkes verimsiz AGF'ye göre oynarken sen gerçek prob'la</div></div></div></div>
-    <div class="strat-card" style="margin-top:12px"><div class="st" style="color:var(--text2)">TAKEOUT KARŞILAŞTIRMA</div>${tb}</div>
-    <div class="strat-card" style="margin-top:12px"><div class="st" style="color:var(--blue)">REPO YAPISI</div>
-      <pre style="color:var(--text3)">tjk-ganyan-bot/dashboard/
-├── app.py              # Flask server + API
-├── index.html          # Bu dashboard
-├── requirements.txt    # flask, gunicorn
-└── Procfile            # Railway deploy</pre></div></div>`;
+Referans: Exchange > Tote > Bookmaker
+Birden fazla kaynak: en yuksek ref_norm</pre></div>
+      <div class="strat-card"><div class="st" style="color:var(--purple)">FLB FILTRESI (Griffith 1949)</div>
+        <div style="display:grid;grid-template-columns:60px 80px 40px 1fr;gap:8px;padding:0 0 6px;font-size:10px;color:var(--text3);font-weight:700;border-bottom:1px solid #222">
+          <span>ODDS</span><span>PENALTY</span><span>SKOR</span><span>ANLAM</span></div>
+        ${flbTable}
+        <div style="margin-top:8px;font-size:11px;color:var(--text3)">Longshot overpriced, favori underpriced. TJK kucuk havuz = bias guclu.</div></div>
+      <div class="strat-card"><div class="st" style="color:var(--yellow)">AKADEMIK REFERANSLAR</div><div class="stxt">
+        <div><span style="color:var(--yellow)">1.</span> Hausch & Ziemba (1990) - Cross-track arb, %9.2 getiri</div>
+        <div><span style="color:var(--yellow)">2.</span> Edelman & O'Brian (2004) - Tote arb, Avustralya</div>
+        <div><span style="color:var(--yellow)">3.</span> Franck et al. (2009) - 1,450 inter-market arb</div>
+        <div><span style="color:var(--yellow)">4.</span> O-U Process (2025) - Herding mispricing, JRA</div>
+        <div><span style="color:var(--yellow)">5.</span> Griffith (1949) - Favorite-Longshot Bias</div>
+        <div><span style="color:var(--yellow)">6.</span> Shin (1993) - Insider %1-2 edge</div>
+        <div><span style="color:var(--yellow)">7.</span> Won (2025) - ML crowd bias, %93 acc</div></div></div>
+      <div class="strat-card"><div class="st" style="color:var(--blue)">STRATEJI</div><div class="stxt">
+        <div><span style="color:var(--green)">GANYAN:</span> adj_edge >= %10 -> 1/2 Kelly</div>
+        <div><span style="color:var(--green)">ALTILI VALUE:</span> Edge yuksek + orta odds = bacak</div>
+        <div><span style="color:var(--red)">ANTI-VALUE:</span> Kupona ALMA (overbet at)</div>
+        <div><span style="color:var(--yellow)">DUTCH:</span> Birden fazla value at -> stake dagit</div>
+        <div><span style="color:var(--purple)">FLB:</span> Longshot'a edge varsa penalty uygula</div>
+        <div><span style="color:var(--orange)">TREND:</span> AGF sabit = guvenilir, volatile = dikkat</div>
+        <div><span style="color:var(--red)">KURAL:</span> Ilk 3 hafta sadece log, para yok</div></div></div>
+    </div>
+    <div class="strat-card"><div class="st" style="color:var(--text2)">TAKEOUT KARSILASTIRMA</div>${tb}</div>
+  </div>`;
 }
 
-function switchView(v){view=v;document.querySelectorAll('.tab-btn').forEach(b=>{b.classList.toggle('active',b.textContent.includes(v==='races'?'YARIŞ':'STRATEJİ'))});render()}
+// ─── UI ───
+function switchView(v){view=v;document.querySelectorAll('.tab-btn').forEach(b=>{
+  let match=v==='races'?'YARIS':v==='dutch'?'DUTCH':'STRAT';
+  b.classList.toggle('active',b.textContent.includes(match))});render()}
 function setRegion(r){region=r;document.querySelectorAll('.region-btn').forEach(b=>b.classList.toggle('active',b.dataset.region===r));render()}
 
 document.addEventListener("DOMContentLoaded",()=>{
-  document.getElementById("regionBtns").innerHTML=REGIONS.map(r=>`<button class="region-btn ${r==='ALL'?'active':''}" data-region="${r}" onclick="setRegion('${r}')">${r==='ALL'?'TÜMÜ':r}</button>`).join("");
-  document.getElementById("sources").innerHTML=SRCSTAT.map(s=>`<div class="src-chip"><span class="pulse" style="background:${s.s==='live'?'var(--green)':'var(--text3)'};box-shadow:0 0 5px ${s.s==='live'?'rgba(0,230,138,.3)':'transparent'}"></span><span style="color:${s.s==='live'?'var(--text2)':'var(--text3)'}">${s.n}</span><span style="color:var(--text4);font-family:var(--mono);font-size:10px">${s.l}</span></div>`).join("");
-  setInterval(()=>{document.getElementById("clock").textContent=new Date().toLocaleTimeString("tr-TR")+" GMT+0"},1000);
-  fetchData();
-});
+  document.getElementById("regionBtns").innerHTML=REGIONS.map(r=>`<button class="region-btn ${r==='ALL'?'active':''}" data-region="${r}" onclick="setRegion('${r}')">${r==='ALL'?'TUMU':r}</button>`).join("");
+  let ss=[{n:"TJK HTML",s:"live",l:"2.1s"},{n:"TAB.com.au",s:"ready",l:"-"},{n:"Betfair",s:"ready",l:"-"},{n:"Oddschecker",s:"ready",l:"-"},{n:"TwinSpires",s:"ready",l:"-"},{n:"Betfair UK",s:"ready",l:"-"}];
+  document.getElementById("sources").innerHTML=ss.map(s=>`<div class="src-chip"><span class="pulse" style="background:${s.s==='live'?'var(--green)':'var(--text3)'};box-shadow:0 0 5px ${s.s==='live'?'rgba(0,230,138,.3)':'transparent'}"></span><span style="color:${s.s==='live'?'var(--text2)':'var(--text3)'}">${s.n}</span><span style="color:var(--text4);font-family:var(--mono);font-size:10px">${s.l}</span></div>`).join("");
+  setInterval(()=>{document.getElementById("clock").textContent=new Date().toLocaleTimeString("tr-TR")},1000);
+  fetchData()
+})
 </script>
 </body>
 </html>
