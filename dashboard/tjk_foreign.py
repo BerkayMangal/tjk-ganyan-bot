@@ -1,99 +1,106 @@
+# -*- coding: utf-8 -*-
 """
-TJK Yabanci Yaris Scraper v2
-=============================
-agftahmin.com'dan yabanci yarislari + AGF oranlarini ceker.
-TJK.org JS render gerektiriyor, agftahmin.com temiz HTML.
-
-Kaynaklar:
-  Yaris karti: agftahmin.com/at-yarisi/{hipodrom-slug}
-  AGF tablolari: agftahmin.com/agf-tablosu (tek sayfa, tum hipodromlar)
+TJK Yabanci Yaris Scraper v3 — agftahmin.com
+Temiz HTML, JS yok, Turkce karakter sorunu cozuldu.
 """
 import requests, re, logging
-from datetime import datetime
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
 BASE = "https://www.agftahmin.com"
-AGF_URL = f"{BASE}/agf-tablosu"
-BULTEN_URL = f"{BASE}/at-yarisi"
 HDR = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-DOMESTIC = ["adana","bursa","istanbul","ankara","izmir","elazig",
-            "sanliurfa","diyarbakir","antalya","kocaeli","samsun"]
+DOMESTIC_SLUGS = ["adana","bursa","istanbul","ankara","izmir","elazig",
+                  "sanliurfa","diyarbakir","antalya","kocaeli","samsun"]
 
-COUNTRY_MAP = {
-    "abd":"USA","fransa":"FRA","ingiltere":"GBR","uk":"GBR",
+COUNTRY_MAP = {"abd":"USA","fransa":"FRA","ingiltere":"GBR",
     "avustralya":"AUS","dubai":"UAE","bae":"UAE","malezya":"MYS",
-    "singapur":"SGP","hong kong":"HKG","japonya":"JPN",
-}
+    "singapur":"SGP","hong-kong":"HKG","japonya":"JPN"}
 
 FLAGS = {"USA":"\U0001f1fa\U0001f1f8","FRA":"\U0001f1eb\U0001f1f7","GBR":"\U0001f1ec\U0001f1e7",
          "AUS":"\U0001f1e6\U0001f1fa","UAE":"\U0001f1e6\U0001f1ea","HKG":"\U0001f1ed\U0001f1f0",
-         "JPN":"\U0001f1ef\U0001f1f5","MYS":"\U0001f1f2\U0001f1fe","UNK":"\U0001f3c1"}
+         "JPN":"\U0001f1ef\U0001f1f5","UNK":"\U0001f3c1"}
 
-SOURCE_MAP = {
-    "USA":["twinspires","betfair","oddschk"],
-    "FRA":["betfair_uk","oddschk"],
-    "GBR":["betfair_uk","oddschk"],
-    "AUS":["tab_au","betfair","oddschk"],
-    "UAE":["betfair_uk","oddschk"],
-    "HKG":["betfair","oddschk"],
-    "UNK":["oddschk"],
-}
+SOURCE_MAP = {"USA":["twinspires","betfair","oddschk"],"FRA":["betfair_uk","oddschk"],
+    "GBR":["betfair_uk","oddschk"],"AUS":["tab_au","betfair","oddschk"],
+    "UAE":["betfair_uk","oddschk"],"HKG":["betfair","oddschk"],"UNK":["oddschk"]}
 
-def is_foreign(name):
-    slug = name.lower().replace(" ","-")
-    for d in DOMESTIC:
-        if d in slug: return False
+
+def is_foreign_slug(slug):
+    """Slug yerli mi yabanci mi?"""
+    for d in DOMESTIC_SLUGS:
+        if d in slug:
+            return False
     return True
 
-def detect_country(name):
-    low = name.lower()
+
+def detect_country(slug):
     for k, v in COUNTRY_MAP.items():
-        if k in low: return v
+        if k in slug:
+            return v
     return "UNK"
 
-def name_to_slug(name):
-    """Hipodrom adini URL slug'a cevir: 'Mahoning Valley ABD' -> 'mahoning-valley-abd'"""
-    import unicodedata
-    s = name.lower().strip()
-    # Turkce karakter donusumu
-    tr = {"\u0131":"i","\u00e7":"c","\u015f":"s","\u011f":"g","\u00fc":"u","\u00f6":"o",
-          "\u0130":"i","\u00c7":"c","\u015e":"s","\u011e":"g","\u00dc":"u","\u00d6":"o"}
-    for old, new in tr.items():
-        s = s.replace(old, new)
-    s = re.sub(r"[^a-z0-9\s-]", "", s)
-    s = re.sub(r"[\s]+", "-", s).strip("-")
-    return s
+
+def slug_to_name(slug):
+    """'mahoning-valley-abd' -> 'Mahoning Valley ABD'"""
+    parts = slug.split("-")
+    return " ".join(p.upper() if p in ["abd","bae","uk"] else p.capitalize() for p in parts)
+
 
 def fetch_hippodromes():
-    """agftahmin.com/at-yarisi sayfasindan bugunku hipodromlari al."""
+    """agftahmin.com/at-yarisi sayfasindan bugunku hipodromlari al.
+    
+    Sayfa yapisi (gercek HTML'den):
+      <a href="https://www.agftahmin.com/at-yarisi/mahoning-valley-abd">
+        Mahoning Valley ABD At Yarisi Bulteni
+      </a>
+    
+    NOT: "Bulteni" Turkce u ile "B\xfclteni" olabilir.
+    Bu yuzden text'e bakmiyoruz, sadece href yapisina bakiyoruz.
+    """
     try:
-        r = requests.get(BULTEN_URL, headers=HDR, timeout=15)
+        r = requests.get(f"{BASE}/at-yarisi", headers=HDR, timeout=15)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
         
         hips = []
-        for link in soup.find_all("a", href=True):
-            href = link.get("href","")
-            text = link.get_text(strip=True)
-            if "/at-yarisi/" in href and "Bulten" in text:
-                # Extract hipodrom adi: "Mahoning Valley ABD At Yarisi Bulteni" -> "Mahoning Valley ABD"
-                name = text.replace("At Yarisi Bulteni","").replace("At Yarisi Bülteni","").strip()
-                slug = href.split("/at-yarisi/")[-1].strip("/")
-                if name and slug:
-                    hips.append({"name":name, "slug":slug, "url":BASE+"/at-yarisi/"+slug})
+        seen = set()
         
-        logger.info(f"agftahmin.com: {len(hips)} hipodrom bulundu")
+        for link in soup.find_all("a", href=True):
+            href = link.get("href", "")
+            
+            # /at-yarisi/SLUG formatindaki linkleri bul
+            # Hem relative (/at-yarisi/xxx) hem absolute (https://...com/at-yarisi/xxx) destekle
+            match = re.search(r"/at-yarisi/([a-z0-9-]+)$", href)
+            if not match:
+                continue
+            
+            slug = match.group(1)
+            
+            # Gecersiz slug'lari atla
+            if not slug or len(slug) < 3:
+                continue
+            if slug in seen:
+                continue
+            # Sorting/filtering parametreleri atla
+            if "siralama" in slug or "sayfa" in slug:
+                continue
+                
+            seen.add(slug)
+            name = slug_to_name(slug)
+            hips.append({"name": name, "slug": slug})
+        
+        logger.info(f"agftahmin.com: {len(hips)} hipodrom: {[h['slug'] for h in hips]}")
         return hips
+        
     except Exception as e:
         logger.error(f"Hipodrom listesi hatasi: {e}")
         return []
 
+
 def fetch_racecard(slug):
-    """Bir hipodromun yaris kartini agftahmin.com'dan cek.
-    Temiz HTML tablolar, kolay parse."""
+    """Bir hipodromun yaris kartini cek. Her tablo = bir kosu."""
     url = f"{BASE}/at-yarisi/{slug}"
     try:
         r = requests.get(url, headers=HDR, timeout=15)
@@ -101,25 +108,22 @@ def fetch_racecard(slug):
         soup = BeautifulSoup(r.text, "html.parser")
         
         races = []
-        # Her tablo bir kosu
         tables = soup.find_all("table")
         
         for idx, table in enumerate(tables):
             horses = []
             rows = table.find_all("tr")
             
-            # Header row'u atla
-            for row in rows[1:]:
+            for row in rows[1:]:  # Header atla
                 cells = row.find_all("td")
-                if len(cells) < 6: continue
+                if len(cells) < 6:
+                    continue
                 
                 texts = [c.get_text(strip=True) for c in cells]
                 
                 try:
                     num = int(texts[0]) if texts[0].isdigit() else 0
                     name = texts[1].strip()
-                    age = texts[2].strip() if len(texts) > 2 else ""
-                    weight = texts[4].strip() if len(texts) > 4 else ""
                     jockey = texts[5].strip() if len(texts) > 5 else ""
                     trainer = texts[7].strip() if len(texts) > 7 else ""
                     form = texts[10].strip() if len(texts) > 10 else ""
@@ -130,29 +134,24 @@ def fetch_racecard(slug):
                             "name": name,
                             "jockey": jockey,
                             "trainer": trainer,
-                            "age": age,
-                            "weight": weight,
                             "form": form,
-                            "tjk": 0,  # AGF sonra eslestirilecek
+                            "tjk": 0,
                         })
                 except (ValueError, IndexError):
                     continue
             
             if horses:
-                # Kosu numarasi: tablonun ustundeki basliktan
-                header = table.find_previous(["h3","h2","h4"])
+                # Kosu numarasi basliktan
+                header = table.find_previous("h3")
                 race_num = idx + 1
-                race_time = ""
                 if header:
-                    ht = header.get_text(strip=True)
-                    nm = re.search(r"(\d+)\.\s*[Kk]o", ht)
-                    if nm: race_num = int(nm.group(1))
-                    tm = re.search(r"(\d{2}[:\.\s]\d{2})", ht)
-                    if tm: race_time = tm.group(1).replace(".",":").replace(" ",":")
+                    nm = re.search(r"(\d+)\.", header.get_text())
+                    if nm:
+                        race_num = int(nm.group(1))
                 
                 races.append({
                     "number": race_num,
-                    "time": race_time,
+                    "time": "",
                     "distance": "",
                     "type": "",
                     "pool_tl": 0,
@@ -166,121 +165,123 @@ def fetch_racecard(slug):
         logger.error(f"Yaris karti hatasi ({slug}): {e}")
         return []
 
+
 def fetch_agf_all():
-    """agftahmin.com/agf-tablosu'ndan TUM AGF oranlarini cek.
-    Tek sayfa, tum hipodromlar. Format: at_numarasi (%yuzde)
+    """AGF tablolarini tek seferde cek.
     
-    Returns: {hipodrom_adi: {kosu_num: {at_num: agf_yuzde}}}
+    H3 format: '2026-03-16 - 15:55 Chantilly Fransa AGF Tahmin 1. Altili'
+    Tablo format: '4 (%30.53)' veya '1 (%23.02)'
+    
+    Returns: {slug: {kosu_idx: {at_num: agf_pct}}}
     """
     try:
-        r = requests.get(AGF_URL, headers=HDR, timeout=15)
+        r = requests.get(f"{BASE}/agf-tablosu", headers=HDR, timeout=15)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
         
         agf_data = {}
-        current_hip = ""
-        current_altili = ""
         
-        # H3 basliklar: "2026-03-16 - 15:55 Chantilly Fransa AGF Tahmin 1. Altili"
-        for section in soup.find_all("h3"):
-            title = section.get_text(strip=True)
+        for h3 in soup.find_all("h3"):
+            title = h3.get_text(strip=True)
             
-            # Hipodrom adini cikart
-            # Format: "YYYY-MM-DD - HH:MM HipodromAdi AGF Tahmin N. Altili"
-            m = re.search(r"\d{4}-\d{2}-\d{2}\s*-\s*\d{2}:\d{2}\s+(.+?)\s+AGF", title)
-            if not m: continue
+            # "2026-03-16 - 11:30 Adana AGF Tahmin 2. Altili" formatini parse et
+            m = re.search(r"\d{4}-\d{2}-\d{2}\s*-\s*[\d:]+\s+(.+?)\s+AGF", title)
+            if not m:
+                continue
+            
             hip_name = m.group(1).strip()
             
             # Altili numarasi
-            alt_m = re.search(r"(\d+)\.\s*Alt", title)
+            alt_m = re.search(r"(\d+)\.", title.split("AGF")[-1])
             altili_num = int(alt_m.group(1)) if alt_m else 1
             
             if hip_name not in agf_data:
                 agf_data[hip_name] = {}
             
-            # Bu basliktan sonraki tablolari bul (AYAK tablolari)
-            sibling = section.find_next_sibling()
-            leg_num = 0
+            # H3'ten sonraki tablolari tara (her tablo = 1 ayak)
+            elem = h3.find_next_sibling()
+            leg = 0
             
-            while sibling:
-                if sibling.name == "h3": break  # Sonraki hipodrom
+            while elem:
+                if elem.name == "h3":
+                    break  # Sonraki hipodrom
                 
-                if sibling.name == "table" or (sibling.name == "div" and sibling.find("table")):
-                    tbl = sibling if sibling.name == "table" else sibling.find("table")
-                    if not tbl:
-                        sibling = sibling.find_next_sibling()
-                        continue
-                    
-                    leg_num += 1
+                tbl = None
+                if elem.name == "table":
+                    tbl = elem
+                elif elem.find("table"):
+                    tbl = elem.find("table")
+                
+                if tbl:
+                    leg += 1
                     leg_data = {}
                     
                     for row in tbl.find_all("tr"):
-                        cell_text = row.get_text(strip=True)
-                        # AYAK basligini atla
-                        if "AYAK" in cell_text: continue
-                        
-                        # Format: "4 (%30.53)" veya "1 (%23.02)"
-                        matches = re.findall(r"(\d+)\s*\(%?([\d\.]+)%?\)", cell_text)
-                        for at_num_str, pct_str in matches:
+                        txt = row.get_text(strip=True)
+                        if "AYAK" in txt:
+                            continue
+                        # "4 (%30.53)" formatini yakala
+                        for at_str, pct_str in re.findall(r"(\d+)\s*\(?%?([\d.]+)%?\)?", txt):
                             try:
-                                at_num = int(at_num_str)
+                                at_num = int(at_str)
                                 pct = float(pct_str)
-                                if 0 < pct <= 100:
+                                if 0 < pct <= 100 and 0 < at_num <= 30:
                                     leg_data[at_num] = pct
                             except ValueError:
                                 pass
                     
                     if leg_data:
-                        # AGF yuzdesini odds'a cevir: odds = 100 / pct
-                        kosu_key = f"altili{altili_num}_leg{leg_num}"
-                        agf_data[hip_name][kosu_key] = leg_data
+                        key = f"a{altili_num}_l{leg}"
+                        agf_data[hip_name][key] = leg_data
                 
-                sibling = sibling.find_next_sibling()
+                elem = elem.find_next_sibling()
         
-        logger.info(f"AGF data: {list(agf_data.keys())}")
+        total_legs = sum(len(v) for v in agf_data.values())
+        logger.info(f"AGF: {list(agf_data.keys())} ({total_legs} ayak toplam)")
         return agf_data
     
     except Exception as e:
-        logger.error(f"AGF tablosu hatasi: {e}")
+        logger.error(f"AGF hatasi: {e}")
         return {}
 
-def pct_to_odds(pct):
-    """AGF yuzdesini TJK odds'a cevir. pct=25 -> odds=4.0"""
-    if pct <= 0: return 0
-    return round(100.0 / pct, 2)
 
-def match_agf_to_races(races, agf_hip_data):
-    """AGF oranlarini at numaralarina gore eslestir.
+def match_agf_to_races(races, hip_agf):
+    """AGF yuzdeleri -> races[horse][tjk] odds olarak eslestir.
     
-    AGF altili bacaklari = kosu sirasi. 
-    1. altili genelde ilk 6 kosu, 2. altili son 6 kosu.
+    AGF'de at numarasi var, race'lerde de at numarasi var.
+    Eslestirme: ayni numara = ayni at.
+    AGF pct -> odds: odds = 100 / pct
     """
-    if not agf_hip_data: return
+    if not hip_agf:
+        return
     
-    # Basit eslestirme: kosu numarasina gore
-    # AGF leg numaralari kosulara mapped
-    for key, leg_data in agf_hip_data.items():
-        # key: "altili1_leg3" -> altili 1, bacak 3
-        m = re.match(r"altili(\d+)_leg(\d+)", key)
-        if not m: continue
-        altili = int(m.group(1))
-        leg = int(m.group(2))
+    # Tum leg data'larini topla
+    all_legs = []
+    for key in sorted(hip_agf.keys()):
+        all_legs.append(hip_agf[key])
+    
+    # Her race'e sirali eslestir
+    for i, race in enumerate(races):
+        if i >= len(all_legs):
+            break
         
-        # Altili 1 -> kosular 1-6 (veya 3-8), altili 2 -> kosular 5-10 (veya 7-12)
-        # Basit mapping: leg N -> kosu N (1. altili) veya kosu N+offset (2. altili)
-        # Gercek mapping hipodroma gore degisir, simdilik sirayla deneriz
+        leg_data = all_legs[i]
+        matched = 0
         
-        for race in races:
-            # At numaralarina gore eslestir (agf at_num == race horse num)
-            for at_num, pct in leg_data.items():
-                for horse in race["horses"]:
-                    if horse["num"] == at_num and horse["tjk"] == 0:
-                        horse["tjk"] = pct_to_odds(pct)
-                        horse["agf_pct"] = pct
+        for horse in race["horses"]:
+            pct = leg_data.get(horse["num"], 0)
+            if pct > 0:
+                horse["tjk"] = round(100.0 / pct, 2)
+                horse["agf_pct"] = pct
+                matched += 1
+        
+        if matched > 0:
+            logger.info(f"    R{race['number']}: {matched}/{len(race['horses'])} at AGF eslestirildi")
+
 
 def fetch_foreign_races(tarih=None):
-    """ANA: Bugunku yabanci yarislari + AGF oranlarini dondur."""
-    logger.info("agftahmin.com'dan yabanci yaris taramasi")
+    """ANA: Yabanci yarislari + AGF cek, analiz icin hazirla."""
+    logger.info("agftahmin.com tarama basliyor")
     
     # 1. Hipodromlari al
     hips = fetch_hippodromes()
@@ -289,7 +290,7 @@ def fetch_foreign_races(tarih=None):
         return []
     
     # 2. Yabancilari filtrele
-    foreign = [h for h in hips if is_foreign(h["name"])]
+    foreign = [h for h in hips if is_foreign_slug(h["slug"])]
     logger.info(f"Yabanci: {[h['name'] for h in foreign]}")
     
     if not foreign:
@@ -302,17 +303,26 @@ def fetch_foreign_races(tarih=None):
     # 4. Her yabanci hipodrom icin yaris karti cek
     results = []
     for hip in foreign:
-        country = detect_country(hip["name"])
+        country = detect_country(hip["slug"])
         races = fetch_racecard(hip["slug"])
         
-        # AGF eslestir
+        # AGF eslestir — hip name ile AGF basligini match et
+        # AGF baslik: "Chantilly Fransa", hip name: "Chantilly Fransa"
         hip_agf = agf_all.get(hip["name"], {})
+        
+        # Fuzzy fallback: slug ile baslik eslestir
+        if not hip_agf:
+            for agf_name, agf_data in agf_all.items():
+                # "Chantilly Fransa" -> "chantilly-fransa" ve karsilastir
+                agf_slug = agf_name.lower().replace(" ","-")
+                agf_slug = re.sub(r"[^a-z0-9-]", "", agf_slug)
+                if hip["slug"] in agf_slug or agf_slug in hip["slug"]:
+                    hip_agf = agf_data
+                    logger.info(f"  AGF fuzzy match: {agf_name} -> {hip['slug']}")
+                    break
+        
         if hip_agf and races:
             match_agf_to_races(races, hip_agf)
-            # Eslestirme basariliysa log
-            matched = sum(1 for r in races for h in r["horses"] if h.get("tjk",0) > 0)
-            total = sum(len(r["horses"]) for r in races)
-            logger.info(f"  AGF eslestirme: {matched}/{total} at")
         
         results.append({
             "id": hip["slug"],
@@ -323,4 +333,6 @@ def fetch_foreign_races(tarih=None):
             "races": races,
         })
     
+    logger.info(f"Toplam: {len(results)} yabanci hipodrom, "
+                f"{sum(len(r) for t in results for r in t['races'])} yaris")
     return results
