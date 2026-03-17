@@ -67,6 +67,17 @@ def fetch_hippodromes():
         hips = []
         seen = set()
         
+        # DEBUG: sayfa ne dondu?
+        all_links = soup.find_all("a", href=True)
+        logger.info(f"DEBUG: sayfa {len(r.text)} char, {len(all_links)} link bulundu")
+        logger.info(f"DEBUG: title={soup.title.string if soup.title else 'YOK'}")
+        
+        # Tum /at-yarisi/ linklerini logla
+        for a in all_links:
+            h = a.get("href","")
+            if "at-yarisi" in h:
+                logger.info(f"DEBUG link: href={h}")
+        
         for link in soup.find_all("a", href=True):
             href = link.get("href", "")
             
