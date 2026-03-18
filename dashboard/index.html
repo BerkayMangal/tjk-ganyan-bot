@@ -62,6 +62,7 @@ input:focus{outline:1px solid #333}input[type=number]{-moz-appearance:textfield}
     <div style="display:flex;gap:2px">
       <button class="tab-btn active" onclick="switchView('races')">YARISLAR</button>
       <button class="tab-btn" onclick="switchView('dutch')">DUTCH</button>
+      <button class="tab-btn" onclick="switchView('yerli')">YERLI KUPON</button>
       <button class="tab-btn" onclick="switchView('strategy')">STRATEJI</button>
     </div>
   </div>
@@ -216,7 +217,7 @@ function getDemoData(){return{timestamp:new Date().toISOString(),source:"demo",t
 ]}}
 
 // ─── RENDER ───
-function render(){if(!D)return;let m=document.getElementById("main");if(view==="races")renderRaces(m);else if(view==="dutch")renderDutch(m);else renderStrategy(m)}
+function render(){if(!D)return;let m=document.getElementById("main");if(view==="races")renderRaces(m);else if(view==="dutch")renderDutch(m);else if(view==="yerli")renderYerli(m);else renderStrategy(m)}
 
 function renderRaces(el){
   let tracks=region==="ALL"?D.tracks:D.tracks.filter(t=>t.country===region);
@@ -390,6 +391,157 @@ function calcDutch(){
 }
 
 // ─── STRATEGY ───
+
+// ─── YERLI KUPON ───
+function renderYerli(el){
+  // Mock data — ileride /api/yerli + konsensus motoru ile dolacak
+  let kupons = [
+    {
+      hipodrom: "Bursa", altili: "1. Altili", saat: "14:30",
+      guven: 72, maliyet: 120, strateji: "HIBRIT",
+      bacaklar: [
+        {num:1, kosu:"1. Kosu", tip:"BANKER", guven:85, atlar:[{num:3,name:"KARAYEL",g:85}]},
+        {num:2, kosu:"2. Kosu", tip:"VALUE", guven:64, atlar:[{num:1,name:"DENIZ",g:68},{num:5,name:"BULUT",g:61}]},
+        {num:3, kosu:"3. Kosu", tip:"GENIS", guven:42, atlar:[{num:2,name:"RUZGAR",g:48},{num:4,name:"TOPRAK",g:45},{num:7,name:"ATES",g:43},{num:9,name:"DALGA",g:40}]},
+        {num:4, kosu:"4. Kosu", tip:"BANKER", guven:81, atlar:[{num:8,name:"FIRTINA",g:81}]},
+        {num:5, kosu:"5. Kosu", tip:"VALUE", guven:59, atlar:[{num:3,name:"SAHIN",g:65},{num:11,name:"KARTAL",g:58}]},
+        {num:6, kosu:"6. Kosu", tip:"GENIS", guven:38, atlar:[{num:1,name:"MERCAN",g:44},{num:3,name:"SAFIR",g:41},{num:6,name:"ZUMRUT",g:38},{num:8,name:"YAKUT",g:36}]},
+      ]
+    },
+    {
+      hipodrom: "Adana", altili: "2. Altili", saat: "11:30",
+      guven: 58, maliyet: 200, strateji: "GENIS",
+      bacaklar: [
+        {num:1, kosu:"3. Kosu", tip:"VALUE", guven:62, atlar:[{num:1,name:"YILDIRIM",g:67},{num:4,name:"VOLKAN",g:60}]},
+        {num:2, kosu:"4. Kosu", tip:"BANKER", guven:78, atlar:[{num:4,name:"BOZKURT",g:78}]},
+        {num:3, kosu:"5. Kosu", tip:"GENIS", guven:35, atlar:[{num:3,name:"SELEN",g:42},{num:6,name:"POYRAZ",g:38},{num:8,name:"KASIRGA",g:35},{num:10,name:"YAGMUR",g:33}]},
+        {num:4, kosu:"6. Kosu", tip:"VALUE", guven:56, atlar:[{num:1,name:"CESUR",g:61},{num:5,name:"ACAR",g:54},{num:3,name:"AKBAS",g:52}]},
+        {num:5, kosu:"7. Kosu", tip:"BANKER", guven:74, atlar:[{num:1,name:"TORNADO",g:74}]},
+        {num:6, kosu:"8. Kosu", tip:"GENIS", guven:40, atlar:[{num:2,name:"CEYLAN",g:45},{num:6,name:"DORUK",g:42},{num:9,name:"ZIRVE",g:39}]},
+      ]
+    },
+    {
+      hipodrom: "Sanliurfa", altili: "1. Altili", saat: "13:00",
+      guven: 44, maliyet: 480, strateji: "GENIS",
+      bacaklar: [
+        {num:1, kosu:"1. Kosu", tip:"GENIS", guven:38, atlar:[{num:2,name:"SIRTLAN",g:42},{num:5,name:"TILKI",g:40},{num:8,name:"CAKAL",g:37},{num:11,name:"KURT",g:35}]},
+        {num:2, kosu:"2. Kosu", tip:"VALUE", guven:52, atlar:[{num:1,name:"ARAP",g:58},{num:3,name:"BERBER",g:50}]},
+        {num:3, kosu:"3. Kosu", tip:"GENIS", guven:36, atlar:[{num:2,name:"CAN",g:41},{num:4,name:"DOST",g:38},{num:7,name:"ESER",g:35},{num:9,name:"FERIT",g:33},{num:11,name:"GUNER",g:30}]},
+        {num:4, kosu:"4. Kosu", tip:"VALUE", guven:48, atlar:[{num:1,name:"HALIT",g:55},{num:6,name:"ILHAN",g:48},{num:9,name:"KEREM",g:44}]},
+        {num:5, kosu:"5. Kosu", tip:"GENIS", guven:34, atlar:[{num:3,name:"LEVENT",g:40},{num:5,name:"MERT",g:36},{num:8,name:"NECIP",g:33},{num:12,name:"ORHAN",g:30}]},
+        {num:6, kosu:"6. Kosu", tip:"VALUE", guven:55, atlar:[{num:2,name:"PARS",g:60},{num:7,name:"REIS",g:52}]},
+      ]
+    }
+  ];
+  
+  // Saat bilgisi
+  let now = new Date();
+  let dateStr = now.toLocaleDateString("tr-TR",{day:"2-digit",month:"2-digit",year:"numeric"});
+  
+  let html = `<div style="max-width:800px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+      <div>
+        <div style="font-size:20px;font-weight:800;color:#fff">YERLI KUPONLAR</div>
+        <div style="font-size:12px;color:var(--text3);margin-top:4px">${dateStr} | 5 Katman Konsensus | Model + AGF + FLB + Trend + Strateji</div>
+      </div>
+      <span class="badge" style="background:rgba(255,214,10,.1);color:var(--yellow);border:1px solid rgba(255,214,10,.2);font-size:11px;padding:4px 10px">MOCK DATA</span>
+    </div>
+    
+    <div style="background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:14px;margin-bottom:16px">
+      <div style="font-size:10px;color:var(--purple);font-weight:700;letter-spacing:1px;margin-bottom:8px">5 KATMAN KONSENSUS</div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;font-size:11px">
+        <div style="text-align:center;padding:6px;background:#111;border-radius:3px"><div style="color:var(--blue);font-weight:700">K1</div><div style="color:var(--text3)">ML Model</div><div style="color:var(--text4);font-size:9px">96 feature</div></div>
+        <div style="text-align:center;padding:6px;background:#111;border-radius:3px"><div style="color:var(--orange);font-weight:700">K2</div><div style="color:var(--text3)">AGF Piyasa</div><div style="color:var(--text4);font-size:9px">3 kaynak</div></div>
+        <div style="text-align:center;padding:6px;background:#111;border-radius:3px"><div style="color:var(--green);font-weight:700">K3</div><div style="color:var(--text3)">Value Edge</div><div style="color:var(--text4);font-size:9px">model vs agf</div></div>
+        <div style="text-align:center;padding:6px;background:#111;border-radius:3px"><div style="color:var(--purple);font-weight:700">K4</div><div style="color:var(--text3)">FLB + Trend</div><div style="color:var(--text4);font-size:9px">bilimsel</div></div>
+        <div style="text-align:center;padding:6px;background:#111;border-radius:3px"><div style="color:var(--red);font-weight:700">K5</div><div style="color:var(--text3)">Strateji</div><div style="color:var(--text4);font-size:9px">backtest ROI</div></div>
+      </div>
+    </div>`;
+  
+  kupons.forEach(k => {
+    let gColor = k.guven >= 65 ? "var(--green)" : k.guven >= 50 ? "var(--yellow)" : k.guven >= 40 ? "var(--orange)" : "var(--red)";
+    let skipWarn = k.guven < 40 ? `<span class="badge" style="background:rgba(255,59,59,.1);color:var(--red);border:1px solid rgba(255,59,59,.2);margin-left:8px">GUVEN DUSUK - PAS GEC</span>` : "";
+    
+    // Kombinasyon hesapla
+    let kombi = k.bacaklar.reduce((m, b) => m * b.atlar.length, 1);
+    
+    html += `<div class="card" style="margin-bottom:16px;border-color:${k.guven>=50?'var(--border)':'rgba(255,59,59,.2)'}">
+      <!-- KUPON HEADER -->
+      <div style="padding:12px 16px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:16px">\U0001f1f9\U0001f1f7</span>
+          <span style="font-size:15px;font-weight:800;color:#fff">${k.hipodrom}</span>
+          <span style="font-size:12px;color:var(--text2)">${k.altili}</span>
+          <span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${k.saat}</span>
+          ${skipWarn}
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="text-align:right">
+            <div style="font-size:9px;color:var(--text3);font-weight:700">GUVEN</div>
+            <div style="font-size:22px;font-weight:800;color:${gColor};font-family:var(--mono)">${k.guven}</div>
+          </div>
+          <div style="width:1px;height:30px;background:var(--border)"></div>
+          <div style="text-align:right">
+            <div style="font-size:9px;color:var(--text3);font-weight:700">MALIYET</div>
+            <div style="font-size:16px;font-weight:700;color:var(--yellow);font-family:var(--mono)">${k.maliyet} TL</div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- BACAKLAR -->
+      <div style="padding:12px 16px">`;
+    
+    k.bacaklar.forEach(b => {
+      let tipColor = b.tip === "BANKER" ? "var(--green)" : b.tip === "VALUE" ? "var(--yellow)" : "var(--text3)";
+      let tipBg = b.tip === "BANKER" ? "rgba(0,230,138,.08)" : b.tip === "VALUE" ? "rgba(255,214,10,.05)" : "transparent";
+      
+      html += `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #111;background:${tipBg};margin:0 -16px;padding-left:16px;padding-right:16px">
+          <span style="font-family:var(--mono);font-size:12px;color:var(--text3);min-width:20px">B${b.num}</span>
+          <span class="badge" style="background:${tipColor}18;color:${tipColor};border:1px solid ${tipColor}30;min-width:55px;text-align:center">${b.tip}</span>
+          <span style="font-size:11px;color:var(--text3);min-width:55px">${b.kosu}</span>
+          <div style="flex:1;display:flex;gap:6px;flex-wrap:wrap">`;
+      
+      b.atlar.forEach(a => {
+        let aColor = a.g >= 70 ? "var(--green)" : a.g >= 55 ? "var(--yellow)" : "var(--text2)";
+        html += `<span style="background:#111;border:1px solid var(--border);border-radius:3px;padding:3px 8px;font-size:12px">
+              <span style="color:${aColor};font-weight:700;font-family:var(--mono)">${a.num}</span>
+              <span style="color:#ccc;margin-left:4px">${a.name}</span>
+              <span style="color:var(--text4);font-size:10px;margin-left:3px">${a.g}</span>
+            </span>`;
+      });
+      
+      html += `</div>
+        </div>`;
+    });
+    
+    html += `</div>
+      
+      <!-- KUPON FOOTER -->
+      <div style="padding:8px 16px;background:var(--bg2);border-top:1px solid var(--border);display:flex;justify-content:space-between;font-size:11px">
+        <span style="color:var(--text3)">Kombine: <span style="color:var(--text2);font-family:var(--mono)">${k.bacaklar.map(b=>b.atlar.length).join(' x ')} = ${kombi}</span></span>
+        <span style="color:var(--text3)">Strateji: <span style="color:var(--text2)">${k.strateji}</span></span>
+      </div>
+    </div>`;
+  });
+  
+  // Kurallar
+  html += `<div style="background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:14px;margin-top:8px">
+      <div style="font-size:10px;color:var(--red);font-weight:700;letter-spacing:1px;margin-bottom:8px">KURALLAR</div>
+      <div style="font-size:12px;color:var(--text3);line-height:1.8">
+        <div><span style="color:var(--red)">1.</span> Guven < 40 olan altili OYNANMAZ (pas gec)</div>
+        <div><span style="color:var(--red)">2.</span> Anti-value at ASLA kupona girmez</div>
+        <div><span style="color:var(--red)">3.</span> Tek bahis max bankroll %15</div>
+        <div><span style="color:var(--green)">4.</span> BANKER = tek at (model + piyasa hemfikir, guven yuksek)</div>
+        <div><span style="color:var(--yellow)">5.</span> VALUE = 2-3 at (model piyasadan farkli goruyor)</div>
+        <div><span style="color:var(--text3)">6.</span> GENIS = 4+ at (belirsiz kosu, riski dagit)</div>
+      </div>
+    </div>
+  </div>`;
+  
+  el.innerHTML = html;
+}
+
+
 function renderStrategy(el){
   let takeouts=[{n:"TJK Ganyan",p:27,c:"var(--red)"},{n:"TJK Altili",p:30,c:"var(--red)"},{n:"US Tote",p:20,c:"var(--blue)"},{n:"HK Jockey",p:17.5,c:"var(--purple)"},{n:"AU TAB",p:16,c:"var(--green)"},{n:"UK Tote",p:16.5,c:"var(--orange)"},{n:"Betfair",p:2,c:"var(--yellow)"}];
   let tb=takeouts.map(p=>`<div class="t-row"><span class="tn">${p.n}</span><div class="tb"><div class="tf" style="width:${p.p*3}%;background:${p.c}"></div></div><span class="tp" style="color:${p.c}">${p.p}%</span></div>`).join("");
@@ -443,7 +595,7 @@ Birden fazla kaynak: en yuksek ref_norm</pre></div>
 
 // ─── UI ───
 function switchView(v){view=v;document.querySelectorAll('.tab-btn').forEach(b=>{
-  let match=v==='races'?'YARIS':v==='dutch'?'DUTCH':'STRAT';
+  let match=v==='races'?'YARIS':v==='dutch'?'DUTCH':v==='yerli'?'YERLI':'STRAT';
   b.classList.toggle('active',b.textContent.includes(match))});render()}
 function setRegion(r){region=r;document.querySelectorAll('.region-btn').forEach(b=>b.classList.toggle('active',b.dataset.region===r));render()}
 
