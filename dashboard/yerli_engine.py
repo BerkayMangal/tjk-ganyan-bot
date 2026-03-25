@@ -51,29 +51,107 @@ def run_yerli_pipeline(target_date=None):
     model_ok = _ensure_loaded()
     logger.info(f"=== Yerli Pipeline {date_str} | Model: {'OK' if model_ok else 'AGF-only'} ===")
 
-    tracks = _fetch_domestic_tracks()
-    if not tracks:
-        return {'hippodromes': [], 'telegram_msg': f"\U0001f3c7 TJK \u2014 {date_str}\nBug\u00fcn yerli yar\u0131\u015f yok.",
-                'ts': datetime.utcnow().isoformat(), 'model_ok': model_ok, 'source': 'empty', 'date': date_str}
+    # ── 1. PROPER AGF SCRAPER (6 ayak) > DASHBOARD SCRAPER (2 ayak) ──
+    agf_altilis = None
+    use_proper = False
+    try:
+        from scraper.agf_scraper import get_todays_agf, agf_to_legs, enrich_legs_from_pdf
+        agf_altilis = get_todays_agf(target_date)
+        if agf_altilis:
+            use_proper = True
+            logger.info(f"AGF (proper scraper): {len(agf_altilis)} altili")
+    except ImportError:
+        logger.info("scraper.agf_scraper yok, dashboard scraper kullanilacak")
+    except Exception as e:
+        logger.warning(f"Proper AGF failed: {e}")
 
+    if not use_proper:
+        tracks = _fetch_domestic_tracks()
+        if not tracks:
+            return {'hippodromes': [], 'telegram_msg': f"\U0001f3c7 TJK \u2014 {date_str}\nBug\u00fcn yerli yar\u0131\u015f yok.",
+                    'ts': datetime.utcnow().isoformat(), 'model_ok': model_ok, 'source': 'empty', 'date': date_str}
+
+    # ── 2. TJK HTML enrichment ──
     program_data = _fetch_program_data(target_date)
 
+    # ── 3. Process ──
     all_results = []
-    for track in tracks:
-        try:
-            result = _process_track(track, program_data, target_date, model_ok)
-            all_results.append(result)
-        except Exception as e:
-            logger.error(f"  {track.get('name','?')} failed: {e}")
-            import traceback; traceback.print_exc()
-            all_results.append({'hippodrome': track.get('name', '?'), 'altili_no': 1,
-                'error': str(e), 'dar': None, 'genis': None,
-                'rating': {'rating': 0, 'stars': '\u274c', 'verdict': 'Hata', 'score': 0, 'reasons': []},
-                'value_horses': [], 'consensus': None, 'legs_summary': [], 'model_used': False})
+
+    if use_proper and agf_altilis:
+        # PROPER PATH: agf_scraper format — 6 ayak per altili
+        from scraper.agf_scraper import agf_to_legs, enrich_legs_from_pdf
+        for agf_alt in agf_altilis:
+            try:
+                result = _process_proper_altili(agf_alt, program_data, target_date, model_ok)
+                all_results.append(result)
+            except Exception as e:
+                logger.error(f"  {agf_alt.get('hippodrome','?')} failed: {e}")
+                import traceback; traceback.print_exc()
+                all_results.append({'hippodrome': agf_alt.get('hippodrome', '?'), 'altili_no': agf_alt.get('altili_no', 1),
+                    'error': str(e), 'dar': None, 'genis': None,
+                    'rating': {'rating': 0, 'stars': '\u274c', 'verdict': 'Hata', 'score': 0, 'reasons': []},
+                    'value_horses': [], 'consensus': None, 'legs_summary': [], 'model_used': False})
+    else:
+        # FALLBACK: dashboard scraper — partial legs
+        for track in tracks:
+            try:
+                result = _process_track(track, program_data, target_date, model_ok)
+                all_results.append(result)
+            except Exception as e:
+                logger.error(f"  {track.get('name','?')} failed: {e}")
+                import traceback; traceback.print_exc()
+                all_results.append({'hippodrome': track.get('name', '?'), 'altili_no': 1,
+                    'error': str(e), 'dar': None, 'genis': None,
+                    'rating': {'rating': 0, 'stars': '\u274c', 'verdict': 'Hata', 'score': 0, 'reasons': []},
+                    'value_horses': [], 'consensus': None, 'legs_summary': [], 'model_used': False})
 
     telegram_msg = _format_telegram_simple(all_results, date_str)
     return {'hippodromes': all_results, 'telegram_msg': telegram_msg,
-            'ts': datetime.utcnow().isoformat(), 'model_ok': model_ok, 'source': 'live', 'date': date_str}
+            'ts': datetime.utcnow().isoformat(), 'model_ok': model_ok, 'source': 'proper' if use_proper else 'dashboard', 'date': date_str}
+
+
+def _process_proper_altili(agf_alt, program_data, target_date, model_ok):
+    """Proper agf_scraper formatiyla process — 6 ayak."""
+    from scraper.agf_scraper import agf_to_legs, enrich_legs_from_pdf
+    hippo = agf_alt['hippodrome']
+    altili_no = agf_alt.get('altili_no', 1)
+    time_str = agf_alt.get('time', '')
+
+    legs = agf_to_legs(agf_alt)
+    logger.info(f"  {hippo}: {len(legs)} ayak (proper)")
+
+    # TJK HTML enrichment
+    if program_data:
+        hippo_lower = hippo.lower().replace(' hipodromu', '').replace(' hipodrom', '')
+        for ph in program_data:
+            ph_lower = ph['hippodrome'].lower().replace(' hipodromu', '').replace(' hipodrom', '')
+            if hippo_lower in ph_lower or ph_lower in hippo_lower:
+                try:
+                    legs = enrich_legs_from_pdf(legs, ph.get('races', []))
+                    logger.info(f"  {hippo}: enrichment OK")
+                except Exception as e:
+                    logger.warning(f"  {hippo}: enrichment failed: {e}")
+                break
+
+    # Model predict
+    if model_ok and _MODEL and _FB:
+        legs = _model_predict_legs(legs, hippo, target_date)
+
+    # Rating, kupon, value, consensus
+    rating = _try_fn(lambda: _ext_rating(legs), lambda: _simple_rating(legs))
+    dar = _try_fn(lambda: _ext_kupon(legs, hippo, 'dar'), lambda: _simple_kupon(legs, hippo, 'dar'))
+    genis = _try_fn(lambda: _ext_kupon(legs, hippo, 'genis'), lambda: _simple_kupon(legs, hippo, 'genis'))
+    value_horses = _try_value(legs, model_ok)
+    consensus = _try_consensus(hippo, legs, target_date)
+
+    return {
+        'hippodrome': hippo, 'altili_no': altili_no, 'time': time_str,
+        'dar': _ticket_to_json(dar), 'genis': _ticket_to_json(genis),
+        'rating': {'rating': rating['rating'], 'stars': rating['stars'], 'verdict': rating['verdict'],
+                   'score': round(rating.get('score', 0), 2), 'reasons': rating.get('reasons', [])},
+        'value_horses': value_horses, 'consensus': consensus,
+        'legs_summary': _build_legs_summary(legs),
+        'model_used': model_ok and any(l.get('has_model') for l in legs)}
 
 
 def _fetch_domestic_tracks():
@@ -81,10 +159,10 @@ def _fetch_domestic_tracks():
         from tjk_scraper import fetch_domestic_races
         tracks = fetch_domestic_races()
         if tracks:
-            logger.info(f"AGF: {len(tracks)} yerli hipodrom")
+            logger.info(f"AGF (dashboard scraper): {len(tracks)} yerli hipodrom")
         return tracks or []
     except Exception as e:
-        logger.error(f"AGF fetch failed: {e}")
+        logger.error(f"Dashboard AGF failed: {e}")
         return []
 
 
