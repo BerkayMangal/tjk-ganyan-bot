@@ -1,9 +1,8 @@
 """
-Yerli Engine v2 — Dashboard-standalone
-=======================================
-Dashboard'un kendi tjk_scraper.py'sini kullanir.
-scraper/, engine/, model/ varsa kullanir, yoksa kendi fallback'leri var.
-Railway'de dashboard/ root'tan calisir — parent module'lere BAGIMSIZ.
+Yerli Engine v3 — Dashboard-standalone, Robust Path
+=====================================================
+Railway'de dashboard/ root'tan calisir.
+model/, scraper/, engine/ icin birden fazla path dener.
 """
 import os, sys, logging
 import numpy as np
@@ -12,9 +11,38 @@ from html import escape
 
 logger = logging.getLogger(__name__)
 
-PARENT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
-if PARENT not in sys.path:
-    sys.path.insert(0, PARENT)
+# ── ROBUST PATH FINDER ──
+# Railway CWD: /app/dashboard/ veya /app/ olabilir
+# model/ repo kokunde: /app/model/
+def _find_repo_root():
+    candidates = []
+    # 1. __file__ based
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates.append(os.path.abspath(os.path.join(here, '..')))
+    # 2. CWD based
+    cwd = os.getcwd()
+    candidates.append(os.path.abspath(os.path.join(cwd, '..')))
+    candidates.append(cwd)
+    # 3. Common deploy paths
+    candidates.extend(['/app', '/opt/app', '/workspace', '/home/app'])
+    
+    for c in candidates:
+        marker = os.path.join(c, 'model', 'ensemble.py')
+        if os.path.isfile(marker):
+            logger.info(f"Repo root found: {c}")
+            return c
+    
+    logger.warning(f"Repo root NOT found! Tried: {candidates}")
+    logger.warning(f"CWD={cwd}, __file__={__file__}")
+    # List what IS available
+    for c in candidates[:3]:
+        if os.path.isdir(c):
+            logger.warning(f"  {c} contents: {os.listdir(c)[:10]}")
+    return None
+
+REPO_ROOT = _find_repo_root()
+if REPO_ROOT and REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
 
 _MODEL = None
 _FB = None
