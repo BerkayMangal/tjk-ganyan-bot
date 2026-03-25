@@ -395,89 +395,168 @@ function calcDutch(){
 
 
 
-// ─── YERLI KUPON (GERCEK VERI) ───
+// ─── YERLI KUPON (MODEL + AGF + KONSENSUS) ───
 function renderYerli(el){
-  el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">Yerli yarislar yukleniyor...</div>';
+  el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">Model + AGF pipeline calisiyor...</div>';
   
-  fetch("/api/yerli")
+  fetch("/api/yerli_kupon")
     .then(r => r.json())
     .then(data => {
-      if(!data.tracks || data.tracks.length === 0){
+      if(!data.hippodromes || data.hippodromes.length === 0){
         el.innerHTML = '<div style="text-align:center;padding:60px;color:var(--text4)">Bugun yerli yaris yok veya AGF henuz acilmadi</div>';
         return;
       }
       
-      let now = new Date();
-      let dateStr = now.toLocaleDateString("tr-TR",{day:"2-digit",month:"2-digit",year:"numeric"});
+      let dateStr = data.date || new Date().toLocaleDateString("tr-TR",{day:"2-digit",month:"2-digit",year:"numeric"});
+      let modelBadge = data.model_ok
+        ? '<span class="badge" style="background:rgba(0,230,138,.1);color:var(--green);border:1px solid rgba(0,230,138,.2)">MODEL AKTIF</span>'
+        : '<span class="badge" style="background:rgba(255,214,10,.1);color:var(--yellow);border:1px solid rgba(255,214,10,.2)">AGF-ONLY</span>';
       
-      let h = `<div style="max-width:900px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      let h = `<div style="max-width:1000px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
           <div>
-            <div style="font-size:20px;font-weight:800;color:#fff">YERLI YARISLAR</div>
-            <div style="font-size:12px;color:var(--text3);margin-top:4px">${dateStr} | AGF Oranlari | ${data.tracks.length} Hipodrom</div>
+            <div style="font-size:20px;font-weight:800;color:#fff">6'LI GANYAN KUPON</div>
+            <div style="font-size:12px;color:var(--text3);margin-top:4px">${dateStr} | ${data.hippodromes.length} Altili Dizi</div>
           </div>
-          <span class="badge" style="background:${data.source==='live'?'rgba(0,230,138,.1)':'rgba(255,214,10,.1)'};color:${data.source==='live'?'var(--green)':'var(--yellow)'};border:1px solid ${data.source==='live'?'rgba(0,230,138,.2)':'rgba(255,214,10,.2)'}">${data.source==='live'?'CANLI':'DEMO'}</span>
+          <div style="display:flex;gap:6px;align-items:center">
+            ${modelBadge}
+            <button onclick="fetch('/api/yerli_kupon/refresh').then(()=>renderYerli(document.getElementById('main')))" style="background:var(--border);border:1px solid var(--border2);color:var(--text2);padding:4px 10px;border-radius:3px;font-size:10px;cursor:pointer;font-family:var(--sans)">YENILE</button>
+            <button onclick="fetch('/api/yerli_kupon/telegram').then(r=>r.json()).then(d=>alert(d.ok?'Telegram gonderildi!':'Hata: '+(d.error||'?')))" style="background:rgba(59,159,255,.1);border:1px solid rgba(59,159,255,.2);color:var(--blue);padding:4px 10px;border-radius:3px;font-size:10px;cursor:pointer;font-family:var(--sans)">TELEGRAM</button>
+          </div>
         </div>`;
       
-      data.tracks.forEach(track => {
-        h += `<div class="card" style="margin-bottom:16px">
-          <div style="padding:10px 16px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
-            <div style="display:flex;align-items:center;gap:8px">
-              <span style="font-size:16px">${track.flag||'\U0001f1f9\U0001f1f7'}</span>
-              <span style="font-size:15px;font-weight:800;color:#fff">${track.name}</span>
-              <span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${track.agf_time||''}</span>
+      data.hippodromes.forEach(hip => {
+        if(hip.error){
+          h += `<div class="card" style="margin-bottom:16px;padding:16px"><span style="color:var(--red)">Hata: ${hip.hippodrome} — ${hip.error}</span></div>`;
+          return;
+        }
+        
+        let rat = hip.rating || {};
+        let starColor = rat.rating >= 3 ? "var(--green)" : rat.rating >= 2 ? "var(--yellow)" : "var(--red)";
+        let hipName = hip.hippodrome.replace(' Hipodromu','').replace(' Hipodrom','');
+        
+        h += `<div class="card" style="margin-bottom:20px">
+          <div style="padding:12px 16px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-size:16px">\u{1F1F9}\u{1F1F7}</span>
+              <span style="font-size:17px;font-weight:800;color:#fff">${hipName.toUpperCase()}</span>
+              <span style="font-size:11px;color:var(--text3);font-family:var(--mono)">${hip.altili_no||1}. Altili</span>
+              <span style="font-size:11px;color:var(--text3)">${hip.time||''}</span>
             </div>
-            <span style="font-size:11px;color:var(--text2)">${track.races.length} kosu</span>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="color:${starColor};font-size:13px;font-weight:700">${rat.stars||'?'}</span>
+              <span style="font-size:11px;color:${starColor}">${rat.verdict||''}</span>
+              ${hip.model_used ? '<span class="badge" style="background:rgba(167,139,250,.1);color:var(--purple);border:1px solid rgba(167,139,250,.2);font-size:9px">V5 MODEL</span>' : ''}
+            </div>
           </div>`;
         
-        track.races.forEach(race => {
-          let horses = race.horses.filter(ho => ho.tjk > 0).sort((a,b) => (a.agf_pct||999) - (b.agf_pct||999));
-          // Bacak siniflandirma
-          let topPct = horses.length > 0 ? (horses[0].agf_pct||0) : 0;
-          let tip = topPct >= 40 ? "BANKER" : topPct >= 25 ? "VALUE" : "GENIS";
-          let tipColor = tip === "BANKER" ? "var(--green)" : tip === "VALUE" ? "var(--yellow)" : "var(--text3)";
-          
-          h += `<div style="padding:8px 16px;border-bottom:1px solid #111">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-              <span style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--text2)">R${race.number}</span>
-              <span class="badge" style="background:${tipColor}18;color:${tipColor};border:1px solid ${tipColor}30">${tip}</span>
-              <span style="font-size:11px;color:var(--text3)">${race.time||''}</span>
-            </div>
-            <div style="display:flex;gap:4px;flex-wrap:wrap">`;
-          
-          horses.forEach((ho, idx) => {
-            let pct = ho.agf_pct || 0;
-            let odds = ho.tjk || 0;
-            let isTop = idx < 3;
-            let color = idx === 0 ? "var(--green)" : idx === 1 ? "var(--yellow)" : idx === 2 ? "var(--orange)" : "var(--text3)";
-            
-            h += `<span style="background:#111;border:1px solid ${isTop?color+'30':'var(--border)'};border-radius:3px;padding:3px 8px;font-size:11px;display:inline-flex;align-items:center;gap:4px">
-                <span style="color:${color};font-weight:700;font-family:var(--mono)">${ho.num}</span>
-                <span style="color:${isTop?'#ccc':'#777'}">${ho.name}</span>
-                <span style="color:${color};font-family:var(--mono);font-size:10px">%${pct.toFixed(0)}</span>
-                <span style="color:var(--text4);font-family:var(--mono);font-size:10px">${odds.toFixed(1)}</span>
+        // AYAKLAR — Top 3 her ayak
+        if(hip.legs_summary && hip.legs_summary.length > 0){
+          h += '<div style="padding:8px 16px">';
+          hip.legs_summary.forEach(leg => {
+            let ltColor = leg.leg_type === "BANKER" ? "var(--green)" : leg.leg_type === "VALUE" ? "var(--yellow)" : "var(--text3)";
+            h += `<div style="padding:6px 0;border-bottom:1px solid #111">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                <span style="font-family:var(--mono);font-size:12px;font-weight:700;color:var(--text2)">${leg.ayak}A</span>
+                <span class="badge" style="background:${ltColor}18;color:${ltColor};border:1px solid ${ltColor}30;font-size:9px">${leg.leg_type}</span>
+                <span style="font-size:10px;color:var(--text4)">${leg.n_runners} at${leg.distance ? ' | '+leg.distance+'m' : ''}${leg.breed ? ' | '+leg.breed : ''}</span>
+                ${leg.has_model ? '<span style="font-size:9px;color:var(--purple)">M</span>' : ''}
+              </div>
+              <div style="display:flex;gap:4px;flex-wrap:wrap">`;
+            (leg.top3||[]).forEach((ho, idx) => {
+              let color = idx === 0 ? "var(--green)" : idx === 1 ? "var(--yellow)" : "var(--orange)";
+              let edge = ho.value_edge || 0;
+              let edgeStr = edge > 5 ? ` <span style="color:var(--green);font-size:9px">+${edge.toFixed(0)}%</span>` : edge > 2 ? ` <span style="color:var(--yellow);font-size:9px">+${edge.toFixed(0)}%</span>` : '';
+              h += `<span style="background:#111;border:1px solid ${color}30;border-radius:3px;padding:3px 8px;font-size:11px;display:inline-flex;align-items:center;gap:4px">
+                <span style="color:${color};font-weight:700;font-family:var(--mono)">${ho.number}</span>
+                <span style="color:#ccc">${ho.name}</span>
+                <span style="color:${color};font-family:var(--mono);font-size:10px">%${(ho.agf_pct||0).toFixed(0)}</span>
+                ${ho.model_prob > 0 ? '<span style="color:var(--purple);font-family:var(--mono);font-size:9px">M'+ho.model_prob.toFixed(0)+'%</span>' : ''}
+                ${edgeStr}
               </span>`;
+            });
+            h += '</div></div>';
           });
-          
-          h += `</div></div>`;
-        });
+          h += '</div>';
+        }
         
-        h += `</div>`;
+        // KUPONLAR — DAR + GENIS yan yana
+        h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px 16px">';
+        
+        [hip.dar, hip.genis].forEach(ticket => {
+          if(!ticket) return;
+          let isDar = ticket.mode === 'dar';
+          let borderC = isDar ? 'var(--green)' : 'var(--yellow)';
+          h += `<div style="background:var(--bg);border:1px solid ${borderC}30;border-radius:6px;padding:12px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <span style="font-size:13px;font-weight:800;color:${borderC}">${isDar?'DAR':'GENIS'}</span>
+              <span style="font-family:var(--mono);font-size:12px;color:#fff">${ticket.cost.toLocaleString('tr-TR')} TL</span>
+            </div>
+            <div style="font-family:var(--mono);font-size:11px;color:var(--text2);line-height:2">`;
+          (ticket.legs||[]).forEach(tl => {
+            let nums = (tl.selected||[]).map(s => s.number).join(',');
+            let tekBadge = tl.is_tek ? ' <span style="color:var(--green);font-size:9px;font-weight:700">TEK</span>' : '';
+            let tekName = '';
+            if(tl.is_tek && tl.selected && tl.selected[0] && !tl.selected[0].name.startsWith('At ')){
+              tekName = ' <span style="color:var(--text3);font-size:10px">'+tl.selected[0].name.substring(0,12)+'</span>';
+            }
+            h += `<div>${tl.leg_number}A) <span style="color:#fff;font-weight:600">${nums}</span>${tekBadge}${tekName}</div>`;
+          });
+          h += `</div>
+            <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:10px;color:var(--text4)">
+              <span>${ticket.combo} kombi | ${ticket.n_singles} tek</span>
+              <span>Hit: ${ticket.hitrate_pct}</span>
+            </div>
+          </div>`;
+        });
+        h += '</div>';
+        
+        // VALUE HORSES
+        if(hip.value_horses && hip.value_horses.length > 0){
+          h += `<div style="padding:8px 16px;border-top:1px solid var(--border)">
+            <div style="font-size:10px;font-weight:700;letter-spacing:1px;color:var(--green);margin-bottom:6px">VALUE ATLAR</div>`;
+          hip.value_horses.forEach(vh => {
+            h += `<div style="display:flex;align-items:center;gap:8px;font-size:11px;padding:2px 0">
+              <span style="color:var(--text3)">${vh.race}. Kosu</span>
+              <span style="color:#fff;font-weight:600">${vh.name} (#${vh.number})</span>
+              <span style="color:var(--green);font-family:var(--mono)">+${vh.edge.toFixed(1)}%</span>
+              <span style="color:var(--text4);font-family:var(--mono)">${vh.odds.toFixed(1)}x</span>
+              <span style="color:var(--purple);font-size:10px">M:${vh.model_prob.toFixed(0)}% vs AGF:${vh.agf_prob.toFixed(0)}%</span>
+            </div>`;
+          });
+          h += '</div>';
+        }
+        
+        // CONSENSUS
+        if(hip.consensus){
+          let agrees = hip.consensus.filter(c => c.all_agree);
+          if(agrees.length > 0){
+            let bankos = agrees.map(c => c.ayak).join(', ');
+            h += `<div style="padding:6px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--yellow)">
+              <span style="font-weight:700">KONSENSUS BANKO:</span> ${bankos}. ayak — model + piyasa + uzman hemfikir
+            </div>`;
+          }
+        }
+        
+        h += '</div>';
       });
       
+      // INFO
       h += `<div style="background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:14px;margin-top:8px">
         <div style="font-size:10px;color:var(--text3);font-weight:700;letter-spacing:1px;margin-bottom:6px">BILGI</div>
         <div style="font-size:11px;color:var(--text4);line-height:1.6">
-          AGF yuzdeleri agftahmin.com'dan canli cekilmektedir. Yesil = favori, Sari = 2. favori.<br>
-          Odds = 100 / AGF%. Ornegin %25 = 4.00 odds.<br>
-          BANKER: Acik favori (%40+). VALUE: Yakin rekabet (%25-40). GENIS: Karisik kosu (%25-).
+          V5 Model: XGB+LGBM breed-split, 96 feature, 401K kayit ile egitildi.<br>
+          DAR: %60 score coverage, max 4 at/ayak. GENIS: %75 coverage, max 6 at/ayak.<br>
+          Value Edge = Model_Prob - AGF_Prob. +5%+ = VALUE sinyal.<br>
+          TEK: Model+AGF hemfikir + gap buyuk. BANKER/VALUE/GENIS: AGF favori gucune gore.<br>
+          Konsensus: Model + AGF + HorseTurk uzman tahmini karsilastirilir.
         </div>
       </div></div>`;
       
       el.innerHTML = h;
     })
     .catch(err => {
-      el.innerHTML = `<div style="text-align:center;padding:60px;color:var(--red)">Hata: ${err.message}</div>`;
+      el.innerHTML = `<div style="text-align:center;padding:60px;color:var(--red)">Hata: ${err.message}<br><span style="font-size:11px;color:var(--text4)">Pipeline yuklenirken hata olustu. Sayfa yenileyin veya /api/health kontrol edin.</span></div>`;
     });
 }
 

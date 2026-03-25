@@ -6,6 +6,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Dashboard dependencies (ML libs)
+COPY dashboard/requirements.txt dashboard_req.txt
+RUN pip install --no-cache-dir -r dashboard_req.txt
+
 COPY . .
 
 CMD ["python", "main.py", "--schedule"]
