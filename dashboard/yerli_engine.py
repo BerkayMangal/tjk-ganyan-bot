@@ -1,5 +1,5 @@
 """
-Yerli Engine v3 — Dashboard-standalone, Robust Path
+Yerli Engine v4 — 3-Tier AGF Import, 6-Leg Fix
 =====================================================
 Railway'de dashboard/ root'tan calisir.
 model/, scraper/, engine/ icin birden fazla path dener.
@@ -79,19 +79,35 @@ def run_yerli_pipeline(target_date=None):
     model_ok = _ensure_loaded()
     logger.info(f"=== Yerli Pipeline {date_str} | Model: {'OK' if model_ok else 'AGF-only'} ===")
 
-    # ── 1. PROPER AGF SCRAPER (6 ayak) > DASHBOARD SCRAPER (2 ayak) ──
+    # ── 1. 3-TIER AGF SCRAPER: proper → local → dashboard ──
     agf_altilis = None
     use_proper = False
+
+    # Tier 1: cross-package import (scraper/agf_scraper.py)
     try:
         from scraper.agf_scraper import get_todays_agf, agf_to_legs, enrich_legs_from_pdf
         agf_altilis = get_todays_agf(target_date)
         if agf_altilis:
             use_proper = True
             logger.info(f"AGF (proper scraper): {len(agf_altilis)} altili")
-    except ImportError:
-        logger.info("scraper.agf_scraper yok, dashboard scraper kullanilacak")
+    except ImportError as e:
+        logger.warning(f"scraper.agf_scraper import FAILED: {e}")
     except Exception as e:
-        logger.warning(f"Proper AGF failed: {e}")
+        logger.warning(f"Proper AGF runtime error: {e}")
+
+    # Tier 2: local copy (dashboard/agf_scraper_local.py — no cross-package)
+    if not use_proper:
+        try:
+            from agf_scraper_local import get_todays_agf as get_agf_local
+            from agf_scraper_local import agf_to_legs, enrich_legs_from_pdf
+            agf_altilis = get_agf_local(target_date)
+            if agf_altilis:
+                use_proper = True
+                logger.info(f"AGF (local scraper): {len(agf_altilis)} altili")
+        except ImportError as e:
+            logger.warning(f"agf_scraper_local import FAILED: {e}")
+        except Exception as e:
+            logger.warning(f"Local AGF runtime error: {e}")
 
     if not use_proper:
         tracks = _fetch_domestic_tracks()
@@ -107,7 +123,10 @@ def run_yerli_pipeline(target_date=None):
 
     if use_proper and agf_altilis:
         # PROPER PATH: agf_scraper format — 6 ayak per altili
-        from scraper.agf_scraper import agf_to_legs, enrich_legs_from_pdf
+        try:
+            from scraper.agf_scraper import agf_to_legs, enrich_legs_from_pdf
+        except ImportError:
+            from agf_scraper_local import agf_to_legs, enrich_legs_from_pdf
         for agf_alt in agf_altilis:
             try:
                 result = _process_proper_altili(agf_alt, program_data, target_date, model_ok)
@@ -140,7 +159,10 @@ def run_yerli_pipeline(target_date=None):
 
 def _process_proper_altili(agf_alt, program_data, target_date, model_ok):
     """Proper agf_scraper formatiyla process — 6 ayak."""
-    from scraper.agf_scraper import agf_to_legs, enrich_legs_from_pdf
+    try:
+        from scraper.agf_scraper import agf_to_legs, enrich_legs_from_pdf
+    except ImportError:
+        from agf_scraper_local import agf_to_legs, enrich_legs_from_pdf
     hippo = agf_alt['hippodrome']
     altili_no = agf_alt.get('altili_no', 1)
     time_str = agf_alt.get('time', '')

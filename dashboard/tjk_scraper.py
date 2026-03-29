@@ -105,7 +105,8 @@ def fetch_agf_page():
 
 
 def parse_agf_page(html):
-    """H3 basliklarindan hipodromlar + AGF yuzdeleri."""
+    """H3 basliklarindan hipodromlar + AGF yuzdeleri.
+    V7 fix: find_all('table') ile TUM tablolari topla (6 ayak fix)."""
     soup = BeautifulSoup(html, "html.parser")
     entries = []
 
@@ -119,32 +120,34 @@ def parse_agf_page(html):
         alt_m = re.search(r"(\d+)\.", title.split("AGF")[-1])
         altili = int(alt_m.group(1)) if alt_m else 1
 
-        legs = {}
-        leg = 0
+        # V7 FIX: Collect ALL tables between H3s (like proper scraper)
+        tables = []
         elem = h3.find_next_sibling()
-
         while elem:
             if elem.name == "h3": break
-            tbl = None
-            if elem.name == "table": tbl = elem
-            elif hasattr(elem, "find") and elem.find("table"): tbl = elem.find("table")
-
-            if tbl:
-                leg += 1
-                leg_data = {}
-                for row in tbl.find_all("tr"):
-                    txt = row.get_text(strip=True)
-                    if "AYAK" in txt: continue
-                    for match in re.finditer(r"(\d+)\s*\(%?([\d.]+)%?\)", txt):
-                        try:
-                            at_num = int(match.group(1))
-                            pct = float(match.group(2))
-                            if 0 < pct <= 100 and 0 < at_num <= 30:
-                                leg_data[at_num] = pct
-                        except ValueError: pass
-                if leg_data:
-                    legs[leg] = leg_data
+            if elem.name == "table":
+                tables.append(elem)
+            elif hasattr(elem, "find_all"):
+                inner_tables = elem.find_all("table")
+                tables.extend(inner_tables)
             elem = elem.find_next_sibling()
+
+        # Parse each table as a leg
+        legs = {}
+        for leg_idx, tbl in enumerate(tables, 1):
+            leg_data = {}
+            for row in tbl.find_all("tr"):
+                txt = row.get_text(strip=True)
+                if "AYAK" in txt: continue
+                for match in re.finditer(r"(\d+)\s*\(%?([\d.]+)%?\)", txt):
+                    try:
+                        at_num = int(match.group(1))
+                        pct = float(match.group(2))
+                        if 0 < pct <= 100 and 0 < at_num <= 30:
+                            leg_data[at_num] = pct
+                    except ValueError: pass
+            if leg_data:
+                legs[leg_idx] = leg_data
 
         if legs:
             entries.append({"name": hip_name, "time": time_str, "altili": altili, "legs": legs})
@@ -152,6 +155,7 @@ def parse_agf_page(html):
 
     logger.info(f"Toplam: {len(entries)} altili")
     return entries
+
 
 
 def fetch_racecard(slug):
