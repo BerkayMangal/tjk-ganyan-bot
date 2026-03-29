@@ -546,11 +546,12 @@ function renderYerli(el){
       h += `<div style="background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:14px;margin-top:8px">
         <div style="font-size:10px;color:var(--text3);font-weight:700;letter-spacing:1px;margin-bottom:6px">BILGI</div>
         <div style="font-size:11px;color:var(--text4);line-height:1.6">
-          V5 Model: XGB+LGBM breed-split, 96 feature, 401K kayit ile egitildi.<br>
-          DAR: %60 score coverage, max 4 at/ayak. GENIS: %75 coverage, max 6 at/ayak.<br>
-          Value Edge = Model_Prob - AGF_Prob. +5%+ = VALUE sinyal.<br>
-          TEK: Model+AGF hemfikir + gap buyuk. BANKER/VALUE/GENIS: AGF favori gucune gore.<br>
-          Konsensus: Model + AGF + HorseTurk uzman tahmini karsilastirilir.
+          <b style="color:var(--text3)">V5 Model:</b> XGB+LGBM breed-split (Arap/Ingiliz ayri), 96 feature, 401K kayit.<br>
+          <b style="color:var(--text3)">DAR:</b> %60 score coverage, max 4 at/ayak. <b style="color:var(--text3)">GENIS:</b> %75 coverage, max 6 at/ayak.<br>
+          <b style="color:var(--text3)">Value Edge</b> = Model_Prob − AGF_Prob. +5%+ = VALUE sinyal.<br>
+          <b style="color:var(--text3)">TEK:</b> XGB+LGBM ayni ati secer + skor farki buyuk + AGF favorisi ayni at ise.<br>
+          <b style="color:var(--text3)">BANKER/VALUE/GENIS:</b> AGF favori %40+/25+/&lt;25 gucune gore.<br>
+          <b style="color:var(--text3)">Konsensus:</b> Model + AGF + HorseTurk uzman — uc kaynak da ayni ati secerse banko.
         </div>
       </div></div>`;
       

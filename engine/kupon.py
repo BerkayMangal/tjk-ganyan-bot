@@ -62,7 +62,7 @@ def _coverage_counts(legs, mode='dar'):
     GENİŞ: %75 coverage → daha çok at, daha geniş
 
     Ayrıca:
-    - score gap > 0.25 VE agreement >= 0.67 → TEK zorunlu
+    - TEK: score gap > threshold VE XGB==LGBM VE model_top==AGF_top
     - field >= 12 → en az 3 at
     """
     if mode == 'dar':
@@ -83,15 +83,28 @@ def _coverage_counts(legs, mode='dar'):
         conf = leg.get('confidence', 0)
         agree = leg.get('model_agreement', 0.5)
         has_model = leg.get('has_model', False)
+        agf_data = leg.get('agf_data', [])
 
         if not horses:
             counts.append(2)
             continue
 
-        # TEK kontrolü
+        # TEK kontrolü — Model + AGF hemfikir + gap büyük
+        # Üç koşul birden sağlanmalı:
+        #   1. XGB ve LGBM aynı atı seçmeli (model_agreement >= threshold)
+        #   2. Skor farkı büyük olmalı (confidence >= threshold)
+        #   3. Model'in 1. atı = AGF'nin 1. atı (piyasa teyidi)
         if has_model and conf >= tek_gap_threshold and agree >= tek_agree_threshold:
-            counts.append(1)
-            continue
+            model_top_num = horses[0][2] if horses else None
+            agf_top_num = agf_data[0]['horse_number'] if agf_data else None
+            if model_top_num is not None and model_top_num == agf_top_num:
+                logger.info(f"  TEK: #{model_top_num} — model+AGF hemfikir "
+                            f"(gap={conf:.3f}, agree={agree:.2f})")
+                counts.append(1)
+                continue
+            else:
+                logger.info(f"  TEK iptal: model=#{model_top_num} vs AGF=#{agf_top_num} "
+                            f"(gap={conf:.3f}, agree={agree:.2f})")
 
         # Score coverage
         scores = np.array([h[1] for h in horses], dtype=float)
