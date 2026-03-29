@@ -20,8 +20,31 @@ from config import (
 logger = logging.getLogger(__name__)
 
 
+def _normalize_hipodrom(name):
+    """Turkish-safe normalization for hippodrome name matching.
+    'İzmir Hipodromu', 'İzmir', 'izmir' all → 'izmir'."""
+    n = str(name).strip()
+    # Turkish lowercase: İ→i, Ş→ş, etc.
+    for old, new in [('İ','i'),('I','ı'),('Ş','ş'),('Ğ','ğ'),('Ü','ü'),('Ö','ö'),('Ç','ç')]:
+        n = n.replace(old, new)
+    n = n.lower()
+    # Strip common suffixes
+    for sfx in [' hipodromu',' hipodrom',' belediyesi',' veliefendi',' şirinyer',
+                ' 75. yıl',' yeşiloba',' osmangazi',' kartepe']:
+        n = n.replace(sfx, '')
+    return n.strip()
+
+
+# Pre-compute normalized set once at import time
+_BUYUK_SEHIR_NORMALIZED = frozenset(
+    _normalize_hipodrom(h) for h in BUYUK_SEHIR_HIPODROMLAR
+)
+
+
 def birim_fiyat(hippodrome):
-    if hippodrome in BUYUK_SEHIR_HIPODROMLAR:
+    """Return unit price based on hippodrome.
+    Büyükşehir = 1.25 TL, küçük = 1.00 TL."""
+    if _normalize_hipodrom(hippodrome) in _BUYUK_SEHIR_NORMALIZED:
         return BIRIM_FIYAT_BUYUK
     return BIRIM_FIYAT_KUCUK
 

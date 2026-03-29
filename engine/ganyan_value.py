@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 VALUE_THRESHOLD = 0.05
 MAX_DAILY_BETS = 5
-MIN_FIELD_SIZE = 6
+MIN_FIELD_SIZE = 4
 
 # Hipodrom oncelik (yuksek ROI)
 HIPPO_PRIORITY = {
@@ -53,8 +53,16 @@ def find_value_horses(legs, model, fb, agf_alt):
                     agf_pct = a.get('agf_pct', 0)
                     break
             
-            agf_prob = agf_pct / 100.0 if agf_pct > 0 else 0
-            model_prob = feat_dict.get('model_prob', 0)
+            agf_prob = agf_pct / 100.0 if agf_pct > 0 else 0  # 0-100 → 0-1
+            model_prob = feat_dict.get('model_prob', 0)  # already 0-1 from predict_proba normalization
+
+            # Scale guard: both must be 0-1
+            if model_prob > 1.0:
+                logger.warning(f"  model_prob={model_prob} > 1.0 for {name} — clamping")
+                model_prob = min(model_prob, 1.0)
+            if agf_prob > 1.0:
+                logger.warning(f"  agf_prob={agf_prob} > 1.0 for {name} — likely raw pct passed")
+                agf_prob = min(agf_prob / 100.0, 1.0)
             
             # AGF favorisi olani atla (herkes zaten yaziyor)
             if agf_data and agf_data[0]['horse_number'] == number:

@@ -7,9 +7,14 @@ Ranking model (siralama) + Probability model (ganyan value).
 import os
 import json
 import logging
+import warnings
 import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+# Suppress any remaining sklearn feature-name warnings
+warnings.filterwarnings('ignore', message='X does not have valid feature names')
 MODEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'trained')
 
 
@@ -92,7 +97,7 @@ class EnsembleRanker:
 
         except Exception as e:
             logger.error(f"Model load failed: {e}")
-            import traceback; traceback.print_exc()
+            logger.exception("Model load failed — full traceback:")
             return False
 
     def detect_breed(self, group_name):
@@ -112,6 +117,13 @@ class EnsembleRanker:
             return self.models['default']
         return None
 
+    def _to_df(self, X_scaled):
+        """Wrap scaled numpy array in DataFrame with feature names.
+        Eliminates LGBM 'X does not have valid feature names' warnings."""
+        if self.feature_cols and X_scaled.shape[1] == len(self.feature_cols):
+            return pd.DataFrame(X_scaled, columns=self.feature_cols)
+        return X_scaled
+
     def predict(self, feature_matrix, breed='english'):
         if not self.loaded:
             raise RuntimeError("Model not loaded!")
@@ -119,8 +131,9 @@ class EnsembleRanker:
         if m is None:
             raise RuntimeError(f"No model for breed: {breed}")
         X_s = m['scaler'].transform(feature_matrix)
-        xgb_pred = self._norm01(m['xgb'].predict(X_s))
-        lgbm_pred = self._norm01(m['lgbm'].predict(X_s))
+        X_df = self._to_df(X_s)
+        xgb_pred = self._norm01(m['xgb'].predict(X_df))
+        lgbm_pred = self._norm01(m['lgbm'].predict(X_df))
         return 0.50 * xgb_pred + 0.50 * lgbm_pred
 
     def predict_proba(self, feature_matrix, breed='english'):
@@ -138,8 +151,9 @@ class EnsembleRanker:
             return scores / scores.sum() if scores.sum() > 0 else scores
 
         X_s = m['scaler'].transform(feature_matrix)
-        xgb_prob = m['xgb'].predict_proba(X_s)[:, 1]
-        lgbm_prob = m['lgbm'].predict_proba(X_s)[:, 1]
+        X_df = self._to_df(X_s)
+        xgb_prob = m['xgb'].predict_proba(X_df)[:, 1]
+        lgbm_prob = m['lgbm'].predict_proba(X_df)[:, 1]
         return 0.50 * xgb_prob + 0.50 * lgbm_prob
 
     def predict_individual(self, feature_matrix, breed='english'):
@@ -149,9 +163,10 @@ class EnsembleRanker:
         if m is None:
             return {}
         X_s = m['scaler'].transform(feature_matrix)
+        X_df = self._to_df(X_s)
         return {
-            'xgb_top_idx': int(np.argmax(m['xgb'].predict(X_s))),
-            'lgbm_top_idx': int(np.argmax(m['lgbm'].predict(X_s))),
+            'xgb_top_idx': int(np.argmax(m['xgb'].predict(X_df))),
+            'lgbm_top_idx': int(np.argmax(m['lgbm'].predict(X_df))),
         }
 
     @staticmethod

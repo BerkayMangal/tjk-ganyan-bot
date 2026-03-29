@@ -491,6 +491,7 @@ function renderYerli(el){
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
               <span style="font-size:13px;font-weight:800;color:${borderC}">${isDar?'DAR':'GENIS'}</span>
               <span style="font-family:var(--mono);font-size:12px;color:#fff">${ticket.cost.toLocaleString('tr-TR')} TL</span>
+              ${ticket.birim_fiyat ? '<span style="font-size:9px;color:var(--text4);margin-left:4px">('+ticket.birim_fiyat.toFixed(2)+' TL/kombi)</span>' : ''}
             </div>
             <div style="font-family:var(--mono);font-size:11px;color:var(--text2);line-height:2">`;
           (ticket.legs||[]).forEach(tl => {

@@ -133,7 +133,7 @@ def run_yerli_pipeline(target_date=None):
                 all_results.append(result)
             except Exception as e:
                 logger.error(f"  {agf_alt.get('hippodrome','?')} failed: {e}")
-                import traceback; traceback.print_exc()
+                logger.exception('Pipeline error')
                 all_results.append({'hippodrome': agf_alt.get('hippodrome', '?'), 'altili_no': agf_alt.get('altili_no', 1),
                     'error': str(e), 'dar': None, 'genis': None,
                     'rating': {'rating': 0, 'stars': '\u274c', 'verdict': 'Hata', 'score': 0, 'reasons': []},
@@ -146,7 +146,7 @@ def run_yerli_pipeline(target_date=None):
                 all_results.append(result)
             except Exception as e:
                 logger.error(f"  {track.get('name','?')} failed: {e}")
-                import traceback; traceback.print_exc()
+                logger.exception('Pipeline error')
                 all_results.append({'hippodrome': track.get('name', '?'), 'altili_no': 1,
                     'error': str(e), 'dar': None, 'genis': None,
                     'rating': {'rating': 0, 'stars': '\u274c', 'verdict': 'Hata', 'score': 0, 'reasons': []},
@@ -353,6 +353,8 @@ def _model_predict_legs(legs, hippo, target_date):
                 'dam_dam': fd.get('dam_dam', ''), 'total_earnings': fd.get('total_earnings', 0)})
         if len(hi) < 2: new_legs.append(leg); continue
         breed = 'arab' if leg.get('is_arab') else 'english'
+        logger.info(f"  Leg {i+1}: breed={breed}, runners={len(hi)}, "
+                    f"group='{leg.get('group_name','')}'")
         ri = {'distance': leg.get('distance', 1400), 'track_type': leg.get('track_type', 'dirt'),
               'group_name': leg.get('group_name', ''), 'hippodrome_name': hippo,
               'first_prize': leg.get('first_prize', 100000), 'temperature': leg.get('temperature', 15),
@@ -369,7 +371,8 @@ def _model_predict_legs(legs, hippo, target_date):
                 pn = probs / ps if ps > 0 else probs
                 for j in range(len(pn)):
                     if j < len(leg['horses']): leg['horses'][j][3]['model_prob'] = float(pn[j])
-            except: pass
+            except Exception as _proba_err:
+                logger.warning(f"  Leg {i+1} predict_proba failed: {_proba_err}")
             indiv = _MODEL.predict_individual(matrix, breed=breed)
             ts = set()
             for k in ['xgb_top_idx', 'lgbm_top_idx']:
@@ -387,7 +390,9 @@ def _model_predict_legs(legs, hippo, target_date):
             u = dict(leg); u['horses'] = ht; u['confidence'] = conf; u['model_agreement'] = agree; u['has_model'] = True
             new_legs.append(u)
         except Exception as e:
-            logger.warning(f"  Leg {i+1} model failed: {e}"); new_legs.append(leg)
+            logger.error(f"  Leg {i+1}/{len(legs)} model FAILED (breed={breed}): {e}")
+            leg_copy = dict(leg); leg_copy['has_model'] = False; leg_copy['model_error'] = str(e)
+            new_legs.append(leg_copy)
     return new_legs
 
 
@@ -436,7 +441,16 @@ def _simple_rating(legs):
 def _simple_kupon(legs, hippo, mode='dar'):
     max_per = 4 if mode == 'dar' else 6
     target_cov = 0.60 if mode == 'dar' else 0.75
-    bf, budget = 1.25, (1500 if mode == 'dar' else 4000)
+    # Dynamic birim_fiyat — not hardcoded
+    try:
+        from engine.kupon import birim_fiyat as _ext_bf
+        bf = _ext_bf(hippo)
+    except ImportError:
+        # Inline fallback if engine.kupon not importable
+        _h = hippo.lower().replace(' hipodromu','').replace(' hipodrom','').strip()
+        _buyuk = {'istanbul','ankara','izmir','adana','bursa','kocaeli','antalya'}
+        bf = 1.25 if any(b in _h for b in _buyuk) else 1.00
+    budget = (1500 if mode == 'dar' else 4000)
     ticket_legs, counts = [], []
     for i, leg in enumerate(legs[:6]):
         horses = leg.get('horses', [])
@@ -470,7 +484,7 @@ def _simple_kupon(legs, hippo, mode='dar'):
         agf = leg.get('agf_data', [])
         if agf and i < len(counts): hit *= sum(a['agf_pct'] for a in agf[:counts[i]]) / 100.0
     return {'mode': mode, 'legs': ticket_legs, 'counts': counts, 'combo': combo, 'cost': cost,
-            'n_singles': sum(1 for c in counts if c == 1), 'hitrate_pct': f"{hit*100:.2f}%"}
+            'bf': bf, 'n_singles': sum(1 for c in counts if c == 1), 'hitrate_pct': f"{hit*100:.2f}%"}
 
 
 def _simple_value(legs):
@@ -527,7 +541,8 @@ def _ticket_to_json(ticket):
             'n_pick':tl['n_pick'],'n_runners':tl['n_runners'],'is_tek':tl['is_tek'],
             'leg_type':tl['leg_type'],'selected':sel,'info':tl.get('info','')})
     return {'mode':ticket['mode'],'legs':lj,'counts':ticket['counts'],'combo':ticket['combo'],
-            'cost':ticket['cost'],'n_singles':ticket['n_singles'],'hitrate_pct':ticket.get('hitrate_pct','?')}
+            'cost':ticket['cost'],'birim_fiyat':ticket.get('bf', 1.25),
+            'n_singles':ticket['n_singles'],'hitrate_pct':ticket.get('hitrate_pct','?')}
 
 
 def _format_telegram_simple(results, date_str):

@@ -39,7 +39,7 @@ except Exception as e:
 app.logger.info(f"Edge={EDGE_OK} Scraper={SCRAPER_OK} YerliEngine={YERLI_ENGINE_OK}")
 
 # Cache (pipeline agir, her requestte calistirma)
-_yerli_cache = {'data': None, 'ts': None, 'ttl': 300}
+_yerli_cache = {'data': None, 'ts': None, 'ttl': 120}
 _yerli_lock = threading.Lock()
 
 
@@ -131,7 +131,7 @@ def get_yerli_kupon():
         return jsonify(result)
     except Exception as e:
         app.logger.error(f"Yerli kupon: {e}")
-        import traceback; traceback.print_exc()
+        app.logger.exception("Yerli kupon pipeline error")
         return jsonify({"ts":datetime.now(timezone.utc).isoformat(),
                         "source":"error","error":str(e),"hippodromes":[],"model_ok":False})
 
