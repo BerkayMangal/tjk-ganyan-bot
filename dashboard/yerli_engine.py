@@ -546,48 +546,117 @@ def _ticket_to_json(ticket):
 
 
 def _format_telegram_simple(results, date_str):
-    if not results: return f"\U0001f3c7 TJK \u2014 {date_str}\nBug\u00fcn yerli yar\u0131\u015f yok."
-    lines = [f"<b>\U0001f3c7 TJK 6'LI GANYAN \u2014 {date_str}</b>", f"{len(results)} alt\u0131l\u0131 dizi", ""]
+    """Telegram mesaji — dashboard YERLI KUPON tab ile birebir ayni."""
+    if not results:
+        return f"\U0001f3c7 TJK \u2014 {date_str}\nBug\u00fcn yerli yar\u0131\u015f yok."
+
+    lines = [
+        f"<b>\U0001f3c7 TJK 6'LI GANYAN \u2014 {date_str}</b>",
+        f"{len(results)} alt\u0131l\u0131 dizi",
+        "",
+    ]
+
     for r in results:
-        if r.get('error'): lines.append(f"\u274c {escape(r['hippodrome'])}: {escape(str(r['error']))}"); lines.append(""); continue
+        if r.get('error'):
+            lines.append(f"\u274c {escape(r['hippodrome'])}: {escape(str(r['error']))}")
+            lines.append("")
+            continue
+
         hippo = r['hippodrome'].replace(' Hipodromu', '').replace(' Hipodrom', '')
         rat = r.get('rating', {})
-        lines.append(f"<b>{escape(hippo.upper())} {r.get('altili_no',1)}. ALTILI</b>")
-        lines.append(f"{rat.get('stars','?')} {rat.get('verdict','')}")
-        if r.get('model_used'): lines.append("\U0001f4ca Model aktif")
+        model_tag = " | V5 MODEL" if r.get('model_used') else ""
+
+        lines.append(f"\U0001f1f9\U0001f1f7 <b>{escape(hippo.upper())} {r.get('altili_no',1)}. ALTILI</b>")
+        lines.append(f"{rat.get('stars','?')} {rat.get('verdict','')}{model_tag}")
         lines.append("")
+
+        legs_summary = r.get('legs_summary', [])
+        if legs_summary:
+            for leg in legs_summary:
+                breed_str = f" | {leg['breed']}" if leg.get('breed') else ""
+                dist_str = f" | {leg['distance']}m" if leg.get('distance') else ""
+                model_flag = " \U0001f4ca" if leg.get('has_model') else ""
+                lines.append(
+                    f"<b>{leg['ayak']}A</b> [{leg['leg_type']}] "
+                    f"{leg['n_runners']} at{dist_str}{breed_str}{model_flag}"
+                )
+                for j, ho in enumerate(leg.get('top3', [])[:3]):
+                    medal = ['\U0001f947', '\U0001f948', '\U0001f949'][j] if j < 3 else '  '
+                    name = ho.get('name', '?')
+                    num = ho.get('number', 0)
+                    agf = ho.get('agf_pct', 0)
+                    mp = ho.get('model_prob', 0)
+                    ve = ho.get('value_edge', 0)
+                    parts = [f"{medal} <b>{num}</b> {escape(str(name))}"]
+                    parts.append(f"%{agf:.0f}")
+                    if mp > 0:
+                        parts.append(f"M{mp:.0f}%")
+                    if ve > 5:
+                        parts.append(f"<b>+{ve:.0f}%</b>")
+                    elif ve > 2:
+                        parts.append(f"+{ve:.0f}%")
+                    lines.append("  " + " ".join(parts))
+                lines.append("")
+
         dar = r.get('dar')
+        genis = r.get('genis')
         if dar:
-            lines.append(f"<pre>DAR ({dar['cost']:,.0f} TL) [{dar.get('hitrate_pct','?')}]")
+            bf_val = dar.get('birim_fiyat', 1.25)
+            bf_str = f" ({bf_val:.2f} TL/k)" if bf_val else ""
+            lines.append(f"<pre>\U0001f7e2 DAR {dar['cost']:,.0f} TL{bf_str}")
             for tl in dar.get('legs', []):
-                nums = ",".join(str(h['number']) for h in tl['selected'])
-                tek = " TEK" if tl['is_tek'] else ""
-                nh = ""
-                if tl['is_tek'] and tl['selected']:
-                    n = tl['selected'][0].get('name', '')
-                    if n and not n.startswith('#') and not n.startswith('At '): nh = f" {n[:12]}"
-                lines.append(f"{tl['leg_number']}A) {nums}{tek}{nh}")
-            lines.append("")
-            genis = r.get('genis')
+                sel = tl.get('selected', [])
+                nums = ",".join(str(h['number']) for h in sel)
+                tek_badge = ""
+                if tl['is_tek'] and sel:
+                    hname = sel[0].get('name', '')
+                    if hname and not hname.startswith('#') and not hname.startswith('At '):
+                        tek_badge = f" TEK {hname[:14]}"
+                    else:
+                        tek_badge = " TEK"
+                lines.append(f"{tl['leg_number']}A) {nums}{tek_badge}")
+            lines.append(f"{dar['combo']} kombi | {dar['n_singles']} tek | Hit: {dar.get('hitrate_pct','?')}")
             if genis:
-                lines.append(f"GENIS ({genis['cost']:,.0f} TL) [{genis.get('hitrate_pct','?')}]")
+                lines.append("")
+                bf_val_g = genis.get('birim_fiyat', 1.25)
+                bf_str_g = f" ({bf_val_g:.2f} TL/k)" if bf_val_g else ""
+                lines.append(f"\U0001f7e1 GENIS {genis['cost']:,.0f} TL{bf_str_g}")
                 for tl in genis.get('legs', []):
-                    nums = ",".join(str(h['number']) for h in tl['selected'])
-                    tek = " TEK" if tl['is_tek'] else ""
-                    lines.append(f"{tl['leg_number']}A) {nums}{tek}")
+                    sel = tl.get('selected', [])
+                    nums = ",".join(str(h['number']) for h in sel)
+                    tek_badge = ""
+                    if tl['is_tek'] and sel:
+                        hname = sel[0].get('name', '')
+                        if hname and not hname.startswith('#') and not hname.startswith('At '):
+                            tek_badge = f" TEK {hname[:14]}"
+                        else:
+                            tek_badge = " TEK"
+                    lines.append(f"{tl['leg_number']}A) {nums}{tek_badge}")
+                lines.append(f"{genis['combo']} kombi | {genis['n_singles']} tek | Hit: {genis.get('hitrate_pct','?')}")
             lines.append("</pre>")
+
         vh = r.get('value_horses', [])
         if vh:
-            lines.extend(["", "<b>\U0001f525 VALUE ATLAR</b>"])
-            for v in vh[:3]: lines.append(f"  {v['race']}. Ko\u015fu: {escape(str(v['name']))} (+{v['edge']:.1f}% edge, {v['odds']:.1f}x)")
+            lines.append("")
+            lines.append("<b>\U0001f525 VALUE ATLAR</b>")
+            for v in vh[:5]:
+                lines.append(
+                    f"  {v['race']}. Ko\u015fu: <b>{escape(str(v['name']))}</b> (#{v['number']}) "
+                    f"+{v['edge']:.1f}% {v['odds']:.1f}x "
+                    f"M:{v['model_prob']:.0f}% vs AGF:{v['agf_prob']:.0f}%"
+                )
+
         cons = r.get('consensus')
         if cons:
             ag = [str(c['ayak']) for c in cons if c.get('all_agree')]
-            if ag: lines.append(f"\U0001f91d Konsens\u00fcs banko: {','.join(ag)}. ayak")
+            if ag:
+                banko_str = ','.join(ag)
+                lines.append(f"\n\U0001f91d <b>KONSENS\u00dcS BANKO:</b> {banko_str}. ayak")
+
         lines.extend(["", "\u2501" * 25, ""])
+
     lines.append("\U0001f340 \u0130yi \u015fanslar! Sorumlu oyna.")
     return "\n".join(lines)
-
 
 def send_telegram_simple(results_dict):
     msg = results_dict.get('telegram_msg', '')
