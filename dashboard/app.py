@@ -119,6 +119,14 @@ def get_yerli_kupon():
     try:
         app.logger.info("Yerli kupon: running pipeline...")
         result = run_yerli_pipeline()
+
+        # ★ QUANT: Save prediction snapshot (fire-and-forget)
+        try:
+            from quant.snapshot import save_snapshot as _qsnap
+            _qsnap(result)
+        except Exception as _snap_err:
+            app.logger.debug(f"Snapshot: {_snap_err}")
+
         send_tg = request.args.get("telegram", "0") == "1"
         if send_tg:
             try:
