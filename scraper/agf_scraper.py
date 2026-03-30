@@ -46,17 +46,21 @@ SESSION.headers.update({
 
 
 def fetch_agf_page() -> Optional[str]:
-    """AGF tablosu sayfasını çek."""
-    try:
-        resp = SESSION.get(AGF_URL, timeout=30)
-        if resp.status_code == 200:
-            logger.info(f"AGF page fetched: {len(resp.text)} chars")
-            return resp.text
-        logger.warning(f"AGF page HTTP {resp.status_code}")
-        return None
-    except Exception as e:
-        logger.error(f"AGF fetch error: {e}")
-        return None
+    """AGF tablosu sayfasını çek — 3 attempt retry."""
+    for attempt in range(3):
+        try:
+            resp = SESSION.get(AGF_URL, timeout=30)
+            if resp.status_code == 200:
+                logger.info(f"AGF page fetched: {len(resp.text)} chars (attempt {attempt+1})")
+                return resp.text
+            logger.warning(f"AGF page HTTP {resp.status_code} (attempt {attempt+1})")
+        except Exception as e:
+            logger.warning(f"AGF fetch error (attempt {attempt+1}): {e}")
+        if attempt < 2:
+            import time
+            time.sleep(2)
+    logger.error("AGF page fetch FAILED after 3 attempts")
+    return None
 
 
 def _tr_lower(s: str) -> str:

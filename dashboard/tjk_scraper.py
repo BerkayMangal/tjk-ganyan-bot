@@ -195,31 +195,51 @@ def fetch_racecard(slug):
 
 
 def build_tracks(agf_entries, domestic_only):
-    """AGF'den track listesi olustur. domestic_only=True ise sadece yerli."""
+    """AGF'den track listesi olustur.
+    V8: Her altılı AYRI track olarak islenır (1. ve 2. altılı ayrı).
+    """
+    # Group by hipodrom+altılı — NOT just hipodrom
     hip_map = {}
     for entry in agf_entries:
         name = entry["name"]
         dom = is_domestic(name)
+        altili_no = entry.get("altili", 1)
 
         if domestic_only and not dom: continue
         if not domestic_only and dom: continue
 
-        if name not in hip_map:
-            hip_map[name] = {"time": entry["time"], "legs": [], "altili_info": []}
+        # Key = name + altili_no → 1. ve 2. altılı AYRI
+        key = f"{name}__a{altili_no}"
+        if key not in hip_map:
+            hip_map[key] = {
+                "name": name,
+                "altili_no": altili_no,
+                "time": entry["time"],
+                "legs": [],
+            }
         for leg_num in sorted(entry["legs"].keys()):
-            hip_map[name]["legs"].append(entry["legs"][leg_num])
-        hip_map[name]["altili_info"].append({"altili": entry["altili"], "leg_count": len(entry["legs"])})
+            hip_map[key]["legs"].append(entry["legs"][leg_num])
 
+    # Fetch racecard per unique hipodrom (not per altılı — same racecard)
+    racecard_cache = {}
     tracks = []
-    for hip_name, info in hip_map.items():
+
+    for key, info in hip_map.items():
+        hip_name = info["name"]
+        altili_no = info["altili_no"]
         country = detect_country(hip_name)
         slug = name_to_slug(hip_name)
-        races = fetch_racecard(slug)
 
-        # AGF eslestir — bacak sirasi = kosu sirasi
+        # Cache racecard — same hipodrom 1. ve 2. altılı aynı racecard kullanır
+        if slug not in racecard_cache:
+            racecard_cache[slug] = fetch_racecard(slug)
+        races = racecard_cache[slug]
+
+        # AGF eslestir — sadece bu altılının leg'leri
         matched = 0
+        n_legs = len(info["legs"])
         for i, race in enumerate(races):
-            if i >= len(info["legs"]): break
+            if i >= n_legs: break
             leg = info["legs"][i]
             for horse in race["horses"]:
                 pct = leg.get(horse["num"], 0)
@@ -228,14 +248,14 @@ def build_tracks(agf_entries, domestic_only):
                     horse["agf_pct"] = pct
                     matched += 1
 
-        logger.info(f"  {hip_name} ({country}): {len(races)} yaris, {matched} AGF eslesme")
+        logger.info(f"  {hip_name} a#{altili_no} ({country}): {len(races)} yaris, {n_legs} ayak, {matched} AGF eslesme")
 
         tracks.append({
             "id": slug, "name": hip_name, "country": country,
             "flag": FLAGS.get(country, FLAGS["UNK"]),
             "sources": SOURCE_MAP.get(country, SOURCE_MAP["UNK"]),
             "races": races, "agf_time": info["time"],
-            "altili_info": info["altili_info"],
+            "altili_info": [{"altili": altili_no, "leg_count": n_legs}],
         })
 
     return tracks
