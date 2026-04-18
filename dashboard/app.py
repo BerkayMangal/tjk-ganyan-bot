@@ -38,6 +38,60 @@ except Exception as e:
 
 app.logger.info(f"Edge={EDGE_OK} Scraper={SCRAPER_OK} YerliEngine={YERLI_ENGINE_OK}")
 
+# ═══════════════════════════════════════════════════════════════
+# BACKGROUND SCHEDULER — günlük pipeline + retro (FIX: eskiden Dockerfile'da
+# main.py --schedule çalışıyordu ama railway.toml dashboard'u override ediyordu,
+# dolayısıyla schedule hiç çalışmıyordu)
+# ═══════════════════════════════════════════════════════════════
+SCHEDULER_OK = False
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+    import pytz
+
+    def _scheduled_pipeline():
+        """Günlük kupon pipeline'ını çalıştır ve Telegram'a gönder."""
+        app.logger.info("⏰ Scheduled pipeline başlatılıyor...")
+        try:
+            # Ana pipeline'ı import et (dashboard'dan bağımsız — main.py'deki run_daily)
+            from main import run_daily
+            run_daily()
+            app.logger.info("⏰ Scheduled pipeline tamamlandı ✓")
+        except Exception as e:
+            app.logger.error(f"⏰ Scheduled pipeline hatası: {e}")
+            import traceback; traceback.print_exc()
+
+    def _scheduled_retro():
+        """Günlük retro sonuçlarını çalıştır."""
+        app.logger.info("⏰ Retro job başlatılıyor...")
+        try:
+            from engine.retro import run_retro
+            from bot.telegram_sender import send_sync
+            result = run_retro(date.today())
+            if result:
+                send_sync(result)
+            app.logger.info("⏰ Retro tamamlandı ✓")
+        except Exception as e:
+            app.logger.error(f"⏰ Retro hatası: {e}")
+
+    # RUN_HOUR/RUN_MINUTE config'den al, yoksa default 11:00 İstanbul saati
+    try:
+        from config import RUN_HOUR, RUN_MINUTE
+    except ImportError:
+        RUN_HOUR, RUN_MINUTE = 11, 0
+
+    ist_tz = pytz.timezone('Europe/Istanbul')
+    scheduler = BackgroundScheduler(timezone=ist_tz)
+    scheduler.add_job(_scheduled_pipeline, 'cron', hour=RUN_HOUR, minute=RUN_MINUTE,
+                      id='daily_pipeline', replace_existing=True)
+    scheduler.add_job(_scheduled_retro, 'cron', hour=21, minute=0,
+                      id='daily_retro', replace_existing=True)
+    scheduler.start()
+    SCHEDULER_OK = True
+    app.logger.info(f"⏰ APScheduler aktif: pipeline {RUN_HOUR:02d}:{RUN_MINUTE:02d}, retro 21:00 (İstanbul)")
+except Exception as e:
+    app.logger.warning(f"APScheduler yüklenemedi (schedule çalışmayacak): {e}")
+    app.logger.warning("APScheduler için: pip install apscheduler pytz")
+
 # Cache (pipeline agir, her requestte calistirma)
 _yerli_cache = {'data': None, 'ts': None, 'ttl': 120}
 _yerli_lock = threading.Lock()
@@ -69,8 +123,8 @@ def index():
 
 @app.route("/api/health")
 def health():
-    return jsonify({"status":"ok","v":"5.0","scraper":SCRAPER_OK,"edge":EDGE_OK,
-                    "yerli_engine":YERLI_ENGINE_OK,
+    return jsonify({"status":"ok","v":"5.1","scraper":SCRAPER_OK,"edge":EDGE_OK,
+                    "yerli_engine":YERLI_ENGINE_OK,"scheduler":SCHEDULER_OK,
                     "ts":datetime.now(timezone.utc).isoformat()})
 
 @app.route("/api/races")

@@ -4,8 +4,8 @@ TJK 6'lı Ganyan Bot V5.1 — Model Entegreli Pipeline
 Flow:
   1. AGF'den altılı keşfi + market data
   2. PDF'ten detay zenginleştirme (varsa)
-  3. 82 feature build (AGF + PDF + rolling_stats)
-  4. 3-ensemble model predict (XGB + LGBM + CB)
+  3. 96 feature build (AGF + PDF + rolling_stats)
+  4. 2-ensemble model predict (XGB + LGBM), breed-split (Arab/İngiliz)
   5. Rating + sürpriz filtre ("2+ yıldız & 0 sürpriz" = oyna)
   6. Model sıralamasına göre kupon üret (DAR + GENİŞ)
   7. Model vs market commentary
@@ -21,7 +21,7 @@ from scraper.agf_scraper import (
 )
 from scraper.tjk_program import get_todays_races as get_pdf_races
 from scraper.tjk_html_scraper import get_todays_races_html
-from scraper.expert_consensus import fetch_horseturk, build_consensus, format_consensus_message
+from scraper.expert_consensus import fetch_horseturk, fetch_all_experts, build_consensus, format_consensus_message
 from model.ensemble import EnsembleRanker
 from model.features import FeatureBuilder
 from engine.kupon import build_kupon
@@ -99,12 +99,9 @@ def run_daily(target_date=None):
         consensus = None
         value_horses = None
 
-        # Model predict
+        # Model predict — breed her ayakta ayrı ayrı tespit edilir
         if model_ok and fb_ok:
-            # Breed detection
-            group_names = [leg.get('group_name', '') for leg in agf_legs]
-            breed = 'arab' if any('arap' in str(g).lower() for g in group_names) else 'english'
-            legs, leg_health = _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date, breed)
+            legs, leg_health = _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date)
             for k in ('total', 'model_ok', 'fallback', 'error', 'pdf_fields_filled'):
                 all_health[k] += leg_health[k]
             all_health['nonzero_pcts'].extend(leg_health['nonzero_pcts'])
@@ -137,16 +134,24 @@ def run_daily(target_date=None):
         kupon_text = generate_kupon_message(seq_info, dar, genis, rating)
         commentary_text = generate_commentary(seq_info, legs, rating, dar, genis)
 
-        # Consensus
+        # Consensus — birden fazla uzman kaynağından tahmin topla
         try:
             sehir = hippo.replace(' Hipodromu', '').replace(' Hipodrom', '')
-            expert = fetch_horseturk(target_date, sehir)
-            if expert:
-                consensus = build_consensus(legs, agf_alt, expert)
+            experts = fetch_all_experts(target_date, sehir)
+            if experts:
+                consensus = build_consensus(legs, agf_alt, experts)
                 consensus_text = format_consensus_message(consensus, sehir)
                 logger.info(f"  Consensus: {sum(1 for c in consensus if c['all_agree'])} hemfikir, "
-                           f"{sum(1 for c in consensus if not c['model_agrees'])} farkli")
+                           f"{sum(1 for c in consensus if not c['model_agrees'])} farkli, "
+                           f"kaynaklar: {[e['source'] for e in experts]}")
                 commentary_text = commentary_text + "\n\n" + consensus_text
+            else:
+                # Expert yok ama model + AGF ile 2 kaynak yeterli
+                consensus = build_consensus(legs, agf_alt, [])
+                if any(c['all_agree'] for c in consensus):
+                    consensus_text = format_consensus_message(consensus, sehir)
+                    commentary_text = commentary_text + "\n\n" + consensus_text
+                    logger.info(f"  Consensus (model+AGF only): {sum(1 for c in consensus if c['all_agree'])} hemfikir")
         except Exception as e:
             logger.warning(f"  Consensus failed: {e}")
 
@@ -217,14 +222,22 @@ def run_daily(target_date=None):
     logger.info("Done! ✓")
 
 
-def _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date, breed='english'):
-    """Her ayak için 82 feature build + 3-ensemble predict."""
+def _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date):
+    """Her ayak için 96 feature build + breed-split ensemble predict.
+    
+    Breed detection artık per-leg yapılıyor — karışık altılılarda
+    her ayak kendi breed modeliyle tahmin ediliyor.
+    """
     new_legs = []
     health = {'total': 0, 'model_ok': 0, 'fallback': 0, 'error': 0,
               'nonzero_pcts': [], 'pdf_fields_filled': 0}
 
     for i, leg in enumerate(agf_legs):
         agf_data = leg.get('agf_data', [])
+
+        # --- Per-leg breed detection (FIX: eskiden tüm altılı için tek breed seçiliyordu) ---
+        group = str(leg.get('group_name', '') or '')
+        leg_breed = 'arab' if 'arap' in group.lower() else 'english'
 
         # Horse dicts for feature builder
         horses_input = []
@@ -268,6 +281,8 @@ def _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date, breed=
         }
 
         health['total'] += 1
+        # Her ayak için breed ve runner sayısını logla
+        logger.info(f"  Leg {i+1}: breed={leg_breed}, runners={len(horses_input)}, group='{group[:80]}'")
 
         try:
             matrix, names = fb.build_race_features(horses_input, race_info, agf_data)
@@ -290,10 +305,11 @@ def _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date, breed=
                 new_legs.append(updated)
                 continue
 
-            scores = model.predict(matrix, breed=breed)
+            # Per-leg breed modeli kullan (FIX: eskiden tek breed tüm ayaklara uygulanıyordu)
+            scores = model.predict(matrix, breed=leg_breed)
             # Probability (ganyan value icin)
             try:
-                probs = model.predict_proba(matrix, breed=breed)
+                probs = model.predict_proba(matrix, breed=leg_breed)
                 for jj in range(len(probs)):
                     if jj < len(leg['horses']):
                         leg['horses'][jj][3]['model_prob'] = float(probs[jj])
@@ -301,7 +317,7 @@ def _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date, breed=
                 pass
 
             # Model agreement
-            indiv = model.predict_individual(matrix, breed=breed)
+            indiv = model.predict_individual(matrix, breed=leg_breed)
             top_set = set()
             for key in ['xgb_top_idx', 'lgbm_top_idx', 'cb_top_idx']:
                 if key in indiv:

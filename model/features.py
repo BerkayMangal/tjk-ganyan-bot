@@ -221,7 +221,9 @@ class FeatureBuilder:
             f['f_is_female_race'] = is_female_race
             f['f_breed_arab'] = 1.0 if is_arab else 0.0
             f['f_surprise_v2'] = surprise_v2
-            f['f_upset_rate'] = surprise_v2
+            # Backward compat: f_upset_rate, f_surprise_v2 ile aynı değer — model 96 kolon bekliyor
+            # TODO: retrain modeli bu duplicate feature olmadan, sonra kaldır
+            f['f_upset_rate'] = f['f_surprise_v2']
 
             # Horse basic
             weight = float(h.get('weight', 57) or 57)
@@ -319,7 +321,12 @@ class FeatureBuilder:
                 if _pace:
                     f['f_pace_race_avg'] = self._norm(_pace.get('mean', 0), 60, 200)
                     f['f_pace_best_time'] = self._norm(_pace.get('median', 0), 60, 200)
-            f['f_model_vs_market'] = 0.0
+            # model_vs_market: model tahmini ile AGF piyasa olasılığı arasındaki fark
+            # İlk pass'te 0.0 kalır — iki aşamalı (two-pass) predict implementasyonunda
+            # model ilk predict → model_prob hesapla → feature olarak ikinci predict'e ver
+            # TODO: implement two-pass prediction for this feature
+            # Şimdilik dışarıdan inject edilen değer varsa onu kullan, yoksa 0.0
+            f['f_model_vs_market'] = float(h.get('model_vs_market', 0.0))
 
             # Interactions
             jt_key = f"{jockey}||{trainer}"
@@ -348,6 +355,8 @@ class FeatureBuilder:
             f['f_X_kumcu_dirt'] = f['f_kumcu'] * f['f_is_dirt']
             f['f_X_cimci_turf'] = f['f_cimci'] * (1.0 - f['f_is_dirt'])
             f['f_X_weight_distance'] = f['f_weight'] * f['f_distance']
+            # Backward compat: f_X_weight_dist, f_X_weight_distance ile aynı değer — model 96 kolon bekliyor
+            # TODO: retrain modeli bu duplicate feature olmadan, sonra kaldır
             f['f_X_weight_dist'] = f['f_X_weight_distance']
             f['f_X_field_strength_agf'] = f['f_field_strength'] * f['f_agf_implied_prob']
             f['f_X_maiden_field'] = f['f_is_maiden'] * f['f_field_size']
@@ -365,36 +374,126 @@ class FeatureBuilder:
         return matrix, horse_names
 
     def _parse_form_full(self, form_str, track_type='dirt'):
+        """Form string'ini parse edip 8 feature döndürür.
+
+        Desteklenen formatlar:
+          - K1C3K2C5  : yüzey prefix'li (K=Kum, C=Çim) + bitiş pozisyonu
+          - 7-54436   : tire ile ayrılmış (TJK Son 6 standart formatı)
+          - 1-2-3-4-5 : tire ile ayrılmış pozisyonlar
+          - 858       : bitişik rakamlar (her rakam bir pozisyon)
+          - 2.2.1.3.5 : nokta ile ayrılmış
+          - boş / '0' : hep default döner
+
+        Returns:
+            (kumcu, cimci, surface_match, form_last1, form_best,
+             form_consistency, form_trend, form_dirt_pct)
+        """
+        # --- Boş veya geçersiz form → default ---
         if not form_str or not isinstance(form_str, str):
             return 0.5, 0.5, 0.5, 0, 0, 0, 0.5, 0.5
-        matches = re.findall(r'([KC])(\d+)', form_str)
-        if not matches:
+        form_str = form_str.strip()
+        if form_str in ('', '0', '-'):
+            logger.debug("Form parsed (empty): defaults")
             return 0.5, 0.5, 0.5, 0, 0, 0, 0.5, 0.5
 
-        kum_pos = [int(p) for s, p in matches if s == 'K']
-        cim_pos = [int(p) for s, p in matches if s == 'C']
-        all_pos = [int(p) for _, p in matches]
+        # --- 1. Deneme: K/C prefix'li format (ör: K1C3K2C5) ---
+        matches = re.findall(r'([KC])(\d+)', form_str)
+        if matches:
+            kum_pos = [int(p) for s, p in matches if s == 'K']
+            cim_pos = [int(p) for s, p in matches if s == 'C']
+            all_pos = [int(p) for _, p in matches]
 
-        kumcu = sum(1 for p in kum_pos if p <= 3) / max(len(kum_pos), 1) if kum_pos else 0.5
-        cimci = sum(1 for p in cim_pos if p <= 3) / max(len(cim_pos), 1) if cim_pos else 0.5
+            kumcu = sum(1 for p in kum_pos if p <= 3) / max(len(kum_pos), 1) if kum_pos else 0.5
+            cimci = sum(1 for p in cim_pos if p <= 3) / max(len(cim_pos), 1) if cim_pos else 0.5
 
-        if track_type in ('dirt', 'kum'):
-            sm = kumcu
-        elif track_type in ('turf', 'cim', 'grass'):
-            sm = cimci
+            if track_type in ('dirt', 'kum'):
+                sm = kumcu
+            elif track_type in ('turf', 'cim', 'grass'):
+                sm = cimci
+            else:
+                sm = 0.5
+
+            fl = 1.0 / (all_pos[-1] + 1) if all_pos else 0
+            fb = 1.0 / (min(all_pos) + 1) if all_pos else 0
+            fc = 1.0 / (np.std(all_pos) + 1) if len(all_pos) >= 2 else 0
+            ft = 0.5
+            if len(all_pos) >= 4:
+                half = len(all_pos) // 2
+                ft = (np.mean(all_pos[:half]) - np.mean(all_pos[half:])) / (np.mean(all_pos[:half]) + 1)
+
+            n_total = len(matches)
+            fdp = len(kum_pos) / n_total if n_total > 0 else 0.5
+            logger.debug(f"Form parsed (KC_prefix): {all_pos}")
+            return kumcu, cimci, sm, fl, fb, fc, ft, fdp
+
+        # --- 2. Fallback: düz pozisyon numaraları (yüzey bilgisi yok) ---
+        # Hangi format olduğunu tespit et
+        all_pos = []
+        format_type = 'unknown'
+
+        # 2a. Nokta ile ayrılmış: "2.2.1.3.5.5"
+        if '.' in form_str:
+            parts = form_str.split('.')
+            all_pos = [int(p) for p in parts if p.strip().isdigit() and 0 < int(p) <= 20]
+            format_type = 'dot_separated'
+
+        # 2b. Tire ile ayrılmış: "1-2-3-4-5" veya "7-54436"
+        elif '-' in form_str:
+            parts = form_str.split('-')
+            for part in parts:
+                part = part.strip()
+                if not part:
+                    continue
+                # "54436" gibi bitişik rakamlar → her rakam bir pozisyon
+                if len(part) > 1 and part.isdigit():
+                    for ch in part:
+                        val = int(ch)
+                        if 1 <= val <= 9:
+                            all_pos.append(val)
+                elif part.isdigit():
+                    val = int(part)
+                    if 0 < val <= 20:
+                        all_pos.append(val)
+            format_type = 'dash_separated'
+
+        # 2c. Sadece rakamlar bitişik: "858" → her rakam bir pozisyon
+        elif form_str.isdigit():
+            for ch in form_str:
+                val = int(ch)
+                if 1 <= val <= 9:
+                    all_pos.append(val)
+            format_type = 'concatenated'
+
+        # 2d. Son çare: string içindeki tüm rakamları al
         else:
-            sm = 0.5
+            nums = re.findall(r'\d+', form_str)
+            all_pos = [int(n) for n in nums if 0 < int(n) <= 20]
+            format_type = 'regex_fallback'
 
-        fl = 1.0 / (all_pos[-1] + 1) if all_pos else 0
-        fb = 1.0 / (min(all_pos) + 1) if all_pos else 0
-        fc = 1.0 / (np.std(all_pos) + 1) if len(all_pos) >= 2 else 0
-        ft = 0.5
+        # Pozisyon bulunamadıysa default döndür
+        if not all_pos:
+            logger.debug(f"Form parsed (no_positions): '{form_str}' → defaults")
+            return 0.5, 0.5, 0.5, 0, 0, 0, 0.5, 0.5
+
+        logger.debug(f"Form parsed ({format_type}): {all_pos}")
+
+        # Yüzey bilgisi yok → kumcu/cimci/surface_match bilinmiyor (0.5)
+        kumcu = 0.5
+        cimci = 0.5
+        sm = 0.5
+        fdp = 0.5  # kum yüzdesi bilinmiyor
+
+        # Pozisyon bazlı feature'lar — TJK "Son 6"'da son eleman en güncel koşu
+        fl = 1.0 / (all_pos[-1] + 1)   # son koşu performansı
+        fb = 1.0 / (min(all_pos) + 1)  # en iyi koşu
+        fc = 1.0 / (np.std(all_pos) + 1) if len(all_pos) >= 2 else 0  # tutarlılık
+        ft = 0.5  # trend
         if len(all_pos) >= 4:
             half = len(all_pos) // 2
+            # Eski koşular (ilk yarı) vs yeni koşular (ikinci yarı)
+            # Pozitif trend = iyileşme (eski yüksek, yeni düşük pozisyon)
             ft = (np.mean(all_pos[:half]) - np.mean(all_pos[half:])) / (np.mean(all_pos[:half]) + 1)
 
-        n_total = len(matches)
-        fdp = len(kum_pos) / n_total if n_total > 0 else 0.5
         return kumcu, cimci, sm, fl, fb, fc, ft, fdp
 
     @staticmethod
@@ -408,3 +507,34 @@ class FeatureBuilder:
         if mx == mn:
             return 0.5
         return max(0.0, min(1.0, (val - mn) / (mx - mn)))
+
+
+# ═══════════════════════════════════════════════════════════════
+# FORM PARSE DOĞRULAMA TESTİ
+# ═══════════════════════════════════════════════════════════════
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.DEBUG)
+    fb = FeatureBuilder()
+    test_cases = [
+        ('K1C3K2C5', 'dirt'),     # mevcut K/C prefix'li format
+        ('7-54436', 'dirt'),       # TJK standart (tire + bitişik rakamlar)
+        ('1-2-3-4-5', 'turf'),    # tire ile ayrılmış
+        ('858', 'dirt'),           # bitişik rakamlar
+        ('2.2.1.3.5.5', 'dirt'),  # nokta ile ayrılmış
+        ('', 'dirt'),              # boş
+        ('0', 'dirt'),             # sıfır
+        ('3-1-2', 'turf'),        # kısa form
+    ]
+    print("\n=== Form Parse Test ===")
+    all_ok = True
+    for form, track in test_cases:
+        result = fb._parse_form_full(form, track)
+        ku, ci, sm, fl, fb_val, fc, ft, fdp = result
+        is_default = (fl == 0 and fb_val == 0)
+        status = "DEFAULT" if is_default else "OK"
+        if form and form != '0' and is_default:
+            status = "FAIL ❌"
+            all_ok = False
+        print(f"  '{form}' ({track}) → last1={fl:.3f} best={fb_val:.3f} "
+              f"cons={fc:.3f} trend={ft:.3f} [{status}]")
+    print(f"\n{'✅ ALL PASSED' if all_ok else '❌ SOME FAILED'}")

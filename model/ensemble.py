@@ -1,8 +1,12 @@
 """
 Ensemble Model V5 — Breed-Split + Calibrated Probability
 ==========================================================
-Arab ve Ingiliz icin ayri model.
+2-ensemble (XGB + LGBM) — Arab ve Ingiliz icin ayri model.
 Ranking model (siralama) + Probability model (ganyan value).
+
+NOT: cb_ranker.pkl mevcut ama generic (breed-split degil, 82 feature).
+Breed-split 96-feature modelleriyle dimension uyumsuzlugu var.
+TODO: CB breed-split modelleri train edilince ensemble'a ekle
 """
 import os
 import json
@@ -19,7 +23,11 @@ MODEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'trained')
 
 
 class EnsembleRanker:
-    """Breed-split ensemble ranker + probability model."""
+    """Breed-split 2-ensemble ranker (XGB + LGBM) + probability model.
+    
+    CatBoost henüz breed-split olarak train edilmediği için ensemble'da yok.
+    TODO: CB breed-split modelleri train edilince ensemble'a ekle
+    """
 
     def __init__(self, model_dir=None):
         self.model_dir = model_dir or MODEL_DIR

@@ -12,4 +12,7 @@ RUN pip install --no-cache-dir -r dashboard_req.txt
 
 COPY . .
 
-CMD ["python", "main.py", "--schedule"]
+# FIX: Eskiden main.py --schedule çalıştırılıyordu ama railway.toml dashboard'u
+# override ediyordu, dolayısıyla schedule hiç çalışmıyordu.
+# Artık APScheduler dashboard app içinde çalışıyor, tek CMD yeterli.
+CMD ["sh", "-c", "cd dashboard && gunicorn app:app -b 0.0.0.0:${PORT:-8080} --workers 2 --timeout 120"]
