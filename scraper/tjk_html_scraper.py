@@ -121,8 +121,12 @@ def _fetch_and_parse_html(sehir_id, sehir_name, target_date):
 
             # Match race info from preceding h3
             race_info = _get_race_info_from_h3(table, soup)
+            # Race number 0 ise sıralı numara ata (TJK HTML'de heading yoksa oluyor)
+            race_num = race_info.get('race_number', 0)
+            if race_num == 0:
+                race_num = len(races) + 1
             race = {
-                'race_number': race_info.get('race_number', len(races) + 1),
+                'race_number': race_num,
                 'distance': race_info.get('distance', 0),
                 'track_type': race_info.get('track_type', ''),
                 'group_name': race_info.get('group_name', ''),
@@ -314,27 +318,34 @@ def _parse_html_horse(cells, col):
 
 
 def _get_race_info_from_h3(table, soup):
-    """Tablonun öncesindeki heading/div elementlerinden koşu bilgilerini çıkarır.
+    """Tablonun öncesindeki heading elementlerinden koşu bilgilerini çıkarır.
     
     TJK HTML'de koşu bilgisi birden fazla elemente yayılmış olabiliyor:
       - Bir H3'te koşu numarası ve saat
-      - Başka bir H3/H4/H5/div/span'da grup adı, mesafe, pist türü
-    Bu yüzden geriye doğru birden fazla elemente bakıyoruz.
+      - Başka bir H3/H4/H5'te grup adı, mesafe, pist türü
+    
+    ÖNEMLİ: div/span aramıyoruz çünkü bunlar tabloyu wrap eden container
+    olabiliyor ve get_text() tüm tablo içeriğini döndürüyor (garbage veri).
     """
     info = {'race_number': 0, 'distance': 0, 'track_type': '', 'group_name': '', 'time': ''}
     
-    # Geriye doğru heading + div/span elementlerine bak (en fazla 15 element)
     found_race_num = False
     found_distance = False
     checked = 0
     
-    for prev in table.find_all_previous(['h3', 'h4', 'h5', 'div', 'span']):
+    # Sadece heading elementlerine bak — div/span tablo wrapper'ı olabiliyor
+    for prev in table.find_all_previous(['h3', 'h4', 'h5']):
         checked += 1
-        if checked > 15:
+        if checked > 10:
             break
             
         text = prev.get_text(strip=True)
-        if not text or len(text) < 2:
+        # Kısa veya çok uzun metin atla — gerçek heading'ler < 200 karakter olur
+        if not text or len(text) < 2 or len(text) > 200:
+            continue
+        
+        # Tablo başlığı mı? (Forma, N, At İsmi, ... gibi) — atla
+        if 'At İsmi' in text or 'Jokey' in text or 'Antrenör' in text or 'Sıklet' in text:
             continue
         
         # 1. Koşu numarası ve saat (ör: "3. Koşu 14:30")
@@ -352,12 +363,11 @@ def _get_race_info_from_h3(table, soup):
                     track_raw = dm.group(2).lower()
                     if 'kum' in track_raw:
                         info['track_type'] = 'Kum'
-                    elif 'im' in track_raw:  # çim/cim
+                    elif 'im' in track_raw:
                         info['track_type'] = 'Çim'
                     elif 'sentetik' in track_raw:
                         info['track_type'] = 'Sentetik'
                     found_distance = True
-                # İkisini de bulduksa çık
                 if found_race_num and found_distance and info['group_name']:
                     break
                 continue
@@ -377,28 +387,52 @@ def _get_race_info_from_h3(table, soup):
                 found_distance = True
         
         # 3. Grup adı — breed, sınıf, koşu koşulları bilgisi
-        # Örnek: "ŞARTLI 1, 2 Yaşlı İngilizler, 57 kg, 900 Çim, E.İ.D."
-        # veya: "Handikap 15 DHÖW..."
         if not info['group_name']:
             gn_lower = text.lower()
-            # Breed, class, veya koşu türü anahtar kelimeleri ara
             breed_keywords = ['ingiliz', 'ngiliz', 'arap', 'arab']
             class_keywords = ['maiden', 'bakire', 'handikap', 'handicap', 'şartl', 'sartl',
-                             'graded', 'grup', 'listed', 'aprantiler', 'taylar', 'tay ',
-                             'dişi', 'disi', 'kısrak', 'kisrak', 'yaşlı', 'yasli',
-                             'dhöw', 'dhow', 'e.i.d', 'e.İ.d']
+                             'graded', 'listed', 'aprantiler', 'taylar',
+                             'dişi', 'disi', 'kısrak', 'kisrak',
+                             'dhöw', 'dhow', 'e.i.d']
             has_keyword = any(kw in gn_lower for kw in breed_keywords + class_keywords)
-            # Mesafe + pist bilgisi de grup adı sayılır
             has_distance_info = bool(re.search(r'\d{3,4}\s*(Kum|[CÇ]im|Sentetik)', text, re.IGNORECASE))
             
             if has_keyword or has_distance_info:
-                # Koşu numarası satırı değilse grup adı olarak al
                 if not re.match(r'^\d+\.\s*Ko[sş]u', text, re.IGNORECASE):
                     info['group_name'] = text[:120]
         
-        # Tüm bilgileri bulduk, çık
         if found_race_num and found_distance and info['group_name']:
             break
+    
+    # Fallback: H3'te koşu numarası bulunamadıysa, tablonun hemen öncesindeki
+    # sibling'e bak (bazı TJK sayfalarında koşu bilgisi <p> veya <div class=...> olabiliyor)
+    if not found_race_num:
+        prev_sib = table.find_previous_sibling()
+        if prev_sib:
+            sib_text = prev_sib.get_text(strip=True)
+            if sib_text and len(sib_text) < 200:
+                m = re.match(r'(\d+)\.\s*Ko[sş]u[:\s]*(\d{2}[.:]\d{2})?', sib_text, re.IGNORECASE)
+                if m:
+                    info['race_number'] = int(m.group(1))
+                    if m.group(2):
+                        info['time'] = m.group(2).replace('.', ':')
+                # Mesafe/pist de olabilir
+                dm = re.search(r'(\d{3,4})\s*(?:m\.?\s*)?(Kum|[CÇ]im|Sentetik)', sib_text, re.IGNORECASE)
+                if dm and not info['distance']:
+                    info['distance'] = int(dm.group(1))
+                    track_raw = dm.group(2).lower()
+                    if 'kum' in track_raw:
+                        info['track_type'] = 'Kum'
+                    elif 'im' in track_raw:
+                        info['track_type'] = 'Çim'
+                    elif 'sentetik' in track_raw:
+                        info['track_type'] = 'Sentetik'
+                # Grup adı olabilir
+                if not info['group_name'] and len(sib_text) > 5:
+                    gn_lower = sib_text.lower()
+                    if any(kw in gn_lower for kw in ['arap', 'ingiliz', 'ngiliz', 'handikap',
+                                                       'şartl', 'sartl', 'maiden', 'bakire']):
+                        info['group_name'] = sib_text[:120]
     
     if info['race_number'] > 0:
         logger.debug(f"Race info: #{info['race_number']} {info['distance']}m "

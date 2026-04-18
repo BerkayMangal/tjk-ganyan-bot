@@ -411,6 +411,10 @@ function renderYerli(el){
       let modelBadge = data.model_ok
         ? '<span class="badge" style="background:rgba(0,230,138,.1);color:var(--green);border:1px solid rgba(0,230,138,.2)">MODEL AKTIF</span>'
         : '<span class="badge" style="background:rgba(255,214,10,.1);color:var(--yellow);border:1px solid rgba(255,214,10,.2)">AGF-ONLY</span>';
+      let sourceBadge = '';
+      if(data.source === 'html_only') sourceBadge = '<span class="badge" style="background:rgba(255,59,59,.1);color:var(--red);border:1px solid rgba(255,59,59,.2)">AGF 403 — HTML MOD</span>';
+      else if(data.source === 'dashboard') sourceBadge = '<span class="badge" style="background:rgba(59,159,255,.1);color:var(--blue);border:1px solid rgba(59,159,255,.2)">DASHBOARD</span>';
+      else if(data.source === 'proper') sourceBadge = '<span class="badge" style="background:rgba(0,230,138,.1);color:var(--green);border:1px solid rgba(0,230,138,.2)">PROPER AGF</span>';
       
       let h = `<div style="max-width:1000px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
@@ -420,6 +424,7 @@ function renderYerli(el){
           </div>
           <div style="display:flex;gap:6px;align-items:center">
             ${modelBadge}
+            ${sourceBadge}
             <button onclick="fetch('/api/yerli_kupon/refresh').then(()=>renderYerli(document.getElementById('main')))" style="background:var(--border);border:1px solid var(--border2);color:var(--text2);padding:4px 10px;border-radius:3px;font-size:10px;cursor:pointer;font-family:var(--sans)">YENILE</button>
             <button onclick="fetch('/api/yerli_kupon/telegram').then(r=>r.json()).then(d=>alert(d.ok?'Telegram gonderildi!':'Hata: '+(d.error||'?')))" style="background:rgba(59,159,255,.1);border:1px solid rgba(59,159,255,.2);color:var(--blue);padding:4px 10px;border-radius:3px;font-size:10px;cursor:pointer;font-family:var(--sans)">TELEGRAM</button>
           </div>
@@ -447,6 +452,7 @@ function renderYerli(el){
               <span style="color:${starColor};font-size:13px;font-weight:700">${rat.stars||'?'}</span>
               <span style="font-size:11px;color:${starColor}">${rat.verdict||''}</span>
               ${hip.model_used ? '<span class="badge" style="background:rgba(167,139,250,.1);color:var(--purple);border:1px solid rgba(167,139,250,.2);font-size:9px">V5 MODEL</span>' : ''}
+              ${hip.agf_available === false ? '<span class="badge" style="background:rgba(255,214,10,.1);color:var(--yellow);border:1px solid rgba(255,214,10,.2);font-size:9px">AGF YOK</span>' : ''}
             </div>
           </div>`;
         
@@ -551,7 +557,8 @@ function renderYerli(el){
           <b style="color:var(--text3)">Value Edge</b> = Model_Prob − AGF_Prob. +5%+ = VALUE sinyal.<br>
           <b style="color:var(--text3)">TEK:</b> XGB+LGBM ayni ati secer + skor farki buyuk + AGF favorisi ayni at ise.<br>
           <b style="color:var(--text3)">BANKER/VALUE/GENIS:</b> AGF favori %40+/25+/&lt;25 gucune gore.<br>
-          <b style="color:var(--text3)">Konsensus:</b> Model + AGF + HorseTurk uzman — uc kaynak da ayni ati secerse banko.
+          <b style="color:var(--text3)">Konsensus:</b> Model + AGF + uzman kaynaklar — hemfikir olursa banko.<br>
+          <b style="color:var(--text3)">AGF YOK:</b> AGF verisi gelmezse model form/jokey/antrenor/pedigree ile tahmin yapar (88 feature). Kupon uretilir ama Value hesaplanamaz.
         </div>
       </div></div>`;
       

@@ -111,15 +111,16 @@ def run_yerli_pipeline(target_date=None):
 
     if not use_proper:
         tracks = _fetch_domestic_tracks()
-        if not tracks:
-            return {'hippodromes': [], 'telegram_msg': f"\U0001f3c7 TJK \u2014 {date_str}\nBug\u00fcn yerli yar\u0131\u015f yok.",
-                    'ts': datetime.utcnow().isoformat(), 'model_ok': model_ok, 'source': 'empty', 'date': date_str}
+        # tracks boş olabilir ama program_data'dan yine de prediction çıkarabiliriz
+    else:
+        tracks = None  # proper scraper kullanılacak, tracks gereksiz
 
     # ── 2. TJK HTML enrichment ──
     program_data = _fetch_program_data(target_date)
 
     # ── 3. Process ──
     all_results = []
+    processed_hippos = set()  # Hangi hipodromlar işlendi (duplicate engeli)
 
     if use_proper and agf_altilis:
         # PROPER PATH: agf_scraper format — 6 ayak per altili
@@ -131,6 +132,7 @@ def run_yerli_pipeline(target_date=None):
             try:
                 result = _process_proper_altili(agf_alt, program_data, target_date, model_ok)
                 all_results.append(result)
+                processed_hippos.add(agf_alt.get('hippodrome', '').lower().replace(' hipodromu','').replace(' hipodrom',''))
             except Exception as e:
                 logger.error(f"  {agf_alt.get('hippodrome','?')} failed: {e}")
                 logger.exception('Pipeline error')
@@ -140,21 +142,54 @@ def run_yerli_pipeline(target_date=None):
                     'value_horses': [], 'consensus': None, 'legs_summary': [], 'model_used': False})
     else:
         # FALLBACK: dashboard scraper — partial legs
-        for track in tracks:
-            try:
-                result = _process_track(track, program_data, target_date, model_ok)
-                all_results.append(result)
-            except Exception as e:
-                logger.error(f"  {track.get('name','?')} failed: {e}")
-                logger.exception('Pipeline error')
-                all_results.append({'hippodrome': track.get('name', '?'), 'altili_no': 1,
-                    'error': str(e), 'dar': None, 'genis': None,
-                    'rating': {'rating': 0, 'stars': '\u274c', 'verdict': 'Hata', 'score': 0, 'reasons': []},
-                    'value_horses': [], 'consensus': None, 'legs_summary': [], 'model_used': False})
+        if tracks:
+            for track in tracks:
+                try:
+                    result = _process_track(track, program_data, target_date, model_ok)
+                    all_results.append(result)
+                    processed_hippos.add(track.get('name', '').lower().replace(' hipodromu','').replace(' hipodrom',''))
+                except Exception as e:
+                    logger.error(f"  {track.get('name','?')} failed: {e}")
+                    logger.exception('Pipeline error')
+                    all_results.append({'hippodrome': track.get('name', '?'), 'altili_no': 1,
+                        'error': str(e), 'dar': None, 'genis': None,
+                        'rating': {'rating': 0, 'stars': '\u274c', 'verdict': 'Hata', 'score': 0, 'reasons': []},
+                        'value_horses': [], 'consensus': None, 'legs_summary': [], 'model_used': False})
 
+    # ── 3b. HTML-ONLY FALLBACK — AGF'siz hipodromlar için HTML'den prediction ──
+    # AGF verisi olmayan ama HTML program verisi olan şehirler (İzmir, Diyarbakır vb.)
+    if program_data and model_ok:
+        for ph in program_data:
+            ph_name = ph.get('hippodrome', '')
+            ph_lower = ph_name.lower().replace(' hipodromu','').replace(' hipodrom','')
+            # Yabancı hipodromları atla
+            if any(x in ph_lower for x in ['abd', 'fransa', 'malezya', 'ingiltere',
+                                            'avustralya', 'dubai', 'singapur', 'hong kong']):
+                continue
+            # Zaten işlenen hipodromları atla
+            if any(ph_lower in p or p in ph_lower for p in processed_hippos):
+                continue
+            # HTML verisi var, AGF yok — model-only prediction
+            races = ph.get('races', [])
+            if not races or len(races) < 6:
+                continue
+            try:
+                result = _process_html_only(ph_name, races, target_date, model_ok)
+                if result:
+                    all_results.append(result)
+                    processed_hippos.add(ph_lower)
+                    logger.info(f"  {ph_name}: HTML-only prediction (AGF yok)")
+            except Exception as e:
+                logger.warning(f"  {ph_name} HTML-only failed: {e}")
+
+    if not all_results:
+        return {'hippodromes': [], 'telegram_msg': f"\U0001f3c7 TJK \u2014 {date_str}\nBug\u00fcn yerli yar\u0131\u015f yok.",
+                'ts': datetime.utcnow().isoformat(), 'model_ok': model_ok, 'source': 'empty', 'date': date_str}
+    
     telegram_msg = _format_telegram_simple(all_results, date_str)
+    source_tag = 'proper' if use_proper else ('html_only' if not tracks else 'dashboard')
     return {'hippodromes': all_results, 'telegram_msg': telegram_msg,
-            'ts': datetime.utcnow().isoformat(), 'model_ok': model_ok, 'source': 'proper' if use_proper else 'dashboard', 'date': date_str}
+            'ts': datetime.utcnow().isoformat(), 'model_ok': model_ok, 'source': source_tag, 'date': date_str}
 
 
 def _process_proper_altili(agf_alt, program_data, target_date, model_ok):
@@ -291,7 +326,18 @@ def _process_track(track, program_data, target_date, model_ok):
     time_str = track.get('agf_time', '')
     legs = _track_to_legs(track)
     if not legs:
-        return {'hippodrome': hippo, 'altili_no': altili_no, 'error': 'Ayak yok',
+        # AGF eşleşmedi — HTML-only fallback dene
+        if program_data and model_ok:
+            hippo_lower = hippo.lower().replace(' hipodromu','').replace(' hipodrom','')
+            for ph in program_data:
+                pl = ph['hippodrome'].lower().replace(' hipodromu','').replace(' hipodrom','')
+                if hippo_lower in pl or pl in hippo_lower:
+                    races = ph.get('races', [])
+                    if races and len(races) >= 6:
+                        logger.info(f"  {hippo}: AGF yok, HTML-only prediction deneniyor")
+                        return _process_html_only(hippo, races, target_date, model_ok)
+                    break
+        return {'hippodrome': hippo, 'altili_no': altili_no, 'error': 'AGF verisi yok',
                 'dar': None, 'genis': None, 'rating': _simple_rating([]),
                 'value_horses': [], 'consensus': None, 'legs_summary': [], 'model_used': False}
     legs = legs[:6]
@@ -311,6 +357,109 @@ def _process_track(track, program_data, target_date, model_ok):
         'value_horses': value_horses, 'consensus': consensus,
         'legs_summary': _build_legs_summary(legs),
         'model_used': model_ok and any(l.get('has_model') for l in legs)}
+
+
+def _process_html_only(hippo_name, races, target_date, model_ok):
+    """HTML program verisinden AGF olmadan prediction üretir.
+    
+    AGF verisi yokken model hala 88+ feature kullanabilir:
+    form, jokey, antrenör, ağırlık, handikap, pedigree, mesafe, vb.
+    Kupon üretilir ama AGF bazlı edge analizi yapılamaz.
+    """
+    # HTML koşularından ilk 6'yı al (altılı ayaklar)
+    sorted_races = sorted(races, key=lambda r: r.get('race_number', 0))
+    # Son 6 koşuyu seç (altılı genelde son 6 koşudan oluşur)
+    altili_races = sorted_races[-6:] if len(sorted_races) >= 6 else sorted_races
+    
+    legs = []
+    for race in altili_races:
+        html_horses = race.get('horses', [])
+        if not html_horses:
+            continue
+        
+        # Her at için AGF olmadan leg oluştur
+        horses = []
+        agf_data = []
+        n_runners = len(html_horses)
+        # Eşit olasılık varsay (AGF olmadan)
+        equal_pct = 100.0 / max(n_runners, 1)
+        
+        for h in html_horses:
+            num = h.get('horse_number', 0)
+            if num <= 0:
+                continue
+            name = h.get('horse_name', f'At_{num}')
+            fd = {
+                'weight': h.get('weight', 57),
+                'jockey': h.get('jockey_name', ''),
+                'trainer': h.get('trainer_name', ''),
+                'form': h.get('form', ''),
+                'age': h.get('age', 4),
+                'age_text': h.get('age_text', '4y'),
+                'handicap': h.get('handicap_rating', 0),
+                'equipment': h.get('equipment', ''),
+                'kgs': h.get('kgs', 0),
+                'last_20_score': h.get('last_20_score', 0),
+                'sire': h.get('sire_name', ''),
+                'dam': h.get('dam_name', ''),
+                'dam_sire': h.get('dam_sire_name', ''),
+                'gate_number': h.get('start_position', num),
+                'total_earnings': h.get('total_earnings', 0),
+                'agf_pct': equal_pct,
+            }
+            horses.append((name, equal_pct / 100.0, num, fd))
+            agf_data.append({'horse_number': num, 'agf_pct': equal_pct, 'is_ekuri': False})
+        
+        if len(horses) < 2:
+            continue
+        
+        group = race.get('group_name', '')
+        legs.append({
+            'horses': horses,
+            'n_runners': len(horses),
+            'confidence': 0,
+            'model_agreement': 0.5,
+            'has_model': False,
+            'is_arab': 'arap' in group.lower(),
+            'is_english': 'ngiliz' in group.lower() if group else True,
+            'race_number': race.get('race_number', len(legs) + 1),
+            'distance': race.get('distance', 0),
+            'track_type': race.get('track_type', 'dirt'),
+            'group_name': group,
+            'first_prize': race.get('prize', 100000) or 100000,
+            'temperature': 15,
+            'humidity': 60,
+            'agf_data': agf_data,
+            'agf_available': False,  # AGF verisi yok flag'i
+        })
+    
+    if len(legs) < 6:
+        logger.warning(f"  {hippo_name}: HTML-only yetersiz ayak ({len(legs)}/6)")
+        return None
+    
+    legs = legs[:6]
+    
+    # Model prediction — AGF feature'ları 0 olacak ama diğer 88 feature aktif
+    if model_ok and _MODEL and _FB:
+        legs = _model_predict_legs(legs, hippo_name, target_date)
+    
+    rating = _try_fn(lambda: _ext_rating(legs), lambda: _simple_rating(legs))
+    dar = _try_fn(lambda: _ext_kupon(legs, hippo_name, 'dar'), lambda: _simple_kupon(legs, hippo_name, 'dar'))
+    genis = _try_fn(lambda: _ext_kupon(legs, hippo_name, 'genis'), lambda: _simple_kupon(legs, hippo_name, 'genis'))
+    consensus = _try_consensus(hippo_name, legs, target_date)
+    
+    return {
+        'hippodrome': hippo_name, 'altili_no': 1, 'time': '',
+        'dar': _ticket_to_json(dar), 'genis': _ticket_to_json(genis),
+        'rating': {'rating': rating['rating'], 'stars': rating['stars'],
+                   'verdict': f"{rating['verdict']} (AGF yok)", 
+                   'score': round(rating.get('score', 0), 2), 'reasons': rating.get('reasons', [])},
+        'value_horses': [],  # Value hesaplanamaz (AGF olmadan edge yok)
+        'consensus': consensus,
+        'legs_summary': _build_legs_summary(legs),
+        'model_used': model_ok and any(l.get('has_model') for l in legs),
+        'agf_available': False,
+    }
 
 
 def _try_fn(ext_fn, fallback_fn):
@@ -352,9 +501,19 @@ def _model_predict_legs(legs, hippo, target_date):
                 'dam_sire': fd.get('dam_sire', ''), 'sire_sire': fd.get('sire_sire', ''),
                 'dam_dam': fd.get('dam_dam', ''), 'total_earnings': fd.get('total_earnings', 0)})
         if len(hi) < 2: new_legs.append(leg); continue
-        breed = 'arab' if leg.get('is_arab') else 'english'
+        # Per-leg breed detection — birden fazla kaynağa bak
+        # 1. Enrichment'tan gelen is_arab flag'i
+        # 2. group_name alanında 'arap' kelimesi
+        # 3. Varsayılan: english
+        group = str(leg.get('group_name', '') or '').lower()
+        if leg.get('is_arab'):
+            breed = 'arab'
+        elif 'arap' in group:
+            breed = 'arab'
+        else:
+            breed = 'english'
         logger.info(f"  Leg {i+1}: breed={breed}, runners={len(hi)}, "
-                    f"group='{leg.get('group_name','')}'")
+                    f"group='{leg.get('group_name','')[:80]}'")
         ri = {'distance': leg.get('distance', 1400), 'track_type': leg.get('track_type', 'dirt'),
               'group_name': leg.get('group_name', ''), 'hippodrome_name': hippo,
               'first_prize': leg.get('first_prize', 100000), 'temperature': leg.get('temperature', 15),
@@ -411,15 +570,26 @@ def _try_value(legs, model_ok):
 
 def _try_consensus(hippo, legs, target_date):
     try:
-        from scraper.expert_consensus import fetch_horseturk, build_consensus
+        from scraper.expert_consensus import fetch_all_experts, build_consensus
         sehir = hippo.replace(' Hipodromu', '').replace(' Hipodrom', '')
-        expert = fetch_horseturk(target_date, sehir)
-        if not expert: return None
+        experts = fetch_all_experts(target_date, sehir)
         agf_alt = {'legs': [leg.get('agf_data', []) for leg in legs]}
-        cons = build_consensus(legs, agf_alt, expert)
+        # Çoklu kaynak veya sadece model+AGF ile consensus oluştur
+        cons = build_consensus(legs, agf_alt, experts if experts else [])
         return [{'ayak': c['ayak'], 'consensus_top': c['consensus_top'], 'all_agree': c['all_agree'],
                  'super_banko': c['super_banko'], 'sources': c['sources'], 'model_agrees': c['model_agrees']} for c in cons]
-    except ImportError: return None
+    except ImportError:
+        # Eski import da dene (backward compat)
+        try:
+            from scraper.expert_consensus import fetch_horseturk, build_consensus
+            sehir = hippo.replace(' Hipodromu', '').replace(' Hipodrom', '')
+            expert = fetch_horseturk(target_date, sehir)
+            if not expert: return None
+            agf_alt = {'legs': [leg.get('agf_data', []) for leg in legs]}
+            cons = build_consensus(legs, agf_alt, expert)
+            return [{'ayak': c['ayak'], 'consensus_top': c['consensus_top'], 'all_agree': c['all_agree'],
+                     'super_banko': c['super_banko'], 'sources': c['sources'], 'model_agrees': c['model_agrees']} for c in cons]
+        except ImportError: return None
     except Exception as e: logger.debug(f"Consensus: {e}"); return None
 
 
