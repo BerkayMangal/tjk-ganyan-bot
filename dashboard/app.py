@@ -218,6 +218,128 @@ def send_yerli_telegram():
     except Exception as e:
         return jsonify({"error": str(e)})
 
+@app.route("/api/diagnostics")
+def get_diagnostics():
+    """CANLI TEST diagnostic endpoint — scraper/pipeline ham ciktisini gosterir.
+    Kupon uretmez, hicbir sey degistirmez, sadece okuma yapar."""
+    from datetime import datetime as _dt, date as _date
+    out = {
+        "ts": _dt.now(timezone.utc).isoformat(),
+        "scraper_ok": SCRAPER_OK,
+        "yerli_engine_ok": YERLI_ENGINE_OK,
+    }
+
+    # ── 1. Raw AGF scraper output ──
+    agf_altilis = None
+    agf_source = None
+    try:
+        from scraper.agf_scraper import get_todays_agf as _agf_proper
+        agf_altilis = _agf_proper(_date.today())
+        agf_source = "proper"
+    except Exception as e:
+        out["agf_proper_error"] = str(e)
+
+    if not agf_altilis:
+        try:
+            import sys as _sys
+            _dashdir = os.path.dirname(os.path.abspath(__file__))
+            if _dashdir not in _sys.path:
+                _sys.path.insert(0, _dashdir)
+            from agf_scraper_local import get_todays_agf as _agf_local
+            agf_altilis = _agf_local(_date.today())
+            agf_source = "local"
+        except Exception as e:
+            out["agf_local_error"] = str(e)
+
+    out["agf_source"] = agf_source
+    out["agf_count"] = len(agf_altilis) if agf_altilis else 0
+
+    # Per-altili summary + duplicate detection
+    agf_detail = []
+    tuples_seen = {}
+    if agf_altilis:
+        for idx, a in enumerate(agf_altilis):
+            hippo = a.get("hippodrome", "?")
+            alt_no = a.get("altili_no", None)
+            time_str = a.get("time", "")
+            legs = a.get("legs", []) or []
+            leg_sizes = [len(l) if l else 0 for l in legs]
+            tup = (hippo, alt_no, time_str)
+            tuples_seen[str(tup)] = tuples_seen.get(str(tup), 0) + 1
+            agf_detail.append({
+                "idx": idx,
+                "hippodrome": hippo,
+                "altili_no": alt_no,
+                "time": time_str,
+                "n_legs": len(legs),
+                "leg_horse_counts": leg_sizes,
+            })
+    out["agf_altilis"] = agf_detail
+    out["duplicate_tuples"] = {k: v for k, v in tuples_seen.items() if v > 1}
+    out["has_duplicates"] = len(out["duplicate_tuples"]) > 0
+
+    # ── 2. Programme data ──
+    try:
+        from scraper.tjk_html_scraper import get_todays_races_html as _prog
+        prog_data = _prog(_date.today())
+        out["programme_count"] = len(prog_data) if prog_data else 0
+        out["programme_hippodromes"] = [
+            {"hippodrome": p.get("hippodrome", "?"),
+             "n_races": len(p.get("races", []) or [])}
+            for p in (prog_data or [])
+        ]
+    except Exception as e:
+        out["programme_error"] = str(e)
+
+    # ── 3. Current snapshot file ──
+    try:
+        snap_base = os.path.join(
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "..")),
+            "data", "live_tests"
+        )
+        date_str = _date.today().strftime("%Y-%m-%d")
+        snap_path = os.path.join(snap_base, f"{date_str}.json")
+        if os.path.exists(snap_path):
+            import json as _json
+            with open(snap_path, encoding="utf-8") as f:
+                snap = _json.load(f)
+            out["snapshot_exists"] = True
+            out["snapshot_altili_count"] = len(snap.get("hippodromes", []))
+            out["snapshot_data_quality"] = snap.get("data_quality", {})
+            out["snapshot_altilis"] = [
+                {"hippodrome": h.get("hippodrome"),
+                 "altili_no": h.get("altili_no"),
+                 "time": h.get("time"),
+                 "n_legs_summary": len(h.get("legs_summary", []) or []),
+                 "error": h.get("error")}
+                for h in snap.get("hippodromes", [])
+            ]
+        else:
+            out["snapshot_exists"] = False
+    except Exception as e:
+        out["snapshot_error"] = str(e)
+
+    # ── 4. Sanity conclusions ──
+    issues = []
+    if out["has_duplicates"]:
+        issues.append(f"DUPLICATE AGF ALTILI: {out['duplicate_tuples']}")
+    if out["agf_count"] == 0:
+        issues.append("NO AGF ALTILI FOUND")
+    for a in agf_detail:
+        if a["n_legs"] != 6:
+            issues.append(f"Wrong leg count for {a['hippodrome']} #{a['altili_no']}: {a['n_legs']}")
+        thin = [s for s in a["leg_horse_counts"] if s < 4]
+        if thin:
+            issues.append(f"Thin legs in {a['hippodrome']} #{a['altili_no']}: sizes {thin}")
+    snap_count = out.get("snapshot_altili_count", -1)
+    if snap_count != -1 and snap_count != out["agf_count"]:
+        issues.append(f"MISMATCH: AGF has {out['agf_count']} but snapshot has {snap_count}")
+    out["issues"] = issues
+    out["issue_count"] = len(issues)
+
+    return jsonify(out)
+
+
 @app.route("/api/all")
 def get_all():
     if not SCRAPER_OK:
