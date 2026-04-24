@@ -345,14 +345,49 @@ def get_diagnostics():
             out["snapshot_exists"] = True
             out["snapshot_altili_count"] = len(snap.get("hippodromes", []))
             out["snapshot_data_quality"] = snap.get("data_quality", {})
-            out["snapshot_altilis"] = [
-                {"hippodrome": h.get("hippodrome"),
-                 "altili_no": h.get("altili_no"),
-                 "time": h.get("time"),
-                 "n_legs_summary": len(h.get("legs_summary", []) or []),
-                 "error": h.get("error")}
-                for h in snap.get("hippodromes", [])
-            ]
+            out["snapshot_altilis"] = []
+            for h in snap.get("hippodromes", []):
+                # Build fingerprint from legs_summary or selected kupon horses
+                legs_fp = []
+                dar_legs = (h.get("dar") or {}).get("legs", []) or []
+                for lg in dar_legs:
+                    sel = lg.get("selected_numbers") or lg.get("selected") or []
+                    # `selected` may be list of tuples in some formats
+                    if sel and isinstance(sel[0], (list, tuple)):
+                        nums = [s[2] if len(s) > 2 else None for s in sel]
+                    else:
+                        nums = list(sel)
+                    legs_fp.append(sorted([n for n in nums if n is not None]))
+                out["snapshot_altilis"].append({
+                    "hippodrome": h.get("hippodrome"),
+                    "altili_no": h.get("altili_no"),
+                    "time": h.get("time"),
+                    "n_legs_summary": len(h.get("legs_summary", []) or []),
+                    "dar_selected_per_leg": legs_fp,
+                    "error": h.get("error"),
+                })
+            # Snapshot cross-check
+            from collections import defaultdict as _dd2
+            snap_by_hippo = _dd2(list)
+            for sa in out["snapshot_altilis"]:
+                snap_by_hippo[sa["hippodrome"]].append(sa)
+            snap_cross = {}
+            for hippo, items in snap_by_hippo.items():
+                if len(items) < 2:
+                    continue
+                a, b = items[0], items[1]
+                same = 0
+                total = min(len(a.get("dar_selected_per_leg", [])),
+                            len(b.get("dar_selected_per_leg", [])))
+                for k in range(total):
+                    if a["dar_selected_per_leg"][k] == b["dar_selected_per_leg"][k]:
+                        same += 1
+                snap_cross[f"{hippo}__alt1_vs_alt2"] = {
+                    "same_dar_legs": same,
+                    "total": total,
+                    "identical_kupons": same == total and total > 0,
+                }
+            out["snapshot_cross_check"] = snap_cross
         else:
             out["snapshot_exists"] = False
     except Exception as e:
