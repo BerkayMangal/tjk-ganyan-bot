@@ -254,9 +254,10 @@ def get_diagnostics():
     out["agf_source"] = agf_source
     out["agf_count"] = len(agf_altilis) if agf_altilis else 0
 
-    # Per-altili summary + duplicate detection
+    # Per-altili summary + duplicate detection + detailed fingerprints
     agf_detail = []
     tuples_seen = {}
+    from collections import defaultdict as _dd
     if agf_altilis:
         for idx, a in enumerate(agf_altilis):
             hippo = a.get("hippodrome", "?")
@@ -266,6 +267,20 @@ def get_diagnostics():
             leg_sizes = [len(l) if l else 0 for l in legs]
             tup = (hippo, alt_no, time_str)
             tuples_seen[str(tup)] = tuples_seen.get(str(tup), 0) + 1
+
+            # Fingerprint each leg: sorted horse numbers + top-3 by AGF
+            leg_fp = []
+            for leg in legs:
+                if not leg:
+                    leg_fp.append({"all_numbers": [], "top3": []})
+                    continue
+                nums = sorted([h.get("horse_number") for h in leg
+                               if h.get("horse_number") is not None])
+                srt = sorted(leg, key=lambda h: -(h.get("agf_pct", 0) or 0))
+                top3 = [(h.get("horse_number"), round(h.get("agf_pct", 0) or 0, 1))
+                        for h in srt[:3]]
+                leg_fp.append({"all_numbers": nums, "top3": top3})
+
             agf_detail.append({
                 "idx": idx,
                 "hippodrome": hippo,
@@ -273,7 +288,31 @@ def get_diagnostics():
                 "time": time_str,
                 "n_legs": len(legs),
                 "leg_horse_counts": leg_sizes,
+                "legs_fingerprint": leg_fp,
             })
+
+    # Cross-check: are two altılıs of same hippodrome identical?
+    cross_check = {}
+    by_hippo = _dd(list)
+    for d in agf_detail:
+        by_hippo[d["hippodrome"]].append(d)
+    for hippo, items in by_hippo.items():
+        if len(items) < 2:
+            continue
+        for i in range(len(items) - 1):
+            for j in range(i + 1, len(items)):
+                a, b = items[i], items[j]
+                same = 0
+                total = min(len(a["legs_fingerprint"]), len(b["legs_fingerprint"]))
+                for k in range(total):
+                    if a["legs_fingerprint"][k]["all_numbers"] == b["legs_fingerprint"][k]["all_numbers"]:
+                        same += 1
+                cross_check[f"{hippo}__alt{a['altili_no']}_vs_alt{b['altili_no']}"] = {
+                    "same_legs": same,
+                    "total_legs": total,
+                    "are_identical": same == total and total > 0,
+                }
+    out["cross_check_duplicate_content"] = cross_check
     out["agf_altilis"] = agf_detail
     out["duplicate_tuples"] = {k: v for k, v in tuples_seen.items() if v > 1}
     out["has_duplicates"] = len(out["duplicate_tuples"]) > 0
