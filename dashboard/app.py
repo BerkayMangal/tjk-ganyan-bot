@@ -414,99 +414,138 @@ def get_diagnostics():
     return jsonify(out)
 
 
-@app.route("/api/scraper_debug")
-def scraper_debug():
-    """Raw HTML inspection for agftablosu.com — find the duplicate bug."""
+@app.route("/api/scraper_debug_v2")
+def scraper_debug_v2():
+    """Strong UA + compare against TJK programme to verify bug location."""
     import requests
     from bs4 import BeautifulSoup
     out = {}
+
+    # Use the SAME User-Agent as the production scraper to match its behavior
+    strong_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Cache-Control": "max-age=0",
+    }
+
+    # Try the production scraper directly (same as runtime uses)
     try:
-        resp = requests.get("https://www.agftablosu.com/agf-tablosu",
-                             timeout=30,
-                             headers={"User-Agent": "Mozilla/5.0"})
-        html = resp.text
-        out["status"] = resp.status_code
-        out["html_length"] = len(html)
-    except Exception as e:
-        return jsonify({"error": str(e)})
+        sess = requests.Session()
+        sess.headers.update(strong_headers)
+        resp = sess.get("https://www.agftablosu.com/agf-tablosu", timeout=30)
+        out["agf_status"] = resp.status_code
+        out["agf_length"] = len(resp.text)
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            h3s = soup.find_all("h3")
+            out["agf_h3_count"] = len(h3s)
+            # Find every Bursa/Istanbul altili header with its fingerprint
+            per_header = []
+            import re as _re
+            header_list = [(i, h) for i, h in enumerate(h3s)
+                            if "AGF" in h.get_text() and "lt" in h.get_text().lower()
+                            and any(c in h.get_text().lower()
+                                    for c in ["bursa", "istanbul", "i̇stanbul"])]
 
-    soup = BeautifulSoup(html, "html.parser")
-    headers = soup.find_all("h3")
-    out["total_h3_count"] = len(headers)
+            for (idx, h) in header_list:
+                txt = h.get_text(strip=True)
+                # Count tables until next h3
+                direct = 0
+                inner = 0
+                tables_collected = []
+                sibling = h.find_next_sibling()
+                while sibling:
+                    if sibling.name == "h3":
+                        break
+                    if sibling.name == "table":
+                        direct += 1
+                        tables_collected.append(sibling)
+                    elif hasattr(sibling, "find_all"):
+                        sub = sibling.find_all("table")
+                        inner += len(sub)
+                        tables_collected.extend(sub)
+                    sibling = sibling.find_next_sibling()
 
-    # Find Bursa/Istanbul headers and the tables between consecutive ones
-    relevant_headers = []
-    for idx, h in enumerate(headers):
-        txt = h.get_text(strip=True)
-        if "AGF" in txt and "lt" in txt.lower():
-            if any(city in txt.lower() for city in ["bursa", "istanbul", "i̇stanbul"]):
-                relevant_headers.append({
-                    "idx": idx,
+                # Fingerprint: first 3 horses of FIRST table
+                fp1 = []
+                if tables_collected:
+                    cells = tables_collected[0].find_all("td")
+                    for c in cells[:8]:
+                        t = c.get_text(strip=True)
+                        m = _re.match(r"(\d{1,2})\s*\(%?([\d.]+)%?\)", t)
+                        if m:
+                            fp1.append(f"#{m.group(1)}({m.group(2)}%)")
+                            if len(fp1) >= 3:
+                                break
+
+                # Fingerprint: first 3 horses of LAST table in block
+                fpN = []
+                if tables_collected:
+                    cells = tables_collected[-1].find_all("td")
+                    for c in cells[:8]:
+                        t = c.get_text(strip=True)
+                        m = _re.match(r"(\d{1,2})\s*\(%?([\d.]+)%?\)", t)
+                        if m:
+                            fpN.append(f"#{m.group(1)}({m.group(2)}%)")
+                            if len(fpN) >= 3:
+                                break
+
+                per_header.append({
                     "text": txt,
+                    "direct_tables": direct,
+                    "inner_tables": inner,
+                    "total_tables_in_block": len(tables_collected),
+                    "first_leg_top3": fp1,
+                    "last_leg_top3": fpN,
                 })
+            out["per_header"] = per_header
+    except Exception as e:
+        out["agf_error"] = str(e)
 
-    out["relevant_headers"] = relevant_headers
+    # Also run the PRODUCTION scraper and compare
+    try:
+        import sys as _sys
+        _dashdir = os.path.dirname(os.path.abspath(__file__))
+        if _dashdir not in _sys.path:
+            _sys.path.insert(0, _dashdir)
+        try:
+            from scraper.agf_scraper import get_todays_agf as _agf
+            src = "proper"
+        except Exception:
+            from agf_scraper_local import get_todays_agf as _agf
+            src = "local"
+        from datetime import date as _date
+        altilis = _agf(_date.today()) or []
+        out["production_scraper_source"] = src
+        out["production_altili_count"] = len(altilis)
+        prod_detail = []
+        for a in altilis:
+            legs = a.get("legs", []) or []
+            first_leg_top3 = []
+            last_leg_top3 = []
+            if legs and legs[0]:
+                first_leg_top3 = [f"#{h.get('horse_number')}({h.get('agf_pct')}%)"
+                                   for h in legs[0][:3]]
+            if legs and legs[-1]:
+                last_leg_top3 = [f"#{h.get('horse_number')}({h.get('agf_pct')}%)"
+                                  for h in legs[-1][:3]]
+            prod_detail.append({
+                "hippodrome": a.get("hippodrome"),
+                "altili_no": a.get("altili_no"),
+                "time": a.get("time"),
+                "n_legs": len(legs),
+                "first_leg_top3": first_leg_top3,
+                "last_leg_top3": last_leg_top3,
+            })
+        out["production_details"] = prod_detail
+    except Exception as e:
+        out["production_error"] = str(e)
 
-    # For each relevant header, count tables until the NEXT h3
-    # AND count tables including via find_all on descendants
-    per_header = []
-    for idx, h in enumerate(headers):
-        txt = h.get_text(strip=True)
-        if "AGF" not in txt or "lt" not in txt.lower():
-            continue
-        if not any(city in txt.lower() for city in ["bursa", "istanbul", "i̇stanbul"]):
-            continue
-
-        # Method 1: find_next_sibling loop (the ACTUAL scraper logic)
-        direct_tables = 0
-        inner_tables = 0
-        sibling = h.find_next_sibling()
-        while sibling:
-            if sibling.name == "h3":
-                break
-            if sibling.name == "table":
-                direct_tables += 1
-            elif hasattr(sibling, "find_all"):
-                inner_tables += len(sibling.find_all("table"))
-            sibling = sibling.find_next_sibling()
-
-        # Method 2: get first leg's first 3 horse_numbers (fingerprint)
-        fp = None
-        sibling = h.find_next_sibling()
-        first_table = None
-        while sibling and not first_table:
-            if sibling.name == "h3":
-                break
-            if sibling.name == "table":
-                first_table = sibling
-                break
-            if hasattr(sibling, "find"):
-                t = sibling.find("table")
-                if t:
-                    first_table = t
-                    break
-            sibling = sibling.find_next_sibling()
-
-        if first_table:
-            import re
-            cells = first_table.find_all("td")
-            horse_ids = []
-            for c in cells[:6]:
-                t = c.get_text(strip=True)
-                m = re.match(r"(\d{1,2})\s*\(%?([\d.]+)%?\)", t)
-                if m:
-                    horse_ids.append(f"#{m.group(1)}({m.group(2)}%)")
-            fp = horse_ids
-
-        per_header.append({
-            "text": txt,
-            "direct_tables_between_h3s": direct_tables,
-            "inner_tables_via_descendants": inner_tables,
-            "total_scraped": direct_tables + inner_tables,
-            "first_leg_top_horses": fp,
-        })
-
-    out["per_relevant_header"] = per_header
     return jsonify(out)
 
 
