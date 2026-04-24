@@ -11,6 +11,94 @@ from html import escape
 
 logger = logging.getLogger(__name__)
 
+# ── LIVE-TEST MODE (CANLI TEST) ──────────────────────────────────────
+LIVE_TEST_DISCLAIMER = "🧪 CANLI TEST — gerçek bahis önerisi değildir"
+
+
+def _compute_data_quality(all_results):
+    """Return (score, level, notes). No re-scraping; pure function of pipeline output.
+
+    Levels: OK (>=0.90), WARNING (>=0.75), BAD (>=0.50), CRITICAL (<0.50).
+    """
+    if not all_results:
+        return 0.0, "CRITICAL", ["no_altili_found"]
+
+    notes = []
+    n_alt = len(all_results)
+    n_with_6 = 0
+    n_with_agf = 0
+    n_model = 0
+    n_error = 0
+    n_legs_total = 0
+    n_legs_thin = 0
+
+    for r in all_results:
+        if r.get('error'):
+            n_error += 1
+            continue
+        legs_summary = r.get('legs_summary') or []
+        if len(legs_summary) == 6:
+            n_with_6 += 1
+        if any(l.get('top_agf_pct', 0) > 0 for l in legs_summary):
+            n_with_agf += 1
+        if r.get('model_used'):
+            n_model += 1
+        for l in legs_summary:
+            n_legs_total += 1
+            if l.get('n_runners', 0) < 4:
+                n_legs_thin += 1
+
+    c_altili = n_with_6 / n_alt if n_alt else 0.0
+    c_agf = n_with_agf / n_alt if n_alt else 0.0
+    c_no_err = 1.0 - (n_error / n_alt) if n_alt else 0.0
+    c_thin = 1.0 - (n_legs_thin / n_legs_total) if n_legs_total else 0.0
+    c_model = n_model / n_alt if n_alt else 0.0
+
+    score = round(float(
+        0.30 * c_altili + 0.25 * c_agf + 0.20 * c_no_err
+        + 0.15 * c_thin + 0.10 * c_model
+    ), 3)
+
+    if n_error > 0:
+        notes.append(f"{n_error}/{n_alt} altili_errors")
+    if n_with_6 < n_alt:
+        notes.append(f"{n_alt - n_with_6}/{n_alt} incomplete_altili")
+    if n_legs_thin > 0:
+        notes.append(f"{n_legs_thin}/{n_legs_total} thin_legs")
+    if c_model < 0.5:
+        notes.append("model_coverage_low")
+
+    if score >= 0.90:
+        level = "OK"
+    elif score >= 0.75:
+        level = "WARNING"
+    elif score >= 0.50:
+        level = "BAD"
+    else:
+        level = "CRITICAL"
+
+    return score, level, notes
+
+
+def _save_live_test_snapshot(result_dict):
+    """Append today's canonical kupon to data/live_tests/YYYY-MM-DD.json.
+    Idempotent; never raises (fire-and-forget)."""
+    try:
+        import json
+        base = os.path.join(
+            os.path.abspath(os.path.join(os.path.dirname(__file__), '..')),
+            'data', 'live_tests'
+        )
+        os.makedirs(base, exist_ok=True)
+        date_str = date.today().strftime('%Y-%m-%d')
+        path = os.path.join(base, f'{date_str}.json')
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(result_dict, f, ensure_ascii=False, indent=2, default=str)
+        logger.info(f"[live_test] snapshot saved: {path}")
+    except Exception as e:
+        logger.warning(f"[live_test] snapshot save failed: {e}")
+
+
 # ── ROBUST PATH FINDER ──
 # Railway CWD: /app/dashboard/ veya /app/ olabilir
 # model/ repo kokunde: /app/model/
@@ -186,10 +274,64 @@ def run_yerli_pipeline(target_date=None):
         return {'hippodromes': [], 'telegram_msg': f"\U0001f3c7 TJK \u2014 {date_str}\nBug\u00fcn yerli yar\u0131\u015f yok.",
                 'ts': datetime.utcnow().isoformat(), 'model_ok': model_ok, 'source': 'empty', 'date': date_str}
     
-    telegram_msg = _format_telegram_simple(all_results, date_str)
-    source_tag = 'proper' if use_proper else ('html_only' if not tracks else 'dashboard')
-    return {'hippodromes': all_results, 'telegram_msg': telegram_msg,
-            'ts': datetime.utcnow().isoformat(), 'model_ok': model_ok, 'source': source_tag, 'date': date_str}
+    # ── LIVE-TEST MODE: data quality + CANLI TEST banner + snapshot ──
+    dq_score, dq_level, dq_notes = _compute_data_quality(all_results)
+    logger.info(f"[live_test] data_quality: score={dq_score} level={dq_level} "
+                f"notes={dq_notes}")
+
+    if dq_level == "CRITICAL":
+        warning_msg = (
+            f"{LIVE_TEST_DISCLAIMER}\n\n"
+            f"🛑 DATA QUALITY WARNING\n"
+            f"Veri kalitesi kritik seviyede (skor {dq_score}).\n"
+            f"Sebepler: {', '.join(dq_notes) if dq_notes else 'unknown'}\n\n"
+            f"Bugün güvenilir kupon üretilmedi. Kayıt amaçlı saklanıyor."
+        )
+        result = {
+            'hippodromes': [],
+            'telegram_msg': warning_msg,
+            'ts': datetime.utcnow().isoformat(),
+            'model_ok': model_ok,
+            'source': 'critical_data',
+            'date': date_str,
+            'live_test': True,
+            'disclaimer': LIVE_TEST_DISCLAIMER,
+            'data_quality': {
+                'score': dq_score, 'level': dq_level, 'notes': dq_notes,
+                'kupon_status': 'BLOCK',
+            },
+            'raw_altili_count': len(all_results),
+        }
+    else:
+        base_msg = _format_telegram_simple(all_results, date_str)
+        banner_lines = [LIVE_TEST_DISCLAIMER,
+                        f"📊 Veri kalitesi: {dq_level} (skor {dq_score})"]
+        if dq_level in ("WARNING", "BAD"):
+            banner_lines.append("⚠️ Veri kısmen eksik — güvenilirlik düşük.")
+        banner = "\n".join(banner_lines)
+        telegram_msg = f"{banner}\n\n{base_msg}\n\n🧪 Bu kayıttır, bahis değildir."
+
+        source_tag = 'proper' if use_proper else ('html_only' if not tracks else 'dashboard')
+        kupon_status = {'OK': 'PLAYABLE', 'WARNING': 'SMALL_STAKE_ONLY',
+                        'BAD': 'DIAGNOSTIC_NO_BET'}[dq_level]
+
+        result = {
+            'hippodromes': all_results,
+            'telegram_msg': telegram_msg,
+            'ts': datetime.utcnow().isoformat(),
+            'model_ok': model_ok,
+            'source': source_tag,
+            'date': date_str,
+            'live_test': True,
+            'disclaimer': LIVE_TEST_DISCLAIMER,
+            'data_quality': {
+                'score': dq_score, 'level': dq_level, 'notes': dq_notes,
+                'kupon_status': kupon_status,
+            },
+        }
+
+    _save_live_test_snapshot(result)
+    return result
 
 
 def _process_proper_altili(agf_alt, program_data, target_date, model_ok):
