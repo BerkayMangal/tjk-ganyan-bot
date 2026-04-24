@@ -414,6 +414,102 @@ def get_diagnostics():
     return jsonify(out)
 
 
+@app.route("/api/scraper_debug")
+def scraper_debug():
+    """Raw HTML inspection for agftablosu.com — find the duplicate bug."""
+    import requests
+    from bs4 import BeautifulSoup
+    out = {}
+    try:
+        resp = requests.get("https://www.agftablosu.com/agf-tablosu",
+                             timeout=30,
+                             headers={"User-Agent": "Mozilla/5.0"})
+        html = resp.text
+        out["status"] = resp.status_code
+        out["html_length"] = len(html)
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+    soup = BeautifulSoup(html, "html.parser")
+    headers = soup.find_all("h3")
+    out["total_h3_count"] = len(headers)
+
+    # Find Bursa/Istanbul headers and the tables between consecutive ones
+    relevant_headers = []
+    for idx, h in enumerate(headers):
+        txt = h.get_text(strip=True)
+        if "AGF" in txt and "lt" in txt.lower():
+            if any(city in txt.lower() for city in ["bursa", "istanbul", "i̇stanbul"]):
+                relevant_headers.append({
+                    "idx": idx,
+                    "text": txt,
+                })
+
+    out["relevant_headers"] = relevant_headers
+
+    # For each relevant header, count tables until the NEXT h3
+    # AND count tables including via find_all on descendants
+    per_header = []
+    for idx, h in enumerate(headers):
+        txt = h.get_text(strip=True)
+        if "AGF" not in txt or "lt" not in txt.lower():
+            continue
+        if not any(city in txt.lower() for city in ["bursa", "istanbul", "i̇stanbul"]):
+            continue
+
+        # Method 1: find_next_sibling loop (the ACTUAL scraper logic)
+        direct_tables = 0
+        inner_tables = 0
+        sibling = h.find_next_sibling()
+        while sibling:
+            if sibling.name == "h3":
+                break
+            if sibling.name == "table":
+                direct_tables += 1
+            elif hasattr(sibling, "find_all"):
+                inner_tables += len(sibling.find_all("table"))
+            sibling = sibling.find_next_sibling()
+
+        # Method 2: get first leg's first 3 horse_numbers (fingerprint)
+        fp = None
+        sibling = h.find_next_sibling()
+        first_table = None
+        while sibling and not first_table:
+            if sibling.name == "h3":
+                break
+            if sibling.name == "table":
+                first_table = sibling
+                break
+            if hasattr(sibling, "find"):
+                t = sibling.find("table")
+                if t:
+                    first_table = t
+                    break
+            sibling = sibling.find_next_sibling()
+
+        if first_table:
+            import re
+            cells = first_table.find_all("td")
+            horse_ids = []
+            for c in cells[:6]:
+                t = c.get_text(strip=True)
+                m = re.match(r"(\d{1,2})\s*\(%?([\d.]+)%?\)", t)
+                if m:
+                    horse_ids.append(f"#{m.group(1)}({m.group(2)}%)")
+            fp = horse_ids
+
+        per_header.append({
+            "text": txt,
+            "direct_tables_between_h3s": direct_tables,
+            "inner_tables_via_descendants": inner_tables,
+            "total_scraped": direct_tables + inner_tables,
+            "first_leg_top_horses": fp,
+        })
+
+    out["per_relevant_header"] = per_header
+    return jsonify(out)
+
+
 @app.route("/api/all")
 def get_all():
     if not SCRAPER_OK:
