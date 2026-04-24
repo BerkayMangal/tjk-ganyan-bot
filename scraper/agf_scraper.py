@@ -36,13 +36,26 @@ YABANCI_ETIKETLER = [
     'singapur', 'japonya', 'irlanda',
 ]
 
-SESSION = requests.Session()
-SESSION.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-                  '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml',
-    'Accept-Language': 'tr-TR,tr;q=0.9',
-})
+# Cloudscraper handles Cloudflare challenge pages automatically
+try:
+    import cloudscraper
+    SESSION = cloudscraper.create_scraper(
+        browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False}
+    )
+    SESSION.headers.update({
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
+    })
+    logger.info("AGF scraper: cloudscraper enabled")
+except ImportError:
+    logger.warning("cloudscraper not installed — falling back to requests")
+    SESSION = requests.Session()
+    SESSION.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                      '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'tr-TR,tr;q=0.9',
+    })
 
 
 def fetch_agf_page() -> Optional[str]:

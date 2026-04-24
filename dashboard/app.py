@@ -652,6 +652,36 @@ def raw_html_check():
     return jsonify(out)
 
 
+@app.route("/api/cloudflare_test")
+def cloudflare_test():
+    """Test if cloudscraper can bypass agftablosu's Cloudflare protection."""
+    out = {}
+    try:
+        import cloudscraper
+        out["cloudscraper_installed"] = True
+        out["cloudscraper_version"] = getattr(cloudscraper, "__version__", "unknown")
+    except ImportError as e:
+        out["cloudscraper_installed"] = False
+        out["cloudscraper_error"] = str(e)
+        return jsonify(out)
+
+    try:
+        scraper = cloudscraper.create_scraper(
+            browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False}
+        )
+        r = scraper.get("https://www.agftablosu.com/agf-tablosu", timeout=30)
+        out["agf_status"] = r.status_code
+        out["agf_length"] = len(r.text)
+        out["contains_altili"] = ("ltılı" in r.text or "ltili" in r.text)
+        out["contains_bursa"] = "Bursa" in r.text
+        out["contains_cloudflare_challenge"] = "Just a moment" in r.text
+        out["h3_count"] = r.text.count("<h3")
+        out["snippet"] = r.text[:1500]
+    except Exception as e:
+        out["error"] = str(e)
+    return jsonify(out)
+
+
 @app.route("/api/all")
 def get_all():
     if not SCRAPER_OK:
