@@ -549,6 +549,23 @@ def scraper_debug_v2():
     return jsonify(out)
 
 
+@app.route("/api/source_check")
+def source_check():
+    """Multi-source validator: 3 kaynak karsilastirmasi."""
+    try:
+        import sys as _sys
+        _dashdir = os.path.dirname(os.path.abspath(__file__))
+        if _dashdir not in _sys.path:
+            _sys.path.insert(0, _dashdir)
+        from multi_source_validator import validate_sources
+        result = validate_sources()
+        return jsonify(result)
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e),
+                         "traceback": traceback.format_exc()[:2000]})
+
+
 @app.route("/api/all")
 def get_all():
     if not SCRAPER_OK:
