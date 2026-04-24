@@ -566,6 +566,92 @@ def source_check():
                          "traceback": traceback.format_exc()[:2000]})
 
 
+@app.route("/api/raw_html_check")
+def raw_html_check():
+    """Dump raw HTML snippets from 3 sources to help debug parsing."""
+    import requests
+    from datetime import date as _date
+    out = {"date": _date.today().isoformat()}
+
+    strong_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.8",
+    }
+
+    # Source 1: agftablosu
+    try:
+        r = requests.get("https://www.agftablosu.com/agf-tablosu",
+                          headers=strong_headers, timeout=15)
+        out["agftablosu"] = {
+            "status": r.status_code,
+            "length": len(r.text),
+            "snippet_start": r.text[:2000],
+            "contains_altili": "ltılı" in r.text or "ltili" in r.text,
+            "contains_bursa": "Bursa" in r.text or "bursa" in r.text.lower(),
+            "contains_ankara": "Ankara" in r.text or "ankara" in r.text.lower(),
+            "h3_count": r.text.count("<h3"),
+        }
+    except Exception as e:
+        out["agftablosu"] = {"error": str(e)}
+
+    # Source 2: TJK official
+    try:
+        r = requests.get(
+            "https://www.tjk.org/TR/YarisSever/Info/Page/GunlukYarisProgrami",
+            headers=strong_headers, timeout=15
+        )
+        text = r.text
+        out["tjk_official"] = {
+            "status": r.status_code,
+            "length": len(text),
+            "snippet_start": text[:2000],
+            "contains_6li_ganyan": "6'LI GANYAN" in text or "6LI GANYAN" in text.upper(),
+            "contains_bursa": "Bursa" in text,
+            "contains_ankara": "Ankara" in text,
+            "contains_istanbul": "İstanbul" in text or "Istanbul" in text,
+        }
+    except Exception as e:
+        out["tjk_official"] = {"error": str(e)}
+
+    # Source 3: horseturk ankara (yarın ankara varsa buraya bakacak)
+    try:
+        from datetime import date as _d
+        today = _d.today()
+        months = ["ocak", "subat", "mart", "nisan", "mayis", "haziran",
+                  "temmuz", "agustos", "eylul", "ekim", "kasim", "aralik"]
+        url = (f"https://www.horseturk.com/at-yarisi-tahminleri-ankara-"
+               f"{today.day}-{months[today.month-1]}-{today.year}/")
+        r = requests.get(url, headers=strong_headers, timeout=10)
+        out["horseturk_ankara"] = {
+            "url": url,
+            "status": r.status_code,
+            "length": len(r.text),
+            "snippet_start": r.text[:2000] if r.status_code == 200 else None,
+            "contains_altili": "ltılı" in r.text or "ltili" in r.text,
+        }
+    except Exception as e:
+        out["horseturk_ankara"] = {"error": str(e)}
+
+    # Source 3b: horseturk bursa (bugün için)
+    try:
+        url = (f"https://www.horseturk.com/at-yarisi-tahminleri-bursa-"
+               f"{today.day}-{months[today.month-1]}-{today.year}/")
+        r = requests.get(url, headers=strong_headers, timeout=10)
+        out["horseturk_bursa"] = {
+            "url": url,
+            "status": r.status_code,
+            "length": len(r.text),
+            "snippet_start": r.text[:2000] if r.status_code == 200 else None,
+        }
+    except Exception as e:
+        out["horseturk_bursa"] = {"error": str(e)}
+
+    return jsonify(out)
+
+
 @app.route("/api/all")
 def get_all():
     if not SCRAPER_OK:
