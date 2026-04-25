@@ -117,44 +117,105 @@ def _altili_fingerprint(agf_alt):
 
 
 def _dedup_agf_altilis(agf_altilis):
-    """Aynı atları gösteren 'duplicate' altılıları temizle.
+    """Aynı atları gösteren duplicate altılıları temizle (SIKI mod).
+
+    Iki kademe:
+      1. Tam fingerprint eşleşmesi → kesin duplicate
+      2. Aynı hipodromda aynı altıli_no birden fazla → ikinci+ olanları at
+      3. Aynı hipodromda iki altılı, leg-by-leg %70+ at numarası overlap → duplicate
     Returns: (deduped_list, removed_log)
     """
     if not agf_altilis:
         return agf_altilis, []
 
-    seen = {}  # fingerprint -> first index that had it
     deduped = []
     removed = []
+    seen_fp = {}        # full fingerprint -> first index
+    seen_hippo_alt = {} # (hippo, alt_no) -> first index
+
+    def _leg_overlap(legs_a, legs_b):
+        """Iki altilinin leg-by-leg ortalama at numarasi overlap orani."""
+        if not legs_a or not legs_b:
+            return 0.0
+        n = min(len(legs_a), len(legs_b))
+        if n == 0:
+            return 0.0
+        scores = []
+        for i in range(n):
+            la = legs_a[i] or []
+            lb = legs_b[i] or []
+            nums_a = set(h.get("horse_number") for h in la
+                         if h.get("horse_number") is not None)
+            nums_b = set(h.get("horse_number") for h in lb
+                         if h.get("horse_number") is not None)
+            if not nums_a or not nums_b:
+                continue
+            inter = len(nums_a & nums_b)
+            union = len(nums_a | nums_b)
+            scores.append(inter / union if union else 0.0)
+        return sum(scores) / len(scores) if scores else 0.0
 
     for i, alt in enumerate(agf_altilis):
         hippo = alt.get("hippodrome", "?")
         alt_no = alt.get("altili_no", "?")
         fp = _altili_fingerprint(alt)
 
-        # Same hippodrome + same fingerprint = duplicate
-        key = (hippo, fp)
-        if key in seen:
-            first_idx = seen[key]
-            first_alt_no = agf_altilis[first_idx].get("altili_no", "?")
-            removed.append({
-                "removed_idx": i,
-                "removed_altili_no": alt_no,
-                "duplicate_of_idx": first_idx,
-                "duplicate_of_altili_no": first_alt_no,
-                "hippodrome": hippo,
-            })
+        # ── Layer 1: Exact fingerprint ──
+        fp_key = (hippo, fp)
+        if fp_key in seen_fp:
+            first_idx = seen_fp[fp_key]
+            first_no = agf_altilis[first_idx].get("altili_no", "?")
+            removed.append({"reason": "exact_fingerprint", "idx": i,
+                            "altili_no": alt_no,
+                            "duplicate_of_altili_no": first_no,
+                            "hippodrome": hippo})
             logger.warning(
-                f"[dedup] {hippo} altılı#{alt_no} = altılı#{first_alt_no} (DUPLICATE, removed)"
-            )
+                f"[dedup-L1] {hippo} altılı#{alt_no} = altılı#{first_no} "
+                f"(EXACT FINGERPRINT, removed)")
             continue
 
-        seen[key] = i
+        # ── Layer 2: Same (hippo, alt_no) ──
+        ha_key = (hippo, alt_no)
+        if ha_key in seen_hippo_alt:
+            first_idx = seen_hippo_alt[ha_key]
+            removed.append({"reason": "same_hippo_alt_no", "idx": i,
+                            "altili_no": alt_no,
+                            "hippodrome": hippo})
+            logger.warning(
+                f"[dedup-L2] {hippo} altılı#{alt_no} (DUPLICATE NO, removed)")
+            continue
+
+        # ── Layer 3: Fuzzy leg overlap (>= 70%) with previously kept altili from same hippo ──
+        is_duplicate = False
+        for kept_alt in deduped:
+            if kept_alt.get("hippodrome") != hippo:
+                continue
+            overlap = _leg_overlap(alt.get("legs", []), kept_alt.get("legs", []))
+            if overlap >= 0.70:
+                kept_no = kept_alt.get("altili_no", "?")
+                removed.append({"reason": "fuzzy_overlap",
+                                "idx": i, "altili_no": alt_no,
+                                "duplicate_of_altili_no": kept_no,
+                                "overlap_score": round(overlap, 2),
+                                "hippodrome": hippo})
+                logger.warning(
+                    f"[dedup-L3] {hippo} altılı#{alt_no} ~= altılı#{kept_no} "
+                    f"(FUZZY OVERLAP {overlap:.0%}, removed)")
+                is_duplicate = True
+                break
+        if is_duplicate:
+            continue
+
+        # Keep this altılı
+        seen_fp[fp_key] = i
+        seen_hippo_alt[ha_key] = i
         deduped.append(alt)
 
     if removed:
-        logger.info(f"[dedup] {len(removed)} duplicate altılı temizlendi, "
+        logger.info(f"[dedup] {len(removed)} duplicate atıldı, "
                     f"{len(deduped)} kaldı (orijinal: {len(agf_altilis)})")
+    else:
+        logger.info(f"[dedup] hiç duplicate bulunamadı, {len(deduped)} altılı")
 
     return deduped, removed
 
