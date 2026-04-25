@@ -80,6 +80,413 @@ def _compute_data_quality(all_results):
     return score, level, notes
 
 
+
+
+# ── SMART KUPON POST-PROCESSOR ────────────────────────────────────
+# Mevcut V6 kuponuna dokunmuyor; sadece annotation + light pruning.
+# Ekosistem: classify -> detect_dup -> postprocess -> format_annotations
+# ─────────────────────────────────────────────────────────────────
+
+# Leg classification thresholds (calibrated to V6 dataset, Apr 2026)
+_THR_SAFE_MODEL_TOP1 = 42.0   # model top1 prob (%)
+_THR_SAFE_AGF_TOP1   = 25.0   # market top1 prob (%)
+_THR_SAFE_GAP        = 12.0   # model_top1 - model_top2 (%)
+_THR_ALPHA_MODEL     = 40.0   # model top1 (%) for ALPHA
+_THR_ALPHA_VALUE     = 20.0   # value_edge for ALPHA
+_THR_CHAOS_MODEL     = 25.0   # model top1 below this and...
+_THR_CHAOS_GAP       = 8.0    # ...gap below this -> CHAOS
+
+# Budget caps (UPPER LIMIT only, not floor)
+_BUDGET_DAR_MAX      = 2500.0
+_BUDGET_GENIS_MAX    = 5000.0
+
+
+def classify_leg_for_display(leg_summary):
+    """Sınıflandır: SAFE / ALPHA / NARROW / CHAOS.
+
+    Args:
+        leg_summary: legs_summary[i] dict from current V6 output
+                     (has top3 with model_prob, agf_pct, value_edge)
+    Returns:
+        dict: {"type": ..., "reason": ..., "top_horse_number": ..., "top_horse_name": ...}
+    """
+    top3 = leg_summary.get("top3", []) or []
+    if not top3:
+        return {"type": "NARROW", "reason": "no top3 data",
+                "top_horse_number": None, "top_horse_name": None}
+
+    h1 = top3[0]
+    h2 = top3[1] if len(top3) > 1 else {}
+
+    m1 = float(h1.get("model_prob", 0) or 0)
+    m2 = float(h2.get("model_prob", 0) or 0)
+    a1 = float(h1.get("agf_pct", 0) or 0)
+    v1 = float(h1.get("value_edge", 0) or 0)
+    gap = m1 - m2
+
+    top_name = h1.get("name", "?")
+    top_num  = h1.get("number")
+
+    # Market agreement: AGF top horse same as model top horse?
+    # (we infer: if h1 has high agf_pct and high model_prob, market agrees)
+    market_agrees = (a1 >= _THR_SAFE_AGF_TOP1 * 0.6)  # soft check
+
+    # SAFE: strong model + market confirms + clear lead
+    if (m1 >= _THR_SAFE_MODEL_TOP1
+            and a1 >= _THR_SAFE_AGF_TOP1
+            and gap >= _THR_SAFE_GAP
+            and market_agrees):
+        return {"type": "SAFE",
+                "reason": f"model {m1:.0f}% + AGF {a1:.0f}% + gap {gap:.0f}%",
+                "top_horse_number": top_num, "top_horse_name": top_name}
+
+    # ALPHA: model loves it, market underestimates
+    if m1 >= _THR_ALPHA_MODEL and v1 >= _THR_ALPHA_VALUE:
+        return {"type": "ALPHA",
+                "reason": f"model {m1:.0f}% vs AGF {a1:.0f}% (+{v1:.0f} edge)",
+                "top_horse_number": top_num, "top_horse_name": top_name}
+
+    # CHAOS: low confidence + spread
+    if m1 < _THR_CHAOS_MODEL and gap < _THR_CHAOS_GAP:
+        return {"type": "CHAOS",
+                "reason": f"model güveni düşük ({m1:.0f}%), spread var",
+                "top_horse_number": top_num, "top_horse_name": top_name}
+
+    # NARROW: everything else
+    return {"type": "NARROW",
+            "reason": f"orta güven (model {m1:.0f}%, gap {gap:.0f}%)",
+            "top_horse_number": top_num, "top_horse_name": top_name}
+
+
+def detect_duplicate_altili_warning(all_results):
+    """Aynı hipodromda 2 altılının DAR kupon seçimi birebir aynı mı?
+
+    Silmiyor — işaretliyor (data_quality_status alanı).
+    Returns: (all_results [in-place modified], warnings_list)
+    """
+    if not all_results or len(all_results) < 2:
+        return all_results, []
+
+    def _kupon_sig(r):
+        try:
+            dar = r.get("dar") or {}
+            legs = dar.get("legs") or []
+            sig = []
+            for lg in legs:
+                sel = lg.get("selected") or []
+                nums = tuple(sorted(s.get("number") for s in sel
+                                    if isinstance(s, dict)
+                                    and s.get("number") is not None))
+                sig.append(nums)
+            return tuple(sig)
+        except Exception:
+            return ()
+
+    warnings = []
+    by_hippo = {}
+    for i, r in enumerate(all_results):
+        hippo = (r.get("hippodrome") or "?").lower().strip()
+        by_hippo.setdefault(hippo, []).append((i, r))
+
+    for hippo, items in by_hippo.items():
+        if len(items) < 2:
+            continue
+        # Pairwise compare DAR signatures
+        for a_idx in range(len(items)):
+            for b_idx in range(a_idx + 1, len(items)):
+                i_a, r_a = items[a_idx]
+                i_b, r_b = items[b_idx]
+                sig_a = _kupon_sig(r_a)
+                sig_b = _kupon_sig(r_b)
+                if not sig_a or not sig_b:
+                    continue
+                if sig_a == sig_b:
+                    msg = (f"{r_a.get('hippodrome')} altılı"
+                           f"#{r_a.get('altili_no')} ve "
+                           f"#{r_b.get('altili_no')}: DAR kuponları "
+                           f"birebir aynı (veri eksikliği şüphesi)")
+                    warnings.append({
+                        "hippodrome": r_a.get("hippodrome"),
+                        "altili_a": r_a.get("altili_no"),
+                        "altili_b": r_b.get("altili_no"),
+                        "type": "DUPLICATE_KUPON_SUSPICIOUS",
+                        "message": msg,
+                    })
+                    # Annotate both
+                    r_a["data_quality_status"] = "DUPLICATE_SUSPICIOUS"
+                    r_b["data_quality_status"] = "DUPLICATE_SUSPICIOUS"
+                    note = (f"Bu altılı, hipodromdaki diğer altılı (#"
+                            f"{r_b.get('altili_no') if r_a is items[a_idx][1] else r_a.get('altili_no')}"
+                            f") ile aynı atları gösteriyor. AGF kaynağında "
+                            f"farklı atlar gelmedi. Kupon bilgi amaçlıdır.")
+                    r_a.setdefault("diagnostic_notes", []).append(note)
+                    r_b.setdefault("diagnostic_notes", []).append(note)
+                    logger.warning(f"[smart] {msg}")
+
+    return all_results, warnings
+
+
+def smart_postprocess_kupon(result):
+    """Tek altılı için: classification + light pruning + annotations.
+
+    NEVER removes ALPHA or SAFE singles.
+    NEVER expands to fill budget.
+    Only prunes CHAOS extras then NARROW extras if cost > budget cap.
+    """
+    legs_summary = result.get("legs_summary") or []
+
+    # ── 1. Classify each leg ──
+    leg_classification = []
+    for ls in legs_summary:
+        cls = classify_leg_for_display(ls)
+        cls["ayak"] = ls.get("ayak") or ls.get("race_number")
+        leg_classification.append(cls)
+    result["leg_classification"] = leg_classification
+
+    # ── 2. Identify main alpha + main danger ──
+    alpha_legs = [c for c in leg_classification if c["type"] == "ALPHA"]
+    chaos_legs = [c for c in leg_classification if c["type"] == "CHAOS"]
+
+    # main_alpha: pick ALPHA with highest value_edge (re-fetch from legs_summary)
+    main_alpha = None
+    if alpha_legs:
+        best_edge = -999
+        for c in alpha_legs:
+            for ls in legs_summary:
+                if (ls.get("ayak") == c["ayak"]
+                        or ls.get("race_number") == c["ayak"]):
+                    top3 = ls.get("top3", [])
+                    if top3:
+                        edge = float(top3[0].get("value_edge", 0) or 0)
+                        if edge > best_edge:
+                            best_edge = edge
+                            main_alpha = c["ayak"]
+                    break
+    result["main_alpha_leg"] = main_alpha
+
+    # main_danger: first CHAOS, else lowest model_top1 leg
+    main_danger = None
+    if chaos_legs:
+        main_danger = chaos_legs[0]["ayak"]
+    else:
+        worst_m1 = 999
+        for ls in legs_summary:
+            top3 = ls.get("top3", [])
+            if top3:
+                m1 = float(top3[0].get("model_prob", 0) or 0)
+                if m1 < worst_m1:
+                    worst_m1 = m1
+                    main_danger = ls.get("ayak") or ls.get("race_number")
+    result["main_danger_leg"] = main_danger
+
+    # ── 3. Light pruning if cost > budget cap ──
+    notes = []
+    dar = result.get("dar") or {}
+    genis = result.get("genis") or {}
+
+    orig_dar_cost = dar.get("cost", 0)
+    orig_dar_combo = dar.get("combo", 0)
+    orig_genis_cost = genis.get("cost", 0)
+    orig_genis_combo = genis.get("combo", 0)
+
+    result["original_cost"] = {"dar": orig_dar_cost, "genis": orig_genis_cost}
+    result["original_combo"] = {"dar": orig_dar_combo, "genis": orig_genis_combo}
+
+    def _prune(kupon, max_cost, mode_name):
+        """Prune chaos→narrow extras while cost > max_cost. Never touch ALPHA/SAFE singles."""
+        if not kupon or kupon.get("cost", 0) <= max_cost:
+            return  # nothing to do
+
+        legs = kupon.get("legs") or []
+        # Map ayak -> classification type
+        cls_by_ayak = {c["ayak"]: c["type"] for c in leg_classification}
+
+        # Prune order: CHAOS first (weakest selected = lowest score = last)
+        for target_type in ("CHAOS", "NARROW"):
+            for tl in legs:
+                ayak = tl.get("leg_number")
+                if cls_by_ayak.get(ayak) != target_type:
+                    continue
+                sel = tl.get("selected") or []
+                # Don't reduce below 2 horses; never touch tek
+                if tl.get("is_tek") or len(sel) <= 2:
+                    continue
+                # Try removing weakest (last) until cost ok or limit hit
+                while len(sel) > 2 and kupon.get("cost", 0) > max_cost:
+                    removed = sel.pop()  # weakest
+                    # Recompute counts/combo/cost
+                    counts = [len((l.get("selected") or [])) for l in legs]
+                    combo = 1
+                    for c in counts:
+                        combo *= max(c, 1)
+                    unit = float(kupon.get("birim_fiyat", 1.25) or 1.25)
+                    new_cost = combo * unit
+                    kupon["counts"] = counts
+                    kupon["combo"] = combo
+                    kupon["cost"] = new_cost
+                    notes.append(
+                        f"[{mode_name}] trim: ayak{ayak} ({target_type}) "
+                        f"removed #{removed.get('number')} ({removed.get('name','?')})"
+                    )
+                if kupon.get("cost", 0) <= max_cost:
+                    return
+
+    _prune(dar, _BUDGET_DAR_MAX, "DAR")
+    _prune(genis, _BUDGET_GENIS_MAX, "GENIS")
+
+    result["optimized_cost"] = {
+        "dar": dar.get("cost", orig_dar_cost),
+        "genis": genis.get("cost", orig_genis_cost),
+    }
+    result["optimized_combo"] = {
+        "dar": dar.get("combo", orig_dar_combo),
+        "genis": genis.get("combo", orig_genis_combo),
+    }
+    result["optimization_notes"] = notes
+
+    # ── 4. Data quality status (combine with existing) ──
+    if not result.get("data_quality_status"):
+        # Default OK; might be overridden by detect_duplicate_altili_warning earlier
+        result["data_quality_status"] = "OK"
+
+    return result
+
+
+def format_live_test_annotations(base_msg, all_results):
+    """Mevcut Telegram mesajına annotation satırları enjekte et.
+
+    base_msg: _format_telegram_simple çıktısı (string)
+    all_results: hipodrom listesi (her birinde leg_classification, main_alpha_leg etc.)
+
+    Yaklaşım: her hipodrom block'unu bul ve başına annotation ekle.
+    Mevcut formatı bozma — sadece üzerine yaz.
+    """
+    if not base_msg or not all_results:
+        return base_msg
+
+    # Build per-hippodrome annotation block
+    # Mevcut header pattern: "🏇 <b>HIPPO X. ALTILI</b> | TIME"
+    out = base_msg
+    for r in all_results:
+        if r.get("error"):
+            continue
+        hippo_clean = (r.get("hippodrome") or "").replace(" Hipodromu", "").replace(" Hipodrom", "")
+        alt_no = r.get("altili_no", 1)
+        # Build annotation lines
+        ann_lines = []
+
+        dq = r.get("data_quality_status", "OK")
+        if dq == "DUPLICATE_SUSPICIOUS":
+            ann_lines.append("🛑 DATA_QUALITY_WARNING: Bu altılı diğer altılıyla birebir aynı")
+        elif dq in ("WARNING", "BAD"):
+            ann_lines.append(f"⚠️ Veri kalitesi: {dq}")
+        else:
+            ann_lines.append("🟢 Veri kalitesi: OK")
+
+        ma = r.get("main_alpha_leg")
+        md = r.get("main_danger_leg")
+        cls = r.get("leg_classification") or []
+        if ma:
+            alpha_cls = next((c for c in cls if c.get("ayak") == ma), None)
+            if alpha_cls:
+                ann_lines.append(
+                    f"💎 Ana ALPHA: Ayak {ma} — "
+                    f"{alpha_cls.get('top_horse_name','?')} "
+                    f"({alpha_cls.get('reason','')})"
+                )
+        if md:
+            danger_cls = next((c for c in cls if c.get("ayak") == md), None)
+            if danger_cls:
+                ann_lines.append(
+                    f"⚠️ Ana DANGER: Ayak {md} ({danger_cls.get('type','?')}) — "
+                    f"{danger_cls.get('reason','')}"
+                )
+
+        # Optimization note
+        opt_notes = r.get("optimization_notes") or []
+        if opt_notes:
+            ann_lines.append(f"✂️ Bütçe ayarı: {len(opt_notes)} at çıkarıldı")
+
+        # Find this hippo's header in base_msg
+        # Pattern: "🏇 <b>HIPPO N. ALTILI</b>"
+        # We inject ann_lines right after the verdict line (2 lines down)
+        try:
+            from html import escape as _esc
+        except ImportError:
+            _esc = lambda x: x
+        header_pattern = (f"\U0001f3c7 <b>{_esc(hippo_clean.upper())} "
+                          f"{alt_no}. ALTILI</b>")
+        if header_pattern not in out:
+            continue
+
+        # Find the verdict line (next "\n" after stars line)
+        idx = out.find(header_pattern)
+        if idx < 0:
+            continue
+        # Skip 2 lines (header line + stars/verdict line)
+        line_end_1 = out.find("\n", idx)
+        if line_end_1 < 0:
+            continue
+        line_end_2 = out.find("\n", line_end_1 + 1)
+        if line_end_2 < 0:
+            continue
+        # Inject annotation lines after line_end_2
+        injection = "\n" + "\n".join(ann_lines)
+        out = out[:line_end_2] + injection + out[line_end_2:]
+
+    return out
+
+
+def _inject_leg_tags_in_telegram(base_msg, all_results):
+    """Her hipodrom'un per-leg satırına [TYPE] etiketi ekle.
+
+    Pattern: "<b>1A</b> 4 · 5 · 1 · 3  <i>NAME</i>"
+    Becomes: "<b>1A</b> [ALPHA] 4 · 5 · 1 · 3  <i>NAME</i>"
+    """
+    if not base_msg or not all_results:
+        return base_msg
+
+    out = base_msg
+    for r in all_results:
+        cls = r.get("leg_classification") or []
+        if not cls:
+            continue
+        cls_by_ayak = {c.get("ayak"): c.get("type", "") for c in cls}
+        for ayak, ctype in cls_by_ayak.items():
+            if not ctype or not ayak:
+                continue
+            # Patterns to match (DAR-only annotation; genis is summarized in code block)
+            # "<b>1A</b> " (followed by emoji or numbers)
+            # We need to be careful — only first occurrence per leg per hippo
+            old1 = f"<b>{ayak}A</b> "
+            new1 = f"<b>{ayak}A</b> [{ctype}] "
+            # Replace only ONE occurrence per leg (DAR section), in this hippo's block
+            # Find the hippo header first
+            hippo_clean = (r.get("hippodrome") or "").replace(" Hipodromu", "").replace(" Hipodrom", "")
+            alt_no = r.get("altili_no", 1)
+            try:
+                from html import escape as _esc
+            except ImportError:
+                _esc = lambda x: x
+            header_pat = f"\U0001f3c7 <b>{_esc(hippo_clean.upper())} {alt_no}. ALTILI</b>"
+            h_idx = out.find(header_pat)
+            if h_idx < 0:
+                continue
+            # Section ends at next "🏇" or "═" or end of string
+            next_h = out.find("\U0001f3c7", h_idx + len(header_pat))
+            sect_end = next_h if next_h > 0 else len(out)
+            section = out[h_idx:sect_end]
+            # Replace ONLY first occurrence in this section
+            if old1 in section and new1 not in section:
+                section_new = section.replace(old1, new1, 1)
+                out = out[:h_idx] + section_new + out[sect_end:]
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────
+# END SMART KUPON POST-PROCESSOR
+# ─────────────────────────────────────────────────────────────────
+
 def _save_live_test_snapshot(result_dict):
     """Append today's canonical kupon to data/live_tests/YYYY-MM-DD.json.
     Idempotent; never raises (fire-and-forget)."""
@@ -401,6 +808,21 @@ def run_yerli_pipeline(target_date=None):
         return {'hippodromes': [], 'telegram_msg': f"\U0001f3c7 TJK \u2014 {date_str}\nBug\u00fcn yerli yar\u0131\u015f yok.",
                 'ts': datetime.utcnow().isoformat(), 'model_ok': model_ok, 'source': 'empty', 'date': date_str}
     
+    # ── SMART KUPON POST-PROCESSOR: classify + duplicate detect + light prune ──
+    try:
+        all_results, _smart_warnings = detect_duplicate_altili_warning(all_results)
+        for _r in all_results:
+            try:
+                smart_postprocess_kupon(_r)
+            except Exception as _e_pp:
+                logger.warning(f"[smart] postprocess failed for "
+                               f"{_r.get('hippodrome','?')}: {_e_pp}")
+        if _smart_warnings:
+            logger.warning(f"[smart] {len(_smart_warnings)} duplicate kupon uyarısı")
+    except Exception as _e_smart:
+        logger.warning(f"[smart] post-process layer failed: {_e_smart}")
+        _smart_warnings = []
+
     # ── LIVE-TEST MODE: data quality + CANLI TEST banner + snapshot ──
     dq_score, dq_level, dq_notes = _compute_data_quality(all_results)
     logger.info(f"[live_test] data_quality: score={dq_score} level={dq_level} "
@@ -431,6 +853,11 @@ def run_yerli_pipeline(target_date=None):
         }
     else:
         base_msg = _format_telegram_simple(all_results, date_str)
+        try:
+            base_msg = format_live_test_annotations(base_msg, all_results)
+            base_msg = _inject_leg_tags_in_telegram(base_msg, all_results)
+        except Exception as _e_ann:
+            logger.warning(f"[smart] telegram annotation failed: {_e_ann}")
         banner_lines = [LIVE_TEST_DISCLAIMER,
                         f"📊 Veri kalitesi: {dq_level} (skor {dq_score})"]
         if dq_level in ("WARNING", "BAD"):
