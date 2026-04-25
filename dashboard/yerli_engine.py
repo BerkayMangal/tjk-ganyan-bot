@@ -99,6 +99,66 @@ def _save_live_test_snapshot(result_dict):
         logger.warning(f"[live_test] snapshot save failed: {e}")
 
 
+
+
+def _altili_fingerprint(agf_alt):
+    """Her altılının atlarını fingerprint olarak çıkar.
+    İki altılının atları aynıysa fingerprint'leri aynı olur."""
+    legs = agf_alt.get("legs", []) or []
+    fp = []
+    for leg in legs:
+        if not leg:
+            fp.append(())
+            continue
+        nums = tuple(sorted(h.get("horse_number") for h in leg
+                             if h.get("horse_number") is not None))
+        fp.append(nums)
+    return tuple(fp)
+
+
+def _dedup_agf_altilis(agf_altilis):
+    """Aynı atları gösteren 'duplicate' altılıları temizle.
+    Returns: (deduped_list, removed_log)
+    """
+    if not agf_altilis:
+        return agf_altilis, []
+
+    seen = {}  # fingerprint -> first index that had it
+    deduped = []
+    removed = []
+
+    for i, alt in enumerate(agf_altilis):
+        hippo = alt.get("hippodrome", "?")
+        alt_no = alt.get("altili_no", "?")
+        fp = _altili_fingerprint(alt)
+
+        # Same hippodrome + same fingerprint = duplicate
+        key = (hippo, fp)
+        if key in seen:
+            first_idx = seen[key]
+            first_alt_no = agf_altilis[first_idx].get("altili_no", "?")
+            removed.append({
+                "removed_idx": i,
+                "removed_altili_no": alt_no,
+                "duplicate_of_idx": first_idx,
+                "duplicate_of_altili_no": first_alt_no,
+                "hippodrome": hippo,
+            })
+            logger.warning(
+                f"[dedup] {hippo} altılı#{alt_no} = altılı#{first_alt_no} (DUPLICATE, removed)"
+            )
+            continue
+
+        seen[key] = i
+        deduped.append(alt)
+
+    if removed:
+        logger.info(f"[dedup] {len(removed)} duplicate altılı temizlendi, "
+                    f"{len(deduped)} kaldı (orijinal: {len(agf_altilis)})")
+
+    return deduped, removed
+
+
 # ── ROBUST PATH FINDER ──
 # Railway CWD: /app/dashboard/ veya /app/ olabilir
 # model/ repo kokunde: /app/model/
@@ -216,6 +276,12 @@ def run_yerli_pipeline(target_date=None):
             from scraper.agf_scraper import agf_to_legs, enrich_legs_from_pdf
         except ImportError:
             from agf_scraper_local import agf_to_legs, enrich_legs_from_pdf
+
+        # ── DEDUP: aynı atları gösteren 2. altılıyı çıkar ──
+        agf_altilis, _removed_dups = _dedup_agf_altilis(agf_altilis)
+        if _removed_dups:
+            logger.warning(f"[pipeline] {len(_removed_dups)} duplicate altılı atıldı")
+
         for agf_alt in agf_altilis:
             try:
                 result = _process_proper_altili(agf_alt, program_data, target_date, model_ok)
