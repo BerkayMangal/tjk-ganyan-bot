@@ -1886,6 +1886,16 @@ def run_yerli_pipeline(target_date=None):
     except Exception as _e_sg_loop:
         logger.warning(f"[smart-genis] loop failed: {_e_sg_loop}")
 
+    # PATCH_V7_TOP3_TRANSPARENCY_v1
+    try:
+        for _r in all_results:
+            try:
+                _apply_v7_step1(_r)
+            except Exception as _e_v7:
+                logger.warning(f"[v7-step1] {_r.get('hippodrome','?')}: {_e_v7}")
+    except Exception as _e_v7_loop:
+        logger.warning(f"[v7-step1] loop failed: {_e_v7_loop}")
+
     # ── LIVE-TEST MODE: data quality + CANLI TEST banner + snapshot ──
     dq_score, dq_level, dq_notes = _compute_data_quality(all_results)
     logger.info(f"[live_test] data_quality: score={dq_score} level={dq_level} "
@@ -2504,8 +2514,78 @@ def _get_telegram_messages(results, date_str):
         lines.append(f"{stars} {verdict}{model_tag}")
         lines.append("")
 
+        # PATCH_V7_TOP3_TRANSPARENCY_v1
+        legs_summary_v7 = r.get("legs_summary") or []
+        gs_legs_v7 = (r.get("genis_smart") or {}).get("legs") or []
+        has_v7 = bool(legs_summary_v7) and any(
+            isinstance(L, dict) and L.get("top3_v7") for L in legs_summary_v7
+        )
         dar = r.get('dar')
-        if dar:
+        if has_v7:
+            lines.append("\U0001f9e0 <b>V7 ANAL\u0130Z</b>")
+            for _i_v7, _ls in enumerate(legs_summary_v7):
+                _top3 = _ls.get("top3_v7") or []
+                _diag = _ls.get("leg_diagnosis_v7") or {}
+                _dec = (gs_legs_v7[_i_v7].get("coupon_decision_v7")
+                        if _i_v7 < len(gs_legs_v7) else {}) or {}
+                _cls = _diag.get("type", "?")
+                _mr_tr = _diag.get("market_read_tr", "")
+                _sr_raw = (_diag.get("surprise_risk") or "UNKNOWN")
+                _sr = "bilinmiyor" if _sr_raw.upper() == "UNKNOWN" else _sr_raw.lower()
+                lines.append("")
+                lines.append(f"<b>{_i_v7+1}A</b> [{_cls} | {_mr_tr} | s\u00fcrpriz: {_sr}]")
+                if _top3:
+                    lines.append("  Top 3:")
+                    for _t in _top3:
+                        _bits = []
+                        _mp = _t.get("model_prob_pct")
+                        _ag = _t.get("agf_pct_pct")
+                        _ed = _t.get("value_edge_pct")
+                        _bits.append(f"model {_mp:.0f}%" if _mp is not None else "model \u2014")
+                        _bits.append(f"AGF {_ag:.0f}%" if _ag is not None else "AGF \u2014")
+                        if _ed is not None:
+                            _sign = "+" if _ed >= 0 else ""
+                            _bits.append(f"edge {_sign}{_ed:.0f}")
+                        else:
+                            _bits.append("edge \u2014")
+                        _nm = escape(str(_t.get('name', '?')))
+                        lines.append(
+                            f"    {_t.get('rank','?')}) #{_t.get('number','?')} "
+                            f"{_nm} \u2014 {', '.join(_bits)}"
+                        )
+                if _dec:
+                    _cov = _dec.get("coverage_type", "?")
+                    _primary = _dec.get("primary_pick") or {}
+                    _sel_nums = _dec.get("selected_numbers") or []
+                    if _cov == "BANKO_like" and _primary:
+                        lines.append(
+                            f"  V7 se\u00e7im: #{_primary.get('number')} "
+                            f"{escape(str(_primary.get('name', '?')))} ({_cov})"
+                        )
+                    else:
+                        _nums_str = ", ".join("#" + str(_n) for _n in _sel_nums)
+                        lines.append(
+                            f"  V7 se\u00e7im: {len(_sel_nums)} at ({_cov}) \u2014 {_nums_str}"
+                        )
+                    _wr = _dec.get("width_reason", "")
+                    if _wr:
+                        lines.append(f"  Neden: {escape(_wr)}")
+                    _alts = _dec.get("alternatives_following") or []
+                    if _alts:
+                        _alt_str = ", ".join(f"#{_a.get('number')}" for _a in _alts[:3])
+                        lines.append(f"  Takipte: {_alt_str}")
+                    _audit = _dec.get("single_audit_v7")
+                    if _audit and _audit.get("suspect"):
+                        _reasons = _audit.get("reasons", [])
+                        _joined = "; ".join(_reasons)[:140]
+                        lines.append(f"  \u26a0 Single audit: suspect \u2014 {_joined}")
+            if dar:
+                lines.append("")
+                lines.append(
+                    f"\U0001f4b0 <b>DAR</b> {dar['cost']:,.0f} TL | "
+                    f"{dar['combo']} kombi | {dar['n_singles']} tek | {dar.get('hitrate_pct', '?')}"
+                )
+        elif dar:
             for tl in dar.get('legs', []):
                 sel = tl.get('selected', [])
                 leg_num = tl['leg_number']
@@ -2552,9 +2632,291 @@ def _get_telegram_messages(results, date_str):
 
         lines.append("")
         lines.append("\U0001f340 Sorumlu oyna.")
-        messages.append("\n".join(lines))
+        # PATCH_V7_TOP3_TRANSPARENCY_v1
+        _body_v7 = "\n".join(lines)
+        for _chunk in _safe_split_telegram_message(_body_v7, max_len=3800):
+            messages.append(_chunk)
 
     return messages if messages else ["\U0001f3c7 Bug\u00fcn alt\u0131l\u0131 yok."]
+
+
+def _apply_v7_step1(result):
+    """PATCH_V7_TOP3_TRANSPARENCY_v1.
+    Adds top3_v7, leg_diagnosis_v7 to legs_summary[i];
+    coupon_decision_v7 (and single_audit_v7 when BANKO_like) to
+    genis_smart.legs[i]; v7_meta at result level. Idempotent."""
+    if not isinstance(result, dict):
+        return result
+
+    legs_summary = result.get("legs_summary") or []
+    leg_class = result.get("leg_classification") or []
+    gs = result.get("genis_smart") or {}
+    gs_legs = gs.get("legs") or []
+
+    def _safe_int(v, default=9999):
+        try:
+            return int(v)
+        except Exception:
+            return default
+
+    def _pct_round(v):
+        if v is None:
+            return None
+        try:
+            return round(float(v), 1)
+        except Exception:
+            return None
+
+    def _rank_key(h):
+        score = h.get("score")
+        mp = h.get("model_prob")
+        num = _safe_int(h.get("number"))
+        if score is not None:
+            try:
+                return (0, -float(score), num)
+            except Exception:
+                pass
+        if mp is not None:
+            try:
+                return (1, -float(mp), num)
+            except Exception:
+                pass
+        return (2, num, 0)
+
+    def _market_read(top_horse):
+        if not top_horse:
+            return "unknown"
+        edge = top_horse.get("value_edge")
+        if edge is None:
+            return "unknown"
+        try:
+            e = float(edge)
+        except Exception:
+            return "unknown"
+        if e >= 15:
+            return "underestimates"
+        if e <= -15:
+            return "overhypes"
+        if -5 <= e <= 5:
+            return "agrees"
+        return "confused"
+
+    _MR_TR = {
+        "underestimates": "piyasa düşük görüyor",
+        "overhypes": "piyasa fazla yüklenmiş",
+        "agrees": "piyasa ile uyumlu",
+        "confused": "piyasa kararsız",
+        "unknown": "piyasa bilinmiyor",
+    }
+
+    for i, leg in enumerate(legs_summary):
+        pool_by_num = {}
+        def _ingest(h):
+            if not isinstance(h, dict):
+                return
+            n = _safe_int(h.get("number"))
+            if n == 9999:
+                return
+            cur = pool_by_num.get(n)
+            if cur is None:
+                pool_by_num[n] = dict(h)
+            else:
+                for k in ("score", "model_prob", "agf_pct", "value_edge"):
+                    if cur.get(k) is None and h.get(k) is not None:
+                        cur[k] = h.get(k)
+                if not cur.get("name") or cur.get("name") == "?":
+                    if h.get("name") and h.get("name") != "?":
+                        cur["name"] = h.get("name")
+        for h in (leg.get("all_horses") or []):
+            _ingest(h)
+        for h in (leg.get("top3") or []):
+            _ingest(h)
+        if i < len(gs_legs):
+            for h in (gs_legs[i].get("selected") or []):
+                _ingest(h)
+
+        ranked = sorted(pool_by_num.values(), key=_rank_key)
+        top3 = ranked[:3]
+
+        any_score = any(h.get("score") is not None for h in top3)
+        any_mp = any(h.get("model_prob") is not None for h in top3)
+        source = "model" if (any_score or any_mp) else "tjk_fallback"
+
+        cls_type = "?"
+        cls_reason = ""
+        if i < len(leg_class):
+            cls_type = leg_class[i].get("type", "?")
+            cls_reason = leg_class[i].get("reason", "")
+        if i < len(gs_legs) and gs_legs[i].get("leg_type") == "TJK_COVERAGE":
+            cls_type = "TJK_COVERAGE"
+
+        market_read = _market_read(top3[0] if top3 else None)
+
+        top3_v7 = []
+        for rank, h in enumerate(top3, 1):
+            mp = _pct_round(h.get("model_prob"))
+            ag = _pct_round(h.get("agf_pct"))
+            ed = _pct_round(h.get("value_edge"))
+            r_parts = []
+            if mp is not None:
+                r_parts.append(f"model {mp:.0f}%")
+            if ag is not None:
+                r_parts.append(f"AGF {ag:.0f}%")
+            if ed is not None:
+                sign = "+" if ed >= 0 else ""
+                r_parts.append(f"edge {sign}{ed:.0f}")
+            reason = ", ".join(r_parts) if r_parts else "veri yok (TJK kapsama)"
+            top3_v7.append({
+                "rank": rank,
+                "number": h.get("number"),
+                "name": h.get("name", "?"),
+                "model_prob_pct": mp,
+                "agf_pct_pct": ag,
+                "value_edge_pct": ed,
+                "reason": reason,
+                "source": source,
+            })
+
+        leg["top3_v7"] = top3_v7
+        leg["leg_diagnosis_v7"] = {
+            "type": cls_type,
+            "surprise_risk": "UNKNOWN",
+            "market_read": market_read,
+            "market_read_tr": _MR_TR.get(market_read, market_read),
+            "classification_reason": cls_reason,
+        }
+
+    def _coverage_type(leg_type, n_horses):
+        if leg_type == "TJK_COVERAGE":
+            return "tjk_fallback"
+        if n_horses <= 1:
+            return "BANKO_like"
+        if n_horses == 2:
+            return "top2_cover"
+        if n_horses == 3:
+            return "top3_cover"
+        if n_horses in (4, 5):
+            return "open_cover"
+        return "chaos_cover"
+
+    _WIDTH_REASON_TR = {
+        "BANKO_like": "Tek ana seçim — alternatifler takipte",
+        "top2_cover": "İlk 2 aday baskın",
+        "top3_cover": "İlk 3 aday domine ediyor",
+        "open_cover": "Birkaç meşru aday — orta genişlik",
+        "chaos_cover": "Belirsizlik yüksek — geniş tutuluyor",
+        "tjk_fallback": "AGF eksik, model yok — TJK kapsama",
+    }
+
+    for i, gleg in enumerate(gs_legs):
+        sel = gleg.get("selected") or []
+        sel_nums = [s.get("number") for s in sel]
+        n_h = len(sel)
+        cov_type = _coverage_type(gleg.get("leg_type", ""), n_h)
+        primary = None
+        if sel:
+            primary = {"number": sel[0].get("number"),
+                       "name": sel[0].get("name", "?")}
+
+        ls_top3 = []
+        if i < len(legs_summary):
+            ls_top3 = legs_summary[i].get("top3_v7", []) or []
+        sel_set = set(sel_nums)
+        alts = [
+            {"number": t.get("number"),
+             "name": t.get("name", "?"),
+             "model_prob_pct": t.get("model_prob_pct")}
+            for t in ls_top3 if t.get("number") not in sel_set
+        ]
+
+        decision = {
+            "leg_number": gleg.get("leg_number"),
+            "race_number": gleg.get("race_number"),
+            "selected_numbers": sel_nums,
+            "n_horses": n_h,
+            "coverage_type": cov_type,
+            "width_reason": _WIDTH_REASON_TR.get(cov_type, "?"),
+            "primary_pick": primary,
+            "alternatives_following": alts,
+        }
+
+        if cov_type == "BANKO_like":
+            top1 = ls_top3[0] if ls_top3 else {}
+            top2 = ls_top3[1] if len(ls_top3) > 1 else {}
+            top1_mp = top1.get("model_prob_pct")
+            top2_mp = top2.get("model_prob_pct")
+            top1_edge = top1.get("value_edge_pct")
+
+            top2_close = False
+            if (top1_mp is not None and top2_mp is not None
+                    and top1_mp > 0 and top2_mp >= 0.5 * top1_mp):
+                top2_close = True
+
+            weak_edge = (top1_edge is None or top1_edge < 10)
+
+            mr = "unknown"
+            sr = "UNKNOWN"
+            if i < len(legs_summary):
+                d = legs_summary[i].get("leg_diagnosis_v7") or {}
+                mr = d.get("market_read", "unknown")
+                sr = d.get("surprise_risk", "UNKNOWN")
+            market_not_supporting = mr in ("overhypes", "confused", "unknown")
+            surprise_unknown = (sr == "UNKNOWN")
+
+            reasons = []
+            if top2_close:
+                reasons.append("2. aday yakın (top2 ≥ %50 of top1)")
+            if weak_edge:
+                reasons.append("zayıf edge (top1 < +10)")
+            if market_not_supporting:
+                reasons.append(f"piyasa desteklemiyor ({mr})")
+            if surprise_unknown:
+                reasons.append("sürpriz riski bilinmiyor (Step 4 bekliyor)")
+
+            decision["single_audit_v7"] = {
+                "suspect": bool(reasons),
+                "reasons": reasons,
+                "top2_close": top2_close,
+                "weak_edge": weak_edge,
+                "market_not_supporting": market_not_supporting,
+                "surprise_unknown": surprise_unknown,
+            }
+
+        gleg["coupon_decision_v7"] = decision
+
+    result["v7_meta"] = {
+        "version": "v7_top3_transparency",
+        "step": 1,
+        "enabled": True,
+        "notes": ["consensus and surprise_risk pending Steps 3-4"],
+    }
+    return result
+
+
+def _safe_split_telegram_message(body, max_len=3800):
+    """PATCH_V7_TOP3_TRANSPARENCY_v1.
+    Splits a long altılı message into chunks under max_len chars at line
+    boundaries. Adds [Bölüm X/Y] tag on each chunk if more than one is needed."""
+    if not body or len(body) <= max_len:
+        return [body] if body else []
+    src_lines = body.split("\n")
+    chunks = []
+    current = []
+    current_len = 0
+    for line in src_lines:
+        line_len = len(line) + 1
+        if current_len + line_len > max_len and current:
+            chunks.append("\n".join(current))
+            current = []
+            current_len = 0
+        current.append(line)
+        current_len += line_len
+    if current:
+        chunks.append("\n".join(current))
+    if len(chunks) > 1:
+        n = len(chunks)
+        chunks = [f"[Bölüm {k+1}/{n}]\n{c}" for k, c in enumerate(chunks)]
+    return chunks
 
 
 def send_telegram_simple(results_dict):
