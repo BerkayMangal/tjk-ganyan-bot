@@ -804,22 +804,35 @@ def _build_legs_from_programme(programme_data, hippodrome, race_numbers):
         if not race:
             continue
         horses = race.get("horses") or []
-        # Build top3-style structure with no model prob
-        top_horses = []
-        for h in horses[:5]:
-            top_horses.append({
-                "number": h.get("horse_number") or h.get("number"),
+        # PATCH_REAL_TJK_NUMBERS_v1: keep ALL field horses (was buggy [:5]).
+        # Use real TJK horse_number / horse_name; normalize numbers to int when
+        # safe and sort robustly so str/int mixes from upstream cannot crash sort.
+        def _safe_horse_num(v):
+            try:
+                return int(v)
+            except Exception:
+                return 9999
+        all_horses_full = []
+        for h in horses:
+            num = h.get("horse_number") or h.get("number")
+            if num is None:
+                continue
+            num_norm = int(num) if str(num).isdigit() else num
+            all_horses_full.append({
+                "number": num_norm,
                 "name": h.get("horse_name") or h.get("name", "?"),
                 "agf_pct": None,
                 "model_prob": None,
                 "value_edge": None,
             })
+        # Sort by horse_number ascending; coercion-safe for str/int mixes.
+        all_horses_full.sort(key=lambda x: _safe_horse_num(x.get("number")))
         legs.append({
             "ayak": i + 1,
             "race_number": race_no,
             "n_runners": len(horses),
-            "top3": top_horses[:3],
-            "all_horses": top_horses,
+            "top3": all_horses_full[:3],
+            "all_horses": all_horses_full,
             "agf_missing": True,
             "leg_type": "TJK_ONLY",
             "breed": race.get("group_name", "")[:10],
