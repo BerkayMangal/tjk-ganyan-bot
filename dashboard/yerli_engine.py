@@ -1896,6 +1896,20 @@ def run_yerli_pipeline(target_date=None):
     except Exception as _e_v7_loop:
         logger.warning(f"[v7-step1] loop failed: {_e_v7_loop}")
 
+    # PATCH_V7_STRICT_SINGLE_AUDIT_v1: strict TEK audit (advisory default)
+    _v7_strict_mode = os.environ.get("V7_STRICT_SINGLE_MODE", "advisory").strip().lower()
+    if _v7_strict_mode not in ("advisory", "enforce"):
+        _v7_strict_mode = "advisory"
+    try:
+        for _r in all_results:
+            try:
+                _v7_strict_single_audit(_r, mode=_v7_strict_mode)
+            except Exception as _e_sa:
+                logger.warning(f"[v7-strict] {_r.get('hippodrome','?')}: {_e_sa}")
+        logger.info(f"[v7-strict] mode={_v7_strict_mode}")
+    except Exception as _e_sa_loop:
+        logger.warning(f"[v7-strict] loop failed: {_e_sa_loop}")
+
     # ── LIVE-TEST MODE: data quality + CANLI TEST banner + snapshot ──
     dq_score, dq_level, dq_notes = _compute_data_quality(all_results)
     logger.info(f"[live_test] data_quality: score={dq_score} level={dq_level} "
@@ -2574,11 +2588,36 @@ def _get_telegram_messages(results, date_str):
                     if _alts:
                         _alt_str = ", ".join(f"#{_a.get('number')}" for _a in _alts[:3])
                         lines.append(f"  Takipte: {_alt_str}")
-                    _audit = _dec.get("single_audit_v7")
-                    if _audit and _audit.get("suspect"):
-                        _reasons = _audit.get("reasons", [])
-                        _joined = "; ".join(_reasons)[:140]
-                        lines.append(f"  \u26a0 Single audit: suspect \u2014 {_joined}")
+                    # PATCH_V7_STRICT_SINGLE_AUDIT_v1: verdict-aware render.
+                    _verdict_v7 = _dec.get("verdict_v7")
+                    _alts_v7 = _dec.get("alternatives_following") or []
+                    _widen_to_v7 = _dec.get("would_widen_to_v7") or []
+                    if _verdict_v7 in ("clean_safe_single", "clean_alpha_single"):
+                        pass
+                    elif _verdict_v7 == "forbidden_would_widen":
+                        _widen_str = ", ".join(f"#{_n}" for _n in _widen_to_v7[:3])
+                        if _widen_str:
+                            lines.append(
+                                f"  \u2139\ufe0f V7 audit: single geni\u015fletilmeli "
+                                f"olabilir \u2014 \u00f6neri: {_widen_str}"
+                            )
+                    elif _verdict_v7 == "forbidden_widened":
+                        lines.append("  \U0001f4d0 V7: single iptal, geni\u015fletildi")
+                    elif _verdict_v7 == "suspect_kept":
+                        _alt_str = ", ".join(f"#{_a.get('number')}" for _a in _alts_v7[:2])
+                        if _alt_str:
+                            lines.append(
+                                f"  \u26a0 V7 audit: takipte g\u00fc\u00e7l\u00fc "
+                                f"alternatif var \u2014 {_alt_str}"
+                            )
+                        else:
+                            lines.append("  \u26a0 V7 audit: single \u015f\u00fcpheli")
+                    else:
+                        _audit = _dec.get("single_audit_v7")
+                        if _audit and _audit.get("suspect"):
+                            _reasons = _audit.get("reasons", [])
+                            _joined = "; ".join(_reasons)[:140]
+                            lines.append(f"  \u26a0 Single audit: suspect \u2014 {_joined}")
             if dar:
                 lines.append("")
                 lines.append(
@@ -2870,8 +2909,7 @@ def _apply_v7_step1(result):
                 reasons.append("zayıf edge (top1 < +10)")
             if market_not_supporting:
                 reasons.append(f"piyasa desteklemiyor ({mr})")
-            if surprise_unknown:
-                reasons.append("sürpriz riski bilinmiyor (Step 4 bekliyor)")
+            # PATCH_V7_STRICT_SINGLE_AUDIT_v1: surprise_unknown demoted to telemetry only.
 
             decision["single_audit_v7"] = {
                 "suspect": bool(reasons),
@@ -2917,6 +2955,232 @@ def _safe_split_telegram_message(body, max_len=3800):
         n = len(chunks)
         chunks = [f"[Bölüm {k+1}/{n}]\n{c}" for k, c in enumerate(chunks)]
     return chunks
+
+
+def _v7_strict_single_audit(result, mode="advisory"):
+    """PATCH_V7_STRICT_SINGLE_AUDIT_v1.
+    Audits each BANKO_like single in genis_smart.legs against stricter
+    SAFE_SINGLE / ALPHA_SINGLE / FORBIDDEN_SINGLE rules. Writes verdict_v7
+    onto coupon_decision_v7. In 'enforce' mode, mutates selected to widen
+    forbidden singles. Idempotent — running twice is safe."""
+    if not isinstance(result, dict):
+        return result
+
+    gs = result.get("genis_smart") or {}
+    gs_legs = gs.get("legs") or []
+    legs_summary = result.get("legs_summary") or []
+    repaired_overall = (result.get("data_quality_status") == "REPAIRED_FROM_TJK"
+                        or bool(result.get("agf_missing")))
+
+    counts_total = {"clean_safe_single": 0, "clean_alpha_single": 0,
+                    "suspect_kept": 0, "forbidden_would_widen": 0,
+                    "forbidden_widened": 0, "not_single": 0}
+    audit_log = []
+    cost_changed = False
+
+    for i, gleg in enumerate(gs_legs):
+        dec = gleg.get("coupon_decision_v7") or {}
+        cov = dec.get("coverage_type")
+        if cov != "BANKO_like":
+            counts_total["not_single"] += 1
+            continue
+
+        ls = legs_summary[i] if i < len(legs_summary) else {}
+        diag = ls.get("leg_diagnosis_v7") or {}
+        top3 = ls.get("top3_v7") or []
+        leg_type = diag.get("type", "?")
+        market_read = diag.get("market_read", "unknown")
+
+        primary = dec.get("primary_pick") or {}
+        sel_num = primary.get("number")
+
+        top1 = top3[0] if top3 else {}
+        top2 = top3[1] if len(top3) > 1 else {}
+        top1_num = top1.get("number")
+        top1_mp = top1.get("model_prob_pct")
+        top2_mp = top2.get("model_prob_pct")
+        top1_edge = top1.get("value_edge_pct")
+
+        forbidden_reasons = []
+        if leg_type in ("CHAOS", "OPEN", "TJK_COVERAGE"):
+            forbidden_reasons.append(f"leg_type {leg_type} forbidden for single")
+        if repaired_overall:
+            forbidden_reasons.append("repaired altılı")
+        if top1_mp is not None and top1_mp < 35:
+            forbidden_reasons.append(f"top1 {top1_mp:.0f}% < 35%")
+        if (top1_mp is not None and top2_mp is not None and top1_mp > 0
+                and top2_mp >= 0.60 * top1_mp):
+            forbidden_reasons.append(
+                f"top2/top1 = {top2_mp/top1_mp*100:.0f}% ≥ 60%"
+            )
+        if (sel_num is not None and top1_num is not None
+                and sel_num != top1_num):
+            forbidden_reasons.append(
+                f"selected #{sel_num} ≠ model top1 #{top1_num}"
+            )
+
+        if forbidden_reasons:
+            widen_nums = []
+            if top1 and top2 and top1.get("number") is not None and top2.get("number") is not None:
+                if (top1_mp is not None and top1_mp >= 30 and
+                        top2_mp is not None and top1_mp > 0 and
+                        top2_mp < 0.70 * top1_mp):
+                    widen_nums = [top1.get("number"), top2.get("number")]
+                else:
+                    widen_nums = [t.get("number") for t in top3[:3]
+                                  if t.get("number") is not None]
+            verdict = "forbidden_widened" if mode == "enforce" else "forbidden_would_widen"
+
+            dec["verdict_v7"] = verdict
+            dec["audit_rule_reasons_v7"] = forbidden_reasons
+            dec["would_widen_to_v7"] = widen_nums
+            audit_log.append({
+                "leg_number": gleg.get("leg_number"),
+                "race_number": gleg.get("race_number"),
+                "verdict": verdict,
+                "rule_reasons": list(forbidden_reasons),
+                "current_selected": [sel_num] if sel_num is not None else [],
+                "would_widen_to": widen_nums,
+            })
+
+            if mode == "enforce" and len(widen_nums) >= 2:
+                cur_selected = list(gleg.get("selected") or [])
+                cur_set = {s.get("number") for s in cur_selected}
+                new_selected = list(cur_selected)
+                for n in widen_nums:
+                    if n in cur_set:
+                        continue
+                    src_h = next((t for t in top3 if t.get("number") == n), None)
+                    if src_h is None:
+                        continue
+                    new_selected.append({
+                        "number": src_h.get("number"),
+                        "name": src_h.get("name"),
+                        "model_prob": src_h.get("model_prob_pct"),
+                        "agf_pct": src_h.get("agf_pct_pct"),
+                        "value_edge": src_h.get("value_edge_pct"),
+                        "from_strict_widen_v7": True,
+                    })
+                gleg["selected"] = new_selected
+                gleg["n_pick"] = len(new_selected)
+                new_n = len(new_selected)
+                if new_n == 2:
+                    new_cov = "top2_cover"
+                elif new_n == 3:
+                    new_cov = "top3_cover"
+                else:
+                    new_cov = "open_cover"
+                dec["coverage_type"] = new_cov
+                dec["n_horses"] = new_n
+                dec["selected_numbers"] = [s.get("number") for s in new_selected]
+                cost_changed = True
+
+            counts_total[verdict] += 1
+            continue
+
+        safe_reasons = []
+        if leg_type != "SAFE":
+            safe_reasons.append(f"leg_type {leg_type} ≠ SAFE")
+        if sel_num != top1_num:
+            safe_reasons.append("selected ≠ top1")
+        if top1_mp is None or top1_mp < 42:
+            safe_reasons.append(f"top1 < 42% (got {top1_mp})")
+        if (top1_mp is not None and top2_mp is not None
+                and top1_mp - top2_mp < 12):
+            safe_reasons.append(f"top1-top2 gap < 12pp")
+        if top1_edge is not None and top1_edge < -5:
+            safe_reasons.append(f"edge {top1_edge} < -5")
+        if market_read not in ("agrees", "underestimates"):
+            safe_reasons.append(f"market_read {market_read}")
+
+        if not safe_reasons:
+            verdict = "clean_safe_single"
+            dec["verdict_v7"] = verdict
+            dec["audit_rule_reasons_v7"] = ["all SAFE_SINGLE rules pass"]
+            dec["would_widen_to_v7"] = []
+            counts_total[verdict] += 1
+            audit_log.append({
+                "leg_number": gleg.get("leg_number"),
+                "race_number": gleg.get("race_number"),
+                "verdict": verdict,
+                "rule_reasons": ["all SAFE_SINGLE rules pass"],
+                "current_selected": [sel_num],
+            })
+            continue
+
+        alpha_reasons = []
+        if leg_type != "ALPHA":
+            alpha_reasons.append(f"leg_type {leg_type} ≠ ALPHA")
+        if sel_num != top1_num:
+            alpha_reasons.append("selected ≠ top1")
+        if top1_mp is None or top1_mp < 45:
+            alpha_reasons.append(f"top1 < 45% (got {top1_mp})")
+        if (top1_mp is not None and top2_mp is not None
+                and top1_mp - top2_mp < 15):
+            alpha_reasons.append(f"top1-top2 gap < 15pp")
+        if top1_edge is None or top1_edge < 15:
+            alpha_reasons.append(f"edge < 15 (got {top1_edge})")
+        if market_read != "underestimates":
+            alpha_reasons.append(f"market_read {market_read} ≠ underestimates")
+
+        if not alpha_reasons:
+            verdict = "clean_alpha_single"
+            dec["verdict_v7"] = verdict
+            dec["audit_rule_reasons_v7"] = ["all ALPHA_SINGLE rules pass"]
+            dec["would_widen_to_v7"] = []
+            counts_total[verdict] += 1
+            audit_log.append({
+                "leg_number": gleg.get("leg_number"),
+                "race_number": gleg.get("race_number"),
+                "verdict": verdict,
+                "rule_reasons": ["all ALPHA_SINGLE rules pass"],
+                "current_selected": [sel_num],
+            })
+            continue
+
+        verdict = "suspect_kept"
+        merged = []
+        if "leg_type" not in " ".join(safe_reasons + alpha_reasons):
+            merged.append("not classified SAFE or ALPHA")
+        merged.extend(r for r in safe_reasons if "leg_type" not in r)
+        merged = list(dict.fromkeys(merged))
+        if not merged:
+            merged = safe_reasons or alpha_reasons or ["unspecified"]
+        dec["verdict_v7"] = verdict
+        dec["audit_rule_reasons_v7"] = merged
+        dec["would_widen_to_v7"] = []
+        counts_total[verdict] += 1
+        audit_log.append({
+            "leg_number": gleg.get("leg_number"),
+            "race_number": gleg.get("race_number"),
+            "verdict": verdict,
+            "rule_reasons": merged,
+            "current_selected": [sel_num] if sel_num is not None else [],
+        })
+
+    if cost_changed and gs:
+        new_counts = []
+        for L in gs_legs:
+            sel_n = L.get("n_pick")
+            if sel_n is None:
+                sel_n = len(L.get("selected") or [])
+            new_counts.append(sel_n)
+        new_combo = 1
+        for c in new_counts:
+            new_combo *= max(c, 1)
+        unit = gs.get("birim_fiyat", 1.25)
+        gs["counts"] = new_counts
+        gs["combo"] = new_combo
+        gs["cost"] = round(new_combo * unit, 2)
+
+    result["v7_strict_audit_meta"] = {
+        "version": "v7_strict_single_audit",
+        "step": "phase1",
+        "mode": mode,
+        "counts": counts_total,
+        "log": audit_log,
+    }
+    return result
 
 
 def send_telegram_simple(results_dict):
