@@ -934,8 +934,124 @@ def detect_and_repair_duplicates(all_results, programme_data, target_date=None):
             "repair_status": result.get("repair_status", "?"),
             "race_numbers_recovered": result.get("race_numbers", []),
         })
+    # PATCH_CROSS_ALTILI_ORDERING_v1: enrich repaired altılıs with model
+    # information from same-hippodrome non-repaired altılıs that share races.
+    try:
+        _enrich_repaired_legs_with_cross_altili_data(all_results)
+    except Exception as _e_enrich:
+        try:
+            logger.warning(f"[smart-repair] cross-altılı enrichment failed: {_e_enrich}")
+        except Exception:
+            pass
     return all_results, actions
 
+
+
+def _enrich_repaired_legs_with_cross_altili_data(all_results):
+    """PATCH_CROSS_ALTILI_ORDERING_v1.
+    For each REPAIRED_FROM_TJK altılı, copy model/AGF fields onto each horse in
+    legs_summary[*].all_horses by matching horse_number against non-repaired
+    altılıs of the same hippodrome that cover the same race_number.
+
+    Does NOT fabricate data: only fills fields that are None and only from a
+    real source. Real horse_number / horse_name come from TJK programme and
+    are left untouched. Idempotent: re-running just no-ops."""
+    if not all_results:
+        return all_results
+
+    def _norm_hippo(h):
+        return (h or "").lower().replace(" hipodromu", "").replace(" hipodrom", "").strip()
+
+    def _to_int(v):
+        try:
+            return int(v)
+        except Exception:
+            return v
+
+    known = {}
+    for r in (all_results or []):
+        if not isinstance(r, dict):
+            continue
+        if r.get("data_quality_status") == "REPAIRED_FROM_TJK":
+            continue
+        if r.get("agf_missing"):
+            continue
+        hippo = _norm_hippo(r.get("hippodrome"))
+
+        for leg in (r.get("legs_summary") or []):
+            race_no = leg.get("race_number") or leg.get("ayak")
+            if race_no is None:
+                continue
+            bucket = known.setdefault((hippo, race_no), {})
+            for h in (leg.get("top3") or []) + (leg.get("all_horses") or []):
+                if not isinstance(h, dict):
+                    continue
+                num = _to_int(h.get("number"))
+                if num is None:
+                    continue
+                fields = {
+                    "score": h.get("score"),
+                    "model_prob": h.get("model_prob"),
+                    "agf_pct": h.get("agf_pct"),
+                    "value_edge": h.get("value_edge"),
+                }
+                cur = bucket.get(num)
+                if cur is None:
+                    bucket[num] = {k: v for k, v in fields.items() if v is not None}
+                else:
+                    for k, v in fields.items():
+                        if v is not None and cur.get(k) is None:
+                            cur[k] = v
+
+        for kupon_key in ("dar", "genis"):
+            kupon = r.get(kupon_key) or {}
+            for leg in (kupon.get("legs") or []):
+                race_no = leg.get("race_number")
+                if race_no is None:
+                    continue
+                bucket = known.setdefault((hippo, race_no), {})
+                for h in (leg.get("selected") or []):
+                    if not isinstance(h, dict):
+                        continue
+                    num = _to_int(h.get("number"))
+                    if num is None:
+                        continue
+                    cur = bucket.get(num)
+                    if cur is None:
+                        cur = {}
+                        bucket[num] = cur
+                    if cur.get("score") is None and h.get("score") is not None:
+                        cur["score"] = h.get("score")
+
+    for r in (all_results or []):
+        if not isinstance(r, dict):
+            continue
+        if r.get("data_quality_status") != "REPAIRED_FROM_TJK":
+            continue
+        hippo = _norm_hippo(r.get("hippodrome"))
+        for leg in (r.get("legs_summary") or []):
+            race_no = leg.get("race_number") or leg.get("ayak")
+            if race_no is None:
+                continue
+            bucket = known.get((hippo, race_no))
+            if not bucket:
+                continue
+            n_enriched = 0
+            for h in (leg.get("all_horses") or []):
+                if not isinstance(h, dict):
+                    continue
+                num = _to_int(h.get("number"))
+                src = bucket.get(num)
+                if not src:
+                    continue
+                for k in ("score", "model_prob", "agf_pct", "value_edge"):
+                    if h.get(k) is None and src.get(k) is not None:
+                        h[k] = src[k]
+                n_enriched += 1
+            if n_enriched > 0:
+                leg["cross_altili_enriched"] = n_enriched
+
+    return all_results
 
 
 def _coverage_count_for_field_size(n_runners):
@@ -970,7 +1086,29 @@ def build_tjk_coverage_kupon(result):
         if n_pick < 2:
             n_pick = min(2, len(all_horses))
 
-        chosen = all_horses[:n_pick]
+        # PATCH_CROSS_ALTILI_ORDERING_v1: prefer model-informed horses when
+        # cross-altılı enrichment populated score / model_prob; fall back to
+        # ascending horse_number for legs with no model info available.
+        def _cov_sort_key(h):
+            score = h.get("score")
+            mp = h.get("model_prob")
+            try:
+                num_int = int(h.get("number")) if h.get("number") is not None else 9999
+            except Exception:
+                num_int = 9999
+            if score is not None:
+                try:
+                    return (0, -float(score), num_int)
+                except Exception:
+                    pass
+            if mp is not None:
+                try:
+                    return (1, -float(mp), num_int)
+                except Exception:
+                    pass
+            return (2, num_int, 0)
+        all_horses_sorted = sorted(all_horses, key=_cov_sort_key)
+        chosen = all_horses_sorted[:n_pick]
 
         smart_legs.append({
             "leg_number": i + 1,
