@@ -487,6 +487,657 @@ def _inject_leg_tags_in_telegram(base_msg, all_results):
 # END SMART KUPON POST-PROCESSOR
 # ─────────────────────────────────────────────────────────────────
 
+
+
+# ─────────────────────────────────────────────────────────────────
+# DUPLICATE ALTILI REPAIR + SMART GENIŞ SIZING (Apr 2026)
+# Philosophy:
+#   GENIŞ = buy uncertainty where uncertainty is real.
+#   Cost is OUTPUT, not target.
+# ─────────────────────────────────────────────────────────────────
+
+import re as _re_smart
+import urllib.request as _urlreq_smart
+
+
+# 5-tier classification thresholds
+_THR_SAFE_MODEL_TOP1 = 42.0
+_THR_SAFE_AGF_TOP1   = 25.0
+_THR_SAFE_GAP        = 12.0
+_THR_ALPHA_MODEL     = 40.0
+_THR_ALPHA_VALUE     = 20.0
+_THR_ALPHA_RISK_M2   = 25.0
+_THR_OPEN_MODEL      = 30.0
+_THR_OPEN_GAP_HI     = 15.0
+_THR_CHAOS_MODEL     = 25.0
+_THR_CHAOS_GAP       = 8.0
+
+# GENIŞ width per classification (defaults; risky alpha bumps to 2)
+_GENIS_WIDTH = {
+    "SAFE":   1,
+    "ALPHA":  1,
+    "NARROW": 4,
+    "OPEN":   5,
+    "CHAOS":  6,
+}
+_GENIS_MAX_WIDTH = {
+    "SAFE":   2,
+    "ALPHA":  2,
+    "NARROW": 4,
+    "OPEN":   5,
+    "CHAOS":  6,
+}
+
+_BUDGET_GENIS_HARD_CAP = 5000.0
+
+
+def classify_leg_v2(leg_summary):
+    """5-tier: SAFE/ALPHA/NARROW/OPEN/CHAOS. Anchor on highest model_prob horse."""
+    top3 = leg_summary.get("top3", []) or []
+    if not top3:
+        return {"type": "NARROW", "reason": "veri yok",
+                "top_horse_number": None, "top_horse_name": None,
+                "is_risky_alpha": False}
+
+    def _mp(h):
+        v = h.get("model_prob")
+        return float(v) if v is not None else 0.0
+
+    sorted_by_model = sorted(top3, key=_mp, reverse=True)
+    h1 = sorted_by_model[0]
+    h2 = sorted_by_model[1] if len(sorted_by_model) > 1 else {}
+
+    m1 = float(h1.get("model_prob", 0) or 0)
+    m2 = float(h2.get("model_prob", 0) or 0)
+    a1 = float(h1.get("agf_pct", 0) or 0)
+    v1 = float(h1.get("value_edge", 0) or 0)
+    gap = m1 - m2
+
+    top_name = h1.get("name", "?")
+    top_num  = h1.get("number")
+
+    if (m1 >= _THR_SAFE_MODEL_TOP1
+            and a1 >= _THR_SAFE_AGF_TOP1
+            and gap >= _THR_SAFE_GAP):
+        return {"type": "SAFE",
+                "reason": f"banker — model {m1:.0f}% + AGF {a1:.0f}% + gap {gap:.0f}%",
+                "top_horse_number": top_num, "top_horse_name": top_name,
+                "is_risky_alpha": False,
+                "model_top1": m1, "agf_top1": a1, "gap": gap}
+
+    if m1 >= _THR_ALPHA_MODEL and v1 >= _THR_ALPHA_VALUE:
+        risky = (m2 >= _THR_ALPHA_RISK_M2)
+        return {"type": "ALPHA",
+                "reason": f"model {m1:.0f}% vs AGF {a1:.0f}% (+{v1:.0f} edge)"
+                          + (f" — riskli (top2 model {m2:.0f}%)" if risky else " — net"),
+                "top_horse_number": top_num, "top_horse_name": top_name,
+                "is_risky_alpha": risky,
+                "model_top1": m1, "agf_top1": a1, "gap": gap, "value_edge": v1}
+
+    if m1 < _THR_CHAOS_MODEL and gap < _THR_CHAOS_GAP:
+        return {"type": "CHAOS",
+                "reason": f"model güveni düşük ({m1:.0f}%), kapsama gerek",
+                "top_horse_number": top_num, "top_horse_name": top_name,
+                "is_risky_alpha": False,
+                "model_top1": m1, "agf_top1": a1, "gap": gap}
+
+    if m1 < _THR_OPEN_MODEL and gap < _THR_OPEN_GAP_HI:
+        return {"type": "OPEN",
+                "reason": f"net favori yok (model {m1:.0f}%, gap {gap:.0f}%)",
+                "top_horse_number": top_num, "top_horse_name": top_name,
+                "is_risky_alpha": False,
+                "model_top1": m1, "agf_top1": a1, "gap": gap}
+
+    return {"type": "NARROW",
+            "reason": f"orta güven (model {m1:.0f}%, gap {gap:.0f}%)",
+            "top_horse_number": top_num, "top_horse_name": top_name,
+            "is_risky_alpha": False,
+            "model_top1": m1, "agf_top1": a1, "gap": gap}
+
+
+def _altili_dar_signature_v2(result):
+    try:
+        legs = (result.get("dar") or {}).get("legs") or []
+        sig = []
+        for lg in legs:
+            sel = lg.get("selected") or []
+            nums = tuple(sorted(s.get("number") for s in sel
+                                if isinstance(s, dict)
+                                and s.get("number") is not None))
+            sig.append(nums)
+        return tuple(sig)
+    except Exception:
+        return ()
+
+
+def _detect_duplicate_pairs_v2(all_results):
+    by_hippo = {}
+    for i, r in enumerate(all_results):
+        if r.get("error"):
+            continue
+        hippo = (r.get("hippodrome") or "?").lower().strip()
+        by_hippo.setdefault(hippo, []).append((i, r))
+
+    duplicates = []
+    for hippo, items in by_hippo.items():
+        if len(items) < 2:
+            continue
+        for a in range(len(items)):
+            for b in range(a + 1, len(items)):
+                i_a, r_a = items[a]
+                i_b, r_b = items[b]
+                sig_a = _altili_dar_signature_v2(r_a)
+                sig_b = _altili_dar_signature_v2(r_b)
+                if sig_a and sig_b and sig_a == sig_b:
+                    duplicates.append({
+                        "hippodrome": r_a.get("hippodrome"),
+                        "idx_first": i_a,
+                        "idx_second": i_b,
+                        "altili_no_first": r_a.get("altili_no"),
+                        "altili_no_second": r_b.get("altili_no"),
+                    })
+    return duplicates
+
+
+def _fetch_tjk_altili_markers(target_date):
+    """Fetch TJK programme HTML to find 'X. 6'LI GANYAN' boundary markers.
+    Returns: {hippodrome_lower: {altili_no: [race_nums]}}, or {} on failure.
+    """
+    try:
+        import datetime as _dt
+        if not target_date:
+            target_date = _dt.date.today().strftime("%d.%m.%Y")
+        elif "-" in str(target_date):
+            d = _dt.datetime.strptime(str(target_date), "%Y-%m-%d").date()
+            target_date = d.strftime("%d.%m.%Y")
+
+        url = ("https://www.tjk.org/TR/YarisSever/Info/Page/GunlukYarisProgrami"
+               f"?QueryParameter_Tarih={target_date}")
+        req = _urlreq_smart.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+            "Accept": "text/html,*/*",
+        })
+        with _urlreq_smart.urlopen(req, timeout=15) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+    except Exception as e:
+        try:
+            logger.warning(f"[smart] TJK markers fetch failed: {e}")
+        except Exception:
+            pass
+        return {}
+
+    out = {}
+    try:
+        norm = html.replace("\u2019", "'").replace("\u2018", "'")
+        cities = ["Bursa", "Ankara", "İzmir", "İstanbul", "Adana",
+                  "Şanlıurfa", "Diyarbakır", "Elazığ", "Kocaeli"]
+        section_starts = []
+        for city in cities:
+            for m in _re_smart.finditer(_re_smart.escape(city), norm):
+                section_starts.append((m.start(), city))
+        section_starts.sort()
+        sections = {}
+        for i, (start, city) in enumerate(section_starts):
+            end = section_starts[i + 1][0] if i + 1 < len(section_starts) else len(norm)
+            text = norm[start:end]
+            if city.lower() not in sections or len(text) > len(sections[city.lower()]):
+                sections[city.lower()] = text
+
+        for hippo, sec_text in sections.items():
+            altili_starts = {}
+            for am in _re_smart.finditer(r"(\d)\.\s*6\s*'?\s*L?I\s*GANYAN",
+                                          sec_text, _re_smart.IGNORECASE):
+                alt_no = int(am.group(1))
+                back = sec_text[max(0, am.start() - 800):am.start()]
+                race_matches = list(_re_smart.finditer(
+                    r"(\d+)\s*\.?\s*KO[ŞS]U", back, _re_smart.IGNORECASE))
+                if race_matches:
+                    race_no = int(race_matches[-1].group(1))
+                    altili_starts[alt_no] = race_no
+            if altili_starts:
+                ranges = {}
+                for alt_no, start_race in altili_starts.items():
+                    ranges[alt_no] = list(range(start_race, start_race + 6))
+                out[hippo] = ranges
+    except Exception as e:
+        try:
+            logger.warning(f"[smart] TJK markers parse failed: {e}")
+        except Exception:
+            pass
+
+    return out
+
+
+def _altili_race_range_heuristic(programme_data, hippodrome, altili_no):
+    """Fallback: 1st altılı = first 6 races, 2nd altılı = last 6 races."""
+    if not programme_data:
+        return None
+    hippo_lower = (hippodrome or "").lower().replace(" hipodromu", "").replace(" hipodrom", "")
+    for ph in programme_data:
+        pl = (ph.get("hippodrome") or "").lower().replace(" hipodromu", "").replace(" hipodrom", "")
+        if hippo_lower in pl or pl in hippo_lower:
+            races = sorted(ph.get("races", []), key=lambda r: r.get("race_number", 0))
+            if len(races) < 6:
+                return None
+            race_nums = [r.get("race_number") for r in races]
+            if altili_no == 1:
+                return race_nums[:6]
+            elif altili_no == 2:
+                return race_nums[-6:]
+            return None
+    return None
+
+
+def _races_for_altili(altili_markers, programme_data, hippodrome, altili_no):
+    hippo_lower = (hippodrome or "").lower().replace(" hipodromu", "").replace(" hipodrom", "")
+    for k, v in (altili_markers or {}).items():
+        if hippo_lower in k.lower() or k.lower() in hippo_lower:
+            if altili_no in v:
+                return v[altili_no]
+    return _altili_race_range_heuristic(programme_data, hippodrome, altili_no)
+
+
+def _build_legs_from_programme(programme_data, hippodrome, race_numbers):
+    if not programme_data or not race_numbers:
+        return []
+    hippo_lower = (hippodrome or "").lower().replace(" hipodromu", "").replace(" hipodrom", "")
+    matched = None
+    for ph in programme_data:
+        pl = (ph.get("hippodrome") or "").lower().replace(" hipodromu", "").replace(" hipodrom", "")
+        if hippo_lower in pl or pl in hippo_lower:
+            matched = {r.get("race_number"): r for r in (ph.get("races") or [])}
+            break
+    if not matched:
+        return []
+    legs = []
+    for i, race_no in enumerate(race_numbers):
+        race = matched.get(race_no)
+        if not race:
+            continue
+        horses = race.get("horses") or []
+        top_horses = []
+        for h in horses[:5]:
+            top_horses.append({
+                "number": h.get("horse_number") or h.get("number"),
+                "name": h.get("horse_name") or h.get("name", "?"),
+                "agf_pct": None,
+                "model_prob": None,
+                "value_edge": None,
+            })
+        legs.append({
+            "ayak": i + 1,
+            "race_number": race_no,
+            "n_runners": len(horses),
+            "top3": top_horses[:3],
+            "all_horses": top_horses,
+            "agf_missing": True,
+            "leg_type": "TJK_ONLY",
+            "breed": race.get("group_name", "")[:10] if race.get("group_name") else "",
+            "distance": race.get("distance", ""),
+            "confidence": 0.0,
+            "agreement": 0.0,
+            "has_model": False,
+        })
+    return legs
+
+
+def _repair_duplicate_altili(result, programme_data, altili_markers):
+    hippo = result.get("hippodrome", "?")
+    alt_no = result.get("altili_no", "?")
+
+    race_nums = _races_for_altili(altili_markers, programme_data, hippo, alt_no)
+    if not race_nums:
+        result["data_quality_status"] = "DIAGNOSTIC_NO_BET"
+        result["repair_status"] = "TJK_NOT_FOUND"
+        result.setdefault("diagnostic_notes", []).append(
+            f"TJK programdan {hippo} altılı#{alt_no} koşu numaraları bulunamadı."
+        )
+        try:
+            logger.warning(f"[smart-repair] {hippo} altılı#{alt_no}: TJK race nums not found")
+        except Exception:
+            pass
+        return result
+
+    new_legs = _build_legs_from_programme(programme_data, hippo, race_nums)
+    if not new_legs:
+        result["data_quality_status"] = "DIAGNOSTIC_NO_BET"
+        result["repair_status"] = "TJK_NO_HORSES"
+        result.setdefault("diagnostic_notes", []).append(
+            f"TJK koşu listesinde {hippo} altılı#{alt_no} atları yok."
+        )
+        return result
+
+    result["legs_summary"] = new_legs
+    result["race_numbers"] = race_nums
+    result["data_quality_status"] = "REPAIRED_FROM_TJK"
+    result["repair_status"] = "REPAIRED_FROM_TJK"
+    result["agf_missing"] = True
+    result["dar"] = {
+        "mode": "info_only", "cost": 0, "combo": 0,
+        "counts": [len(l.get("all_horses", [])) for l in new_legs],
+        "legs": [{"leg_number": i + 1, "race_number": l.get("race_number"),
+                  "n_pick": 0, "n_runners": l.get("n_runners", 0),
+                  "is_tek": False, "leg_type": "TJK_ONLY",
+                  "selected": l.get("all_horses", [])[:6],
+                  "info": "AGF eksik"} for i, l in enumerate(new_legs)],
+        "n_singles": 0, "hitrate_pct": "?", "birim_fiyat": 1.25,
+    }
+    result["genis"] = {**result["dar"]}
+    result.setdefault("diagnostic_notes", []).append(
+        f"AGF verisi bozuk olduğu için TJK programdan onarıldı. "
+        f"Koşular: {race_nums}. Yüzdeler eksik, kupon önerisi yok."
+    )
+    try:
+        logger.warning(f"[smart-repair] {hippo} altılı#{alt_no} REPAIRED_FROM_TJK, "
+                       f"races={race_nums}")
+    except Exception:
+        pass
+    return result
+
+
+def detect_and_repair_duplicates(all_results, programme_data, target_date=None):
+    """Top-level: find dup pairs in same hippo, repair the 2nd from TJK programme."""
+    duplicates = _detect_duplicate_pairs_v2(all_results)
+    actions = []
+    if not duplicates:
+        return all_results, actions
+
+    altili_markers = _fetch_tjk_altili_markers(target_date)
+
+    for dup in duplicates:
+        idx_to_repair = dup["idx_second"]
+        result = all_results[idx_to_repair]
+        _repair_duplicate_altili(result, programme_data, altili_markers)
+        first = all_results[dup["idx_first"]]
+        first.setdefault("diagnostic_notes", []).append(
+            f"Hipodromda 2. altılı (#{dup['altili_no_second']}) AGF verisi bozuk, "
+            f"TJK programdan onarıldı."
+        )
+        if not first.get("race_numbers"):
+            races_first = _races_for_altili(altili_markers, programme_data,
+                                             dup["hippodrome"], dup["altili_no_first"])
+            if races_first:
+                first["race_numbers"] = races_first
+        actions.append({
+            "hippodrome": dup["hippodrome"],
+            "repaired_altili_no": dup["altili_no_second"],
+            "kept_altili_no": dup["altili_no_first"],
+            "repair_status": result.get("repair_status", "?"),
+            "race_numbers_recovered": result.get("race_numbers", []),
+        })
+    return all_results, actions
+
+
+def build_smart_genis(result):
+    """Structure-aware GENIŞ. Cost is OUTPUT, not target."""
+    if result.get("agf_missing") or result.get("data_quality_status") == "REPAIRED_FROM_TJK":
+        result["genis_smart"] = {
+            "mode": "info_only",
+            "counts": [], "combo": 0, "cost": 0,
+            "reasoning": [{"ayak": l.get("ayak"), "type": "TJK_ONLY",
+                           "n_horses": len(l.get("all_horses", [])),
+                           "why": "AGF eksik, model yok — bilgi amaçlı"}
+                          for l in (result.get("legs_summary") or [])],
+            "skipped_reason": result.get("data_quality_status"),
+        }
+        return result
+
+    legs_summary = result.get("legs_summary") or []
+    dar = result.get("dar") or {}
+    dar_legs = dar.get("legs") or []
+    if not legs_summary or not dar_legs:
+        return result
+
+    leg_class = result.get("leg_classification") or []
+    if not leg_class or len(leg_class) != len(legs_summary):
+        leg_class = []
+        for ls in legs_summary:
+            cls = classify_leg_v2(ls)
+            cls["ayak"] = ls.get("ayak") or ls.get("race_number")
+            leg_class.append(cls)
+        result["leg_classification"] = leg_class
+    else:
+        # Recompute with v2 to ensure 5-tier
+        new_class = []
+        for i, ls in enumerate(legs_summary):
+            cls = classify_leg_v2(ls)
+            cls["ayak"] = ls.get("ayak") or ls.get("race_number")
+            new_class.append(cls)
+        result["leg_classification"] = new_class
+        leg_class = new_class
+
+    smart_legs = []
+    reasoning = []
+    for i, ls in enumerate(legs_summary):
+        cls = leg_class[i] if i < len(leg_class) else {"type": "NARROW"}
+        ctype = cls.get("type", "NARROW")
+        is_risky = cls.get("is_risky_alpha", False)
+        ayak = ls.get("ayak") or ls.get("race_number") or (i + 1)
+
+        dar_leg = next((dl for dl in dar_legs if dl.get("leg_number") == (i + 1)), None)
+        dar_selected = (dar_leg.get("selected") or []) if dar_leg else []
+
+        if ctype == "ALPHA" and is_risky:
+            target_width = 2
+        else:
+            target_width = _GENIS_WIDTH.get(ctype, 4)
+        max_width = _GENIS_MAX_WIDTH.get(ctype, 4)
+
+        candidates = []
+        seen_nums = set()
+        for h in dar_selected:
+            num = h.get("number")
+            if num is None or num in seen_nums:
+                continue
+            seen_nums.add(num)
+            candidates.append({
+                "number": num,
+                "name": h.get("name", "?"),
+                "score": float(h.get("score", 0) or 0),
+                "model_prob": None,
+                "value_edge": None,
+            })
+
+        top3 = ls.get("top3") or []
+        for h in top3:
+            num = h.get("number")
+            if num is None:
+                continue
+            found = False
+            for c in candidates:
+                if c["number"] == num:
+                    c["model_prob"] = h.get("model_prob")
+                    c["value_edge"] = h.get("value_edge")
+                    if c.get("name") in (None, "?", ""):
+                        c["name"] = h.get("name", c.get("name", "?"))
+                    found = True
+                    break
+            if not found:
+                if num not in seen_nums:
+                    seen_nums.add(num)
+                    candidates.append({
+                        "number": num,
+                        "name": h.get("name", "?"),
+                        "score": 0.0,
+                        "model_prob": h.get("model_prob"),
+                        "value_edge": h.get("value_edge"),
+                    })
+
+        # Reorder: classification's top horse must lead
+        cls_top_num = cls.get("top_horse_number")
+        if cls_top_num is not None and candidates:
+            for ci, c in enumerate(candidates):
+                if c["number"] == cls_top_num and ci > 0:
+                    candidates.insert(0, candidates.pop(ci))
+                    break
+
+        is_tek_in_dar = bool(dar_leg and dar_leg.get("is_tek"))
+
+        if is_tek_in_dar and ctype in ("SAFE", "ALPHA") and not is_risky:
+            chosen = candidates[:1]
+            why = f"DAR TEK + {ctype} → 1 at, banker, israf etme"
+        elif ctype == "SAFE":
+            chosen = candidates[:1]
+            why = f"SAFE → 1 at, banker (model {cls.get('model_top1',0):.0f}%, gap {cls.get('gap',0):.0f}%)"
+        elif ctype == "ALPHA":
+            n = 2 if is_risky else 1
+            chosen = candidates[:n]
+            why = (f"ALPHA → {n} at"
+                   + (" (riskli, top2 model güçlü)" if is_risky else " (net, model fırsat gösteriyor)"))
+        elif ctype == "NARROW":
+            n = min(target_width, max_width, len(candidates))
+            chosen = candidates[:n]
+            why = f"NARROW → {len(chosen)} at (top3 modelin çoğunluğunu kapsıyor)"
+        elif ctype == "OPEN":
+            n = min(target_width, max_width, len(candidates))
+            chosen = candidates[:n]
+            why = f"OPEN → {len(chosen)} at (net favori yok, kapsama gerek)"
+        else:
+            n = min(target_width, max_width, len(candidates))
+            chosen = candidates[:n]
+            why = f"CHAOS → {len(chosen)} at (model dağınık, belirsizliği para ile satın al)"
+
+        if not chosen and candidates:
+            chosen = candidates[:1]
+
+        smart_legs.append({
+            "leg_number": i + 1,
+            "race_number": ls.get("race_number") or ayak,
+            "n_pick": len(chosen),
+            "n_runners": ls.get("n_runners", 0),
+            "is_tek": (len(chosen) == 1),
+            "leg_type": ctype,
+            "selected": chosen,
+        })
+        reasoning.append({
+            "ayak": ayak,
+            "type": ctype,
+            "n_horses": len(chosen),
+            "why": why,
+            "horses": [{"number": c["number"], "name": c["name"]} for c in chosen],
+        })
+
+    counts = [len(l["selected"]) for l in smart_legs]
+    combo = 1
+    for c in counts:
+        combo *= max(c, 1)
+    unit = float(dar.get("birim_fiyat", 1.25) or 1.25)
+    cost = combo * unit
+
+    cap_notes = []
+    if cost > _BUDGET_GENIS_HARD_CAP:
+        for target_type in ("CHAOS", "OPEN"):
+            for leg in smart_legs:
+                if leg["leg_type"] != target_type:
+                    continue
+                while len(leg["selected"]) > 2 and cost > _BUDGET_GENIS_HARD_CAP:
+                    removed = leg["selected"].pop()
+                    counts = [len(l["selected"]) for l in smart_legs]
+                    combo = 1
+                    for c in counts:
+                        combo *= max(c, 1)
+                    cost = combo * unit
+                    cap_notes.append(
+                        f"ayak{leg['leg_number']} ({target_type}): "
+                        f"#{removed.get('number')} {removed.get('name','?')} çıkarıldı (bütçe tavanı)"
+                    )
+            if cost <= _BUDGET_GENIS_HARD_CAP:
+                break
+
+    result["genis_smart"] = {
+        "mode": "smart",
+        "counts": counts,
+        "combo": combo,
+        "cost": round(cost, 2),
+        "birim_fiyat": unit,
+        "legs": smart_legs,
+        "reasoning": reasoning,
+        "budget_cap_actions": cap_notes,
+    }
+
+    alpha_legs = [c for c in leg_class if c.get("type") == "ALPHA"]
+    if alpha_legs:
+        best = max(alpha_legs, key=lambda c: c.get("value_edge", 0) or 0)
+        result["main_alpha_leg"] = best.get("ayak")
+    chaos_legs = [c for c in leg_class if c.get("type") == "CHAOS"]
+    if chaos_legs:
+        worst = min(chaos_legs, key=lambda c: c.get("model_top1", 100) or 100)
+        result["main_danger_leg"] = worst.get("ayak")
+    else:
+        non_safe = [c for c in leg_class if c.get("type") not in ("SAFE",)]
+        if non_safe:
+            worst = min(non_safe, key=lambda c: c.get("model_top1", 100) or 100)
+            result["main_danger_leg"] = worst.get("ayak")
+
+    return result
+
+
+def _format_smart_genis_for_telegram(base_msg, all_results):
+    """Inject genis_smart info into Telegram message per hippodrome."""
+    if not base_msg or not all_results:
+        return base_msg
+
+    out = base_msg
+    for r in all_results:
+        if r.get("error"):
+            continue
+        sg = r.get("genis_smart") or {}
+        if not sg:
+            continue
+
+        hippo_clean = (r.get("hippodrome") or "").replace(" Hipodromu", "").replace(" Hipodrom", "")
+        alt_no = r.get("altili_no", 1)
+        try:
+            from html import escape as _esc
+        except ImportError:
+            _esc = lambda x: x
+        header_pat = f"\U0001f3c7 <b>{_esc(hippo_clean.upper())} {alt_no}. ALTILI</b>"
+        if header_pat not in out:
+            continue
+
+        # Build smart genis block
+        lines = []
+        race_nums = r.get("race_numbers")
+        if race_nums:
+            lines.append(f"📋 Koşular: {','.join(str(n) for n in race_nums)}")
+
+        if sg.get("mode") == "info_only":
+            lines.append(f"🛑 {sg.get('skipped_reason', 'AGF eksik')} — kupon önerisi yok")
+        else:
+            counts = sg.get("counts", [])
+            cost = sg.get("cost", 0)
+            combo = sg.get("combo", 0)
+            lines.append(f"🧠 SMART GENİŞ: {'×'.join(str(c) for c in counts)} = {combo} kombi = {cost:,.0f} TL")
+            for rs in (sg.get("reasoning") or []):
+                horses_str = ", ".join(f"#{h['number']}" for h in (rs.get("horses") or []))
+                lines.append(f"  Ayak {rs['ayak']} [{rs['type']}] {horses_str} — {rs['why']}")
+            cap_acts = sg.get("budget_cap_actions") or []
+            if cap_acts:
+                lines.append(f"  ✂️ Bütçe tavanı: {len(cap_acts)} at çıkarıldı")
+
+        block = "\n".join(lines)
+
+        # Find end of this hippodrome's section (next 🏇 or end)
+        h_idx = out.find(header_pat)
+        next_h = out.find("\U0001f3c7", h_idx + len(header_pat))
+        if next_h < 0:
+            # End of message — append before final disclaimer if any
+            sep_pos = out.rfind("\u2501" * 5)
+            insert_pos = sep_pos if sep_pos > h_idx else len(out)
+        else:
+            sep_back = out.rfind("\u2501" * 5, h_idx, next_h)
+            insert_pos = sep_back if sep_back > h_idx else next_h
+
+        injection = "\n\n" + block + "\n"
+        out = out[:insert_pos] + injection + out[insert_pos:]
+
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────
+# END SMART GENIŞ + DUPLICATE REPAIR
+# ─────────────────────────────────────────────────────────────────
+
 def _save_live_test_snapshot(result_dict):
     """Append today's canonical kupon to data/live_tests/YYYY-MM-DD.json.
     Idempotent; never raises (fire-and-forget)."""
@@ -823,6 +1474,29 @@ def run_yerli_pipeline(target_date=None):
         logger.warning(f"[smart] post-process layer failed: {_e_smart}")
         _smart_warnings = []
 
+    # ── DUPLICATE REPAIR (TJK programme) + SMART GENIŞ ──
+    try:
+        all_results, _repair_actions = detect_and_repair_duplicates(
+            all_results, program_data, target_date)
+        if _repair_actions:
+            for _act in _repair_actions:
+                logger.warning(
+                    f"[smart-repair] {_act['hippodrome']} altılı"
+                    f"#{_act['repaired_altili_no']} -> "
+                    f"{_act['repair_status']} (races={_act['race_numbers_recovered']})"
+                )
+    except Exception as _e_repair:
+        logger.warning(f"[smart-repair] failed: {_e_repair}")
+
+    try:
+        for _r in all_results:
+            try:
+                build_smart_genis(_r)
+            except Exception as _e_sg:
+                logger.warning(f"[smart-genis] {_r.get('hippodrome','?')}: {_e_sg}")
+    except Exception as _e_sg_loop:
+        logger.warning(f"[smart-genis] loop failed: {_e_sg_loop}")
+
     # ── LIVE-TEST MODE: data quality + CANLI TEST banner + snapshot ──
     dq_score, dq_level, dq_notes = _compute_data_quality(all_results)
     logger.info(f"[live_test] data_quality: score={dq_score} level={dq_level} "
@@ -856,6 +1530,7 @@ def run_yerli_pipeline(target_date=None):
         try:
             base_msg = format_live_test_annotations(base_msg, all_results)
             base_msg = _inject_leg_tags_in_telegram(base_msg, all_results)
+            base_msg = _format_smart_genis_for_telegram(base_msg, all_results)
         except Exception as _e_ann:
             logger.warning(f"[smart] telegram annotation failed: {_e_ann}")
         banner_lines = [LIVE_TEST_DISCLAIMER,
