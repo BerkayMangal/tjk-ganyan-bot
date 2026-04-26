@@ -490,55 +490,69 @@ def _inject_leg_tags_in_telegram(base_msg, all_results):
 
 
 # ─────────────────────────────────────────────────────────────────
-# DUPLICATE ALTILI REPAIR + SMART GENIŞ SIZING (Apr 2026)
+# DUPLICATE ALTILI REPAIR + SMART GENİŞ SIZING (Apr 2026 v3)
 # Philosophy:
 #   GENIŞ = buy uncertainty where uncertainty is real.
 #   Cost is OUTPUT, not target.
+#   2nd altılı: TJK coverage kupon when AGF corrupt.
 # ─────────────────────────────────────────────────────────────────
 
-import re as _re_smart
-import urllib.request as _urlreq_smart
+import re as _re
+import urllib.request as _urlreq
+import urllib.error as _urlerr
 
 
-# 5-tier classification thresholds
+# ── Classification thresholds (5-tier: SAFE/ALPHA/NARROW/OPEN/CHAOS) ──
 _THR_SAFE_MODEL_TOP1 = 42.0
 _THR_SAFE_AGF_TOP1   = 25.0
 _THR_SAFE_GAP        = 12.0
 _THR_ALPHA_MODEL     = 40.0
 _THR_ALPHA_VALUE     = 20.0
-_THR_ALPHA_RISK_M2   = 25.0
-_THR_OPEN_MODEL      = 30.0
+_THR_ALPHA_RISK_M2   = 25.0   # if model_top2 >= this, alpha is "risky" → 2 horses
+_THR_OPEN_MODEL      = 30.0   # 25-40% range with moderate gap
 _THR_OPEN_GAP_HI     = 15.0
 _THR_CHAOS_MODEL     = 25.0
 _THR_CHAOS_GAP       = 8.0
 
-# GENIŞ width per classification (defaults; risky alpha bumps to 2)
+# Smart GENIŞ width per classification
 _GENIS_WIDTH = {
-    "SAFE":   1,
-    "ALPHA":  1,
-    "NARROW": 4,
-    "OPEN":   5,
-    "CHAOS":  6,
+    "SAFE":   1,        # banker, never widen
+    "ALPHA":  1,        # net alpha = 1, risky alpha = 2
+    "NARROW": 4,        # 4 default + marginal 5th if value
+    "OPEN":   5,        # 5 default + marginal 6th if value
+    "CHAOS":  6,        # 6 default (max coverage)
 }
 _GENIS_MAX_WIDTH = {
-    "SAFE":   2,
-    "ALPHA":  2,
-    "NARROW": 4,
-    "OPEN":   5,
-    "CHAOS":  6,
+    "SAFE":   1,        # SAFE never widens
+    "ALPHA":  2,        # max 2 even if risky alpha
+    "NARROW": 5,        # allow 5th if marginal value
+    "OPEN":   6,        # allow 6th if marginal value
+    "CHAOS":  6,        # cap at 6
 }
+
+# Marginal horse inclusion thresholds (for 5th/6th horse in NARROW/OPEN)
+_MARGINAL_MODEL_PROB = 5.0
+_MARGINAL_VALUE_EDGE = 0.0
 
 _BUDGET_GENIS_HARD_CAP = 5000.0
 
 
 def classify_leg_v2(leg_summary):
-    """5-tier: SAFE/ALPHA/NARROW/OPEN/CHAOS. Anchor on highest model_prob horse."""
+    """Return classification dict with type + reason + top horse info.
+
+    5 tiers: SAFE / ALPHA / NARROW / OPEN / CHAOS.
+
+    IMPORTANT: anchor on the horse with HIGHEST model_prob, not V6 score.
+    V6 score (top3[0]) is the kupon engine's pick. But classification needs
+    the horse the model thinks will win, which may be top3[1] or top3[2].
+    """
     top3 = leg_summary.get("top3", []) or []
     if not top3:
         return {"type": "NARROW", "reason": "veri yok",
                 "top_horse_number": None, "top_horse_name": None,
                 "is_risky_alpha": False}
 
+    # Sort top3 by model_prob descending (None treated as 0)
     def _mp(h):
         v = h.get("model_prob")
         return float(v) if v is not None else 0.0
@@ -556,6 +570,7 @@ def classify_leg_v2(leg_summary):
     top_name = h1.get("name", "?")
     top_num  = h1.get("number")
 
+    # SAFE: strong model + market agrees + clear lead
     if (m1 >= _THR_SAFE_MODEL_TOP1
             and a1 >= _THR_SAFE_AGF_TOP1
             and gap >= _THR_SAFE_GAP):
@@ -565,6 +580,7 @@ def classify_leg_v2(leg_summary):
                 "is_risky_alpha": False,
                 "model_top1": m1, "agf_top1": a1, "gap": gap}
 
+    # ALPHA: model loves it, market underestimates
     if m1 >= _THR_ALPHA_MODEL and v1 >= _THR_ALPHA_VALUE:
         risky = (m2 >= _THR_ALPHA_RISK_M2)
         return {"type": "ALPHA",
@@ -574,6 +590,7 @@ def classify_leg_v2(leg_summary):
                 "is_risky_alpha": risky,
                 "model_top1": m1, "agf_top1": a1, "gap": gap, "value_edge": v1}
 
+    # CHAOS: low confidence + spread
     if m1 < _THR_CHAOS_MODEL and gap < _THR_CHAOS_GAP:
         return {"type": "CHAOS",
                 "reason": f"model güveni düşük ({m1:.0f}%), kapsama gerek",
@@ -581,6 +598,7 @@ def classify_leg_v2(leg_summary):
                 "is_risky_alpha": False,
                 "model_top1": m1, "agf_top1": a1, "gap": gap}
 
+    # OPEN: medium-low model top1 OR small gap → 4-5 horse race
     if m1 < _THR_OPEN_MODEL and gap < _THR_OPEN_GAP_HI:
         return {"type": "OPEN",
                 "reason": f"net favori yok (model {m1:.0f}%, gap {gap:.0f}%)",
@@ -588,6 +606,7 @@ def classify_leg_v2(leg_summary):
                 "is_risky_alpha": False,
                 "model_top1": m1, "agf_top1": a1, "gap": gap}
 
+    # NARROW: everything else
     return {"type": "NARROW",
             "reason": f"orta güven (model {m1:.0f}%, gap {gap:.0f}%)",
             "top_horse_number": top_num, "top_horse_name": top_name,
@@ -595,7 +614,8 @@ def classify_leg_v2(leg_summary):
             "model_top1": m1, "agf_top1": a1, "gap": gap}
 
 
-def _altili_dar_signature_v2(result):
+def _altili_dar_signature(result):
+    """Return tuple of sorted horse-number tuples per DAR leg."""
     try:
         legs = (result.get("dar") or {}).get("legs") or []
         sig = []
@@ -610,7 +630,11 @@ def _altili_dar_signature_v2(result):
         return ()
 
 
-def _detect_duplicate_pairs_v2(all_results):
+def _detect_duplicate_pairs(all_results):
+    """Find pairs of altılıs in same hippodrome with identical DAR signature.
+
+    Returns: list of dicts {hippo, idx_first, idx_second, altili_no_first, altili_no_second}
+    """
     by_hippo = {}
     for i, r in enumerate(all_results):
         if r.get("error"):
@@ -626,8 +650,8 @@ def _detect_duplicate_pairs_v2(all_results):
             for b in range(a + 1, len(items)):
                 i_a, r_a = items[a]
                 i_b, r_b = items[b]
-                sig_a = _altili_dar_signature_v2(r_a)
-                sig_b = _altili_dar_signature_v2(r_b)
+                sig_a = _altili_dar_signature(r_a)
+                sig_b = _altili_dar_signature(r_b)
                 if sig_a and sig_b and sig_a == sig_b:
                     duplicates.append({
                         "hippodrome": r_a.get("hippodrome"),
@@ -640,76 +664,93 @@ def _detect_duplicate_pairs_v2(all_results):
 
 
 def _fetch_tjk_altili_markers(target_date):
-    """Fetch TJK programme HTML to find 'X. 6'LI GANYAN' boundary markers.
-    Returns: {hippodrome_lower: {altili_no: [race_nums]}}, or {} on failure.
+    """Direct fetch TJK programme HTML, find '1./2. 6'LI GANYAN' markers.
+
+    Returns dict: {hippodrome_lower: {1: [race_nums], 2: [race_nums]}}
+    On failure: returns {} (caller should fall back to heuristic).
+
+    target_date: 'YYYY-MM-DD' or '%d.%m.%Y' or None (uses today)
     """
     try:
         import datetime as _dt
         if not target_date:
-            target_date = _dt.date.today().strftime("%d.%m.%Y")
+            target_date = _dt.date.today().strftime('%d.%m.%Y')
         elif "-" in str(target_date):
-            d = _dt.datetime.strptime(str(target_date), "%Y-%m-%d").date()
-            target_date = d.strftime("%d.%m.%Y")
+            d = _dt.datetime.strptime(str(target_date), '%Y-%m-%d').date()
+            target_date = d.strftime('%d.%m.%Y')
 
         url = ("https://www.tjk.org/TR/YarisSever/Info/Page/GunlukYarisProgrami"
                f"?QueryParameter_Tarih={target_date}")
-        req = _urlreq_smart.Request(url, headers={
+        req = _urlreq.Request(url, headers={
             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
             "Accept": "text/html,*/*",
         })
-        with _urlreq_smart.urlopen(req, timeout=15) as resp:
+        with _urlreq.urlopen(req, timeout=15) as resp:
             html = resp.read().decode("utf-8", errors="ignore")
-    except Exception as e:
-        try:
-            logger.warning(f"[smart] TJK markers fetch failed: {e}")
-        except Exception:
-            pass
+    except Exception:
         return {}
 
+    # Match patterns like:
+    # "Bursa" ... "1. 6'LI GANYAN Bu koşudan başlar" ... race numbers around
+    # The raw HTML has ASCII apostrophe ' or curly '
+    # Strategy: split by hippodrome sections, then find altılı markers and nearest race numbers
     out = {}
     try:
+        # Normalize quotes
         norm = html.replace("\u2019", "'").replace("\u2018", "'")
+        # Find hippodrome H2/H3 blocks (loose pattern)
+        # We approximate: find "<h" tags + city names + their following content until next H
+        # Common TJK city anchors: Bursa, Ankara, İzmir, İstanbul, Adana, Şanlıurfa, Diyarbakır, Elazığ, Kocaeli
         cities = ["Bursa", "Ankara", "İzmir", "İstanbul", "Adana",
                   "Şanlıurfa", "Diyarbakır", "Elazığ", "Kocaeli"]
+
+        # Find each city's section start
         section_starts = []
         for city in cities:
-            for m in _re_smart.finditer(_re_smart.escape(city), norm):
+            # Look for city name in h-tags or strong tags
+            for m in _re.finditer(rf"({_re.escape(city)})", norm):
                 section_starts.append((m.start(), city))
         section_starts.sort()
+        # Build sections: city → text from its start until next city start
         sections = {}
         for i, (start, city) in enumerate(section_starts):
             end = section_starts[i + 1][0] if i + 1 < len(section_starts) else len(norm)
             text = norm[start:end]
+            # Take first big section per city only
             if city.lower() not in sections or len(text) > len(sections[city.lower()]):
                 sections[city.lower()] = text
 
+        # In each section, find altılı markers
         for hippo, sec_text in sections.items():
-            altili_starts = {}
-            for am in _re_smart.finditer(r"(\d)\.\s*6\s*'?\s*L?I\s*GANYAN",
-                                          sec_text, _re_smart.IGNORECASE):
+            altili_starts = {}  # altili_no -> first race number after marker
+            # Pattern: "1. 6'LI GANYAN" or "1.6'LI GANYAN" etc
+            for am in _re.finditer(r"(\d)\.\s*6\s*'?\s*L?I\s*GANYAN", sec_text, _re.IGNORECASE):
                 alt_no = int(am.group(1))
+                # Find the nearest preceding race number (look back ~500 chars for "X. KOŞU" or "Koşu X")
                 back = sec_text[max(0, am.start() - 800):am.start()]
-                race_matches = list(_re_smart.finditer(
-                    r"(\d+)\s*\.?\s*KO[ŞS]U", back, _re_smart.IGNORECASE))
+                # Find last race number in back text
+                race_matches = list(_re.finditer(r"(\d+)\s*\.?\s*KO[ŞS]U", back, _re.IGNORECASE))
                 if race_matches:
                     race_no = int(race_matches[-1].group(1))
                     altili_starts[alt_no] = race_no
             if altili_starts:
+                # Build race ranges: each altılı is 6 consecutive races
                 ranges = {}
                 for alt_no, start_race in altili_starts.items():
                     ranges[alt_no] = list(range(start_race, start_race + 6))
                 out[hippo] = ranges
-    except Exception as e:
-        try:
-            logger.warning(f"[smart] TJK markers parse failed: {e}")
-        except Exception:
-            pass
+    except Exception:
+        return out
 
     return out
 
 
 def _altili_race_range_heuristic(programme_data, hippodrome, altili_no):
-    """Fallback: 1st altılı = first 6 races, 2nd altılı = last 6 races."""
+    """Fallback when TJK markers can't be parsed.
+
+    Heuristic: 1st altılı = first 6 races, 2nd altılı = last 6 races.
+    Works for typical TJK schedules where total = 7-10 races.
+    """
     if not programme_data:
         return None
     hippo_lower = (hippodrome or "").lower().replace(" hipodromu", "").replace(" hipodrom", "")
@@ -729,15 +770,23 @@ def _altili_race_range_heuristic(programme_data, hippodrome, altili_no):
 
 
 def _races_for_altili(altili_markers, programme_data, hippodrome, altili_no):
+    """Get race numbers for this altılı. Try TJK markers first, fall back to heuristic."""
     hippo_lower = (hippodrome or "").lower().replace(" hipodromu", "").replace(" hipodrom", "")
+    # Try markers
     for k, v in (altili_markers or {}).items():
         if hippo_lower in k.lower() or k.lower() in hippo_lower:
             if altili_no in v:
                 return v[altili_no]
+    # Fall back
     return _altili_race_range_heuristic(programme_data, hippodrome, altili_no)
 
 
 def _build_legs_from_programme(programme_data, hippodrome, race_numbers):
+    """Build leg structures from TJK programme data for given race numbers.
+
+    Returns list of leg dicts compatible with legs_summary format,
+    but with agf_missing=True and no model probabilities.
+    """
     if not programme_data or not race_numbers:
         return []
     hippo_lower = (hippodrome or "").lower().replace(" hipodromu", "").replace(" hipodrom", "")
@@ -755,6 +804,7 @@ def _build_legs_from_programme(programme_data, hippodrome, race_numbers):
         if not race:
             continue
         horses = race.get("horses") or []
+        # Build top3-style structure with no model prob
         top_horses = []
         for h in horses[:5]:
             top_horses.append({
@@ -772,7 +822,7 @@ def _build_legs_from_programme(programme_data, hippodrome, race_numbers):
             "all_horses": top_horses,
             "agf_missing": True,
             "leg_type": "TJK_ONLY",
-            "breed": race.get("group_name", "")[:10] if race.get("group_name") else "",
+            "breed": race.get("group_name", "")[:10],
             "distance": race.get("distance", ""),
             "confidence": 0.0,
             "agreement": 0.0,
@@ -782,20 +832,21 @@ def _build_legs_from_programme(programme_data, hippodrome, race_numbers):
 
 
 def _repair_duplicate_altili(result, programme_data, altili_markers):
+    """In-place repair: replace bogus AGF data with TJK programme data.
+
+    Marks data_quality_status, sets repaired=True, suppresses kupon generation.
+    """
     hippo = result.get("hippodrome", "?")
     alt_no = result.get("altili_no", "?")
 
     race_nums = _races_for_altili(altili_markers, programme_data, hippo, alt_no)
     if not race_nums:
+        # Can't repair — mark diagnostic
         result["data_quality_status"] = "DIAGNOSTIC_NO_BET"
         result["repair_status"] = "TJK_NOT_FOUND"
         result.setdefault("diagnostic_notes", []).append(
             f"TJK programdan {hippo} altılı#{alt_no} koşu numaraları bulunamadı."
         )
-        try:
-            logger.warning(f"[smart-repair] {hippo} altılı#{alt_no}: TJK race nums not found")
-        except Exception:
-            pass
         return result
 
     new_legs = _build_legs_from_programme(programme_data, hippo, race_nums)
@@ -807,11 +858,14 @@ def _repair_duplicate_altili(result, programme_data, altili_markers):
         )
         return result
 
+    # Replace legs_summary with TJK-only data
     result["legs_summary"] = new_legs
     result["race_numbers"] = race_nums
     result["data_quality_status"] = "REPAIRED_FROM_TJK"
     result["repair_status"] = "REPAIRED_FROM_TJK"
     result["agf_missing"] = True
+    # Suppress DAR/GENIŞ kupon since AGF/model unavailable
+    # Keep them as info-only with "no kupon" mark
     result["dar"] = {
         "mode": "info_only", "cost": 0, "combo": 0,
         "counts": [len(l.get("all_horses", [])) for l in new_legs],
@@ -822,37 +876,39 @@ def _repair_duplicate_altili(result, programme_data, altili_markers):
                   "info": "AGF eksik"} for i, l in enumerate(new_legs)],
         "n_singles": 0, "hitrate_pct": "?", "birim_fiyat": 1.25,
     }
-    result["genis"] = {**result["dar"]}
+    result["genis"] = result["dar"]  # same info-only payload
     result.setdefault("diagnostic_notes", []).append(
         f"AGF verisi bozuk olduğu için TJK programdan onarıldı. "
         f"Koşular: {race_nums}. Yüzdeler eksik, kupon önerisi yok."
     )
-    try:
-        logger.warning(f"[smart-repair] {hippo} altılı#{alt_no} REPAIRED_FROM_TJK, "
-                       f"races={race_nums}")
-    except Exception:
-        pass
     return result
 
 
 def detect_and_repair_duplicates(all_results, programme_data, target_date=None):
-    """Top-level: find dup pairs in same hippo, repair the 2nd from TJK programme."""
-    duplicates = _detect_duplicate_pairs_v2(all_results)
+    """Top-level: detect duplicate pairs, repair the second one from TJK programme.
+
+    Returns: (all_results, list of repair_actions)
+    """
+    duplicates = _detect_duplicate_pairs(all_results)
     actions = []
     if not duplicates:
         return all_results, actions
 
+    # Lazy fetch markers only if duplicates exist
     altili_markers = _fetch_tjk_altili_markers(target_date)
 
     for dup in duplicates:
+        # Repair the SECOND altılı (keep the 1st as-is, since it's likely correct)
         idx_to_repair = dup["idx_second"]
         result = all_results[idx_to_repair]
         _repair_duplicate_altili(result, programme_data, altili_markers)
+        # Also annotate the first
         first = all_results[dup["idx_first"]]
         first.setdefault("diagnostic_notes", []).append(
             f"Hipodromda 2. altılı (#{dup['altili_no_second']}) AGF verisi bozuk, "
             f"TJK programdan onarıldı."
         )
+        # Set race_numbers on first if missing (default = first 6 races)
         if not first.get("race_numbers"):
             races_first = _races_for_altili(altili_markers, programme_data,
                                              dup["hippodrome"], dup["altili_no_first"])
@@ -868,19 +924,159 @@ def detect_and_repair_duplicates(all_results, programme_data, target_date=None):
     return all_results, actions
 
 
-def build_smart_genis(result):
-    """Structure-aware GENIŞ. Cost is OUTPUT, not target."""
-    if result.get("agf_missing") or result.get("data_quality_status") == "REPAIRED_FROM_TJK":
-        result["genis_smart"] = {
-            "mode": "info_only",
-            "counts": [], "combo": 0, "cost": 0,
-            "reasoning": [{"ayak": l.get("ayak"), "type": "TJK_ONLY",
-                           "n_horses": len(l.get("all_horses", [])),
-                           "why": "AGF eksik, model yok — bilgi amaçlı"}
-                          for l in (result.get("legs_summary") or [])],
-            "skipped_reason": result.get("data_quality_status"),
-        }
+
+def _coverage_count_for_field_size(n_runners):
+    """Field-size based coverage when no model is available."""
+    if n_runners <= 6:
+        return min(max((n_runners + 1) // 2, 2), 4)
+    if n_runners <= 8:
+        return 4
+    if n_runners <= 11:
+        return 5
+    return 6
+
+
+def build_tjk_coverage_kupon(result):
+    """Diagnostic coverage kupon for REPAIRED_FROM_TJK case (no model, no AGF).
+    Field-size based coverage: 7-8 runners=4, 9-11=5, 12+=6.
+    Marked as MODEL YOK - TJK KAPSAMA (diagnostic only).
+    """
+    legs_summary = result.get("legs_summary") or []
+    if not legs_summary:
         return result
+
+    smart_legs = []
+    reasoning = []
+    for i, ls in enumerate(legs_summary):
+        ayak = ls.get("ayak") or ls.get("race_number") or (i + 1)
+        n_runners = ls.get("n_runners", 0) or 0
+        all_horses = ls.get("all_horses") or ls.get("top3") or []
+
+        n_pick = _coverage_count_for_field_size(n_runners)
+        n_pick = min(n_pick, len(all_horses))
+        if n_pick < 2:
+            n_pick = min(2, len(all_horses))
+
+        chosen = all_horses[:n_pick]
+
+        smart_legs.append({
+            "leg_number": i + 1,
+            "race_number": ls.get("race_number") or ayak,
+            "n_pick": len(chosen),
+            "n_runners": n_runners,
+            "is_tek": False,
+            "leg_type": "TJK_COVERAGE",
+            "selected": chosen,
+        })
+        reasoning.append({
+            "ayak": ayak,
+            "type": "TJK_COVERAGE",
+            "n_horses": len(chosen),
+            "why": f"{n_runners} atli yaris -> {len(chosen)} at kapsama (model yok)",
+            "horses": [{"number": c.get("number"), "name": c.get("name", "?")} for c in chosen],
+        })
+
+    counts = [l["n_pick"] for l in smart_legs]
+    combo = 1
+    for c in counts:
+        combo *= max(c, 1)
+
+    unit = 1.25
+    cost = combo * unit
+
+    cap_notes = []
+    if cost > _BUDGET_GENIS_HARD_CAP:
+        leg_indices_by_field = sorted(
+            range(len(smart_legs)),
+            key=lambda idx: -(smart_legs[idx].get("n_runners", 0))
+        )
+        for idx in leg_indices_by_field:
+            leg = smart_legs[idx]
+            while len(leg["selected"]) > 3 and cost > _BUDGET_GENIS_HARD_CAP:
+                removed = leg["selected"].pop()
+                leg["n_pick"] = len(leg["selected"])
+                counts = [l["n_pick"] for l in smart_legs]
+                combo = 1
+                for c in counts:
+                    combo *= max(c, 1)
+                cost = combo * unit
+                cap_notes.append(
+                    f"ayak{leg['leg_number']} (TJK_COVERAGE): "
+                    f"#{removed.get('number')} cikarildi (butce tavani)"
+                )
+            if cost <= _BUDGET_GENIS_HARD_CAP:
+                break
+        for ri, rs in enumerate(reasoning):
+            if ri < len(smart_legs):
+                new_n = smart_legs[ri]["n_pick"]
+                if new_n != rs.get("n_horses"):
+                    nr = smart_legs[ri].get("n_runners", 0)
+                    rs["why"] = f"{nr} atli yaris -> {new_n} at (butce tavani sonrasi)"
+                rs["n_horses"] = new_n
+                rs["horses"] = [{"number": c.get("number"), "name": c.get("name", "?")}
+                                for c in smart_legs[ri]["selected"]]
+
+    result["genis_smart"] = {
+        "mode": "tjk_coverage",
+        "model_used": False,
+        "diagnostic": True,
+        "label": "MODEL YOK - TJK KAPSAMA (diagnostic)",
+        "counts": counts,
+        "combo": combo,
+        "cost": round(cost, 2),
+        "birim_fiyat": unit,
+        "legs": smart_legs,
+        "reasoning": reasoning,
+        "budget_cap_actions": cap_notes,
+    }
+
+    dar_legs = []
+    dar_counts = []
+    for i, sl in enumerate(smart_legs):
+        dar_n = max(2, (sl["n_pick"] + 1) * 2 // 3)
+        dar_n = min(dar_n, sl["n_pick"])
+        dar_legs.append({
+            "leg_number": i + 1, "race_number": sl.get("race_number"),
+            "n_pick": dar_n, "n_runners": sl.get("n_runners", 0),
+            "is_tek": False, "leg_type": "TJK_COVERAGE",
+            "selected": sl["selected"][:dar_n], "info": "TJK kapsama",
+        })
+        dar_counts.append(dar_n)
+    dar_combo = 1
+    for c in dar_counts:
+        dar_combo *= max(c, 1)
+    dar_cost = dar_combo * unit
+    result["dar"] = {
+        "mode": "tjk_coverage", "diagnostic": True,
+        "cost": round(dar_cost, 2), "combo": dar_combo,
+        "counts": dar_counts, "legs": dar_legs,
+        "n_singles": 0, "hitrate_pct": "?", "birim_fiyat": unit,
+    }
+    result["genis"] = {
+        "mode": "tjk_coverage", "diagnostic": True,
+        "cost": round(cost, 2), "combo": combo, "counts": counts,
+        "legs": [{"leg_number": sl["leg_number"], "race_number": sl.get("race_number"),
+                  "n_pick": sl["n_pick"], "n_runners": sl.get("n_runners", 0),
+                  "is_tek": False, "leg_type": "TJK_COVERAGE",
+                  "selected": sl["selected"], "info": "TJK kapsama"}
+                 for sl in smart_legs],
+        "n_singles": 0, "hitrate_pct": "?", "birim_fiyat": unit,
+    }
+
+    return result
+
+
+def build_smart_genis(result):
+    """Build a structure-aware GENIŞ ticket using leg classification.
+
+    Philosophy: width = how much uncertainty needs covering.
+    SAFE/ALPHA = narrow (kazanan belli, israf etme).
+    NARROW/OPEN/CHAOS = wider (uncertainty real).
+
+    Cost is OUTPUT, not target.
+    """
+    if result.get("agf_missing") or result.get("data_quality_status") == "REPAIRED_FROM_TJK":
+        return build_tjk_coverage_kupon(result)
 
     legs_summary = result.get("legs_summary") or []
     dar = result.get("dar") or {}
@@ -888,6 +1084,7 @@ def build_smart_genis(result):
     if not legs_summary or not dar_legs:
         return result
 
+    # Get classification per leg (use existing if present, else compute)
     leg_class = result.get("leg_classification") or []
     if not leg_class or len(leg_class) != len(legs_summary):
         leg_class = []
@@ -896,16 +1093,8 @@ def build_smart_genis(result):
             cls["ayak"] = ls.get("ayak") or ls.get("race_number")
             leg_class.append(cls)
         result["leg_classification"] = leg_class
-    else:
-        # Recompute with v2 to ensure 5-tier
-        new_class = []
-        for i, ls in enumerate(legs_summary):
-            cls = classify_leg_v2(ls)
-            cls["ayak"] = ls.get("ayak") or ls.get("race_number")
-            new_class.append(cls)
-        result["leg_classification"] = new_class
-        leg_class = new_class
 
+    # Build smart selections
     smart_legs = []
     reasoning = []
     for i, ls in enumerate(legs_summary):
@@ -914,18 +1103,34 @@ def build_smart_genis(result):
         is_risky = cls.get("is_risky_alpha", False)
         ayak = ls.get("ayak") or ls.get("race_number") or (i + 1)
 
+        # Find DAR's selected horses for this leg (sorted by score from V6)
         dar_leg = next((dl for dl in dar_legs if dl.get("leg_number") == (i + 1)), None)
         dar_selected = (dar_leg.get("selected") or []) if dar_leg else []
+        # Use V6 GENIŞ as broader pool (more horses than DAR; enables marginal expansion)
+        genis_orig = result.get("genis") or {}
+        genis_orig_legs = genis_orig.get("legs") or []
+        genis_orig_leg = next((gl for gl in genis_orig_legs
+                                if gl.get("leg_number") == (i + 1)), None)
+        genis_selected = (genis_orig_leg.get("selected") or []) if genis_orig_leg else []
+        pool = list(genis_selected) if genis_selected else list(dar_selected)
 
+        # Get the broader candidate pool: legs_summary top3 + maybe more from dar_leg
+        # We use dar_selected as primary pool (already ranked by V6 score).
+        # If we need more horses than dar provides, extend with top3 from legs_summary
+        # (but legs_summary top3 might overlap — dedup by horse number).
+
+        # Determine target width
         if ctype == "ALPHA" and is_risky:
             target_width = 2
         else:
-            target_width = _GENIS_WIDTH.get(ctype, 4)
+            target_width = _GENIS_WIDTH.get(ctype, 3)
         max_width = _GENIS_MAX_WIDTH.get(ctype, 4)
 
+        # Collect candidates with model_prob and value_edge
+        # IMPORTANT: use V6 GENIŞ pool (more horses than DAR) so marginal rule can activate
         candidates = []
         seen_nums = set()
-        for h in dar_selected:
+        for h in pool:
             num = h.get("number")
             if num is None or num in seen_nums:
                 continue
@@ -938,21 +1143,19 @@ def build_smart_genis(result):
                 "value_edge": None,
             })
 
+        # Augment with model_prob/value_edge from top3 where matching
         top3 = ls.get("top3") or []
         for h in top3:
             num = h.get("number")
             if num is None:
                 continue
-            found = False
             for c in candidates:
                 if c["number"] == num:
                     c["model_prob"] = h.get("model_prob")
                     c["value_edge"] = h.get("value_edge")
-                    if c.get("name") in (None, "?", ""):
-                        c["name"] = h.get("name", c.get("name", "?"))
-                    found = True
                     break
-            if not found:
+            else:
+                # Not in DAR selection — could add as extra candidate for OPEN/CHAOS
                 if num not in seen_nums:
                     seen_nums.add(num)
                     candidates.append({
@@ -963,14 +1166,18 @@ def build_smart_genis(result):
                         "value_edge": h.get("value_edge"),
                     })
 
-        # Reorder: classification's top horse must lead
+        # CRITICAL: classification uses model_top horse, but dar_selected is V6 score order.
+        # If model's top pick is not first in candidates, REORDER so it leads.
         cls_top_num = cls.get("top_horse_number")
         if cls_top_num is not None and candidates:
             for ci, c in enumerate(candidates):
                 if c["number"] == cls_top_num and ci > 0:
+                    # Move to front
                     candidates.insert(0, candidates.pop(ci))
                     break
 
+        # Apply selection rules:
+        # - If TEK in DAR (very strong banker), keep TEK if classification is SAFE/ALPHA
         is_tek_in_dar = bool(dar_leg and dar_leg.get("is_tek"))
 
         if is_tek_in_dar and ctype in ("SAFE", "ALPHA") and not is_risky:
@@ -986,17 +1193,30 @@ def build_smart_genis(result):
                    + (" (riskli, top2 model güçlü)" if is_risky else " (net, model fırsat gösteriyor)"))
         elif ctype == "NARROW":
             n = min(target_width, max_width, len(candidates))
-            chosen = candidates[:n]
-            why = f"NARROW → {len(chosen)} at (top3 modelin çoğunluğunu kapsıyor)"
+            chosen = list(candidates[:n])
+            if len(chosen) < max_width and len(candidates) > n:
+                extra = candidates[n]
+                mp = extra.get("model_prob")
+                ve = extra.get("value_edge")
+                if ((mp is not None and mp >= _MARGINAL_MODEL_PROB)
+                        or (ve is not None and ve >= _MARGINAL_VALUE_EDGE)):
+                    chosen.append(extra)
+            why = f"NARROW → {len(chosen)} at (top model atlari + marjinal deger)"
         elif ctype == "OPEN":
             n = min(target_width, max_width, len(candidates))
-            chosen = candidates[:n]
-            why = f"OPEN → {len(chosen)} at (net favori yok, kapsama gerek)"
-        else:
+            chosen = list(candidates[:n])
+            if len(chosen) < max_width and len(candidates) > n:
+                extra = candidates[n]
+                mp = extra.get("model_prob")
+                ve = extra.get("value_edge")
+                if ((mp is not None and mp >= _MARGINAL_MODEL_PROB)
+                        or (ve is not None and ve >= _MARGINAL_VALUE_EDGE)):
+                    chosen.append(extra)
+            why = f"OPEN → {len(chosen)} at (net favori yok + marjinal deger)"
+        else:  # CHAOS
             n = min(target_width, max_width, len(candidates))
-            chosen = candidates[:n]
-            why = f"CHAOS → {len(chosen)} at (model dağınık, belirsizliği para ile satın al)"
-
+            chosen = list(candidates[:n])
+            why = f"CHAOS → {len(chosen)} at (model dagiInik, belirsizligi para ile satin al)"
         if not chosen and candidates:
             chosen = candidates[:1]
 
@@ -1024,6 +1244,7 @@ def build_smart_genis(result):
     unit = float(dar.get("birim_fiyat", 1.25) or 1.25)
     cost = combo * unit
 
+    # Hard cap: if cost > 5000, prune weakest from CHAOS first, then OPEN
     cap_notes = []
     if cost > _BUDGET_GENIS_HARD_CAP:
         for target_type in ("CHAOS", "OPEN"):
@@ -1039,7 +1260,7 @@ def build_smart_genis(result):
                     cost = combo * unit
                     cap_notes.append(
                         f"ayak{leg['leg_number']} ({target_type}): "
-                        f"#{removed.get('number')} {removed.get('name','?')} çıkarıldı (bütçe tavanı)"
+                        f"#{removed.get('number')} {removed.get('name')} çıkarıldı"
                     )
             if cost <= _BUDGET_GENIS_HARD_CAP:
                 break
@@ -1055,15 +1276,19 @@ def build_smart_genis(result):
         "budget_cap_actions": cap_notes,
     }
 
+    # Identify main alpha + main danger from classification
     alpha_legs = [c for c in leg_class if c.get("type") == "ALPHA"]
     if alpha_legs:
+        # Pick alpha with highest value_edge
         best = max(alpha_legs, key=lambda c: c.get("value_edge", 0) or 0)
         result["main_alpha_leg"] = best.get("ayak")
     chaos_legs = [c for c in leg_class if c.get("type") == "CHAOS"]
     if chaos_legs:
+        # Lowest model_top1 chaos
         worst = min(chaos_legs, key=lambda c: c.get("model_top1", 100) or 100)
         result["main_danger_leg"] = worst.get("ayak")
     else:
+        # Fallback: leg with weakest top1 model_prob (excluding SAFE)
         non_safe = [c for c in leg_class if c.get("type") not in ("SAFE",)]
         if non_safe:
             worst = min(non_safe, key=lambda c: c.get("model_top1", 100) or 100)
@@ -1072,71 +1297,10 @@ def build_smart_genis(result):
     return result
 
 
-def _format_smart_genis_for_telegram(base_msg, all_results):
-    """Inject genis_smart info into Telegram message per hippodrome."""
-    if not base_msg or not all_results:
-        return base_msg
-
-    out = base_msg
-    for r in all_results:
-        if r.get("error"):
-            continue
-        sg = r.get("genis_smart") or {}
-        if not sg:
-            continue
-
-        hippo_clean = (r.get("hippodrome") or "").replace(" Hipodromu", "").replace(" Hipodrom", "")
-        alt_no = r.get("altili_no", 1)
-        try:
-            from html import escape as _esc
-        except ImportError:
-            _esc = lambda x: x
-        header_pat = f"\U0001f3c7 <b>{_esc(hippo_clean.upper())} {alt_no}. ALTILI</b>"
-        if header_pat not in out:
-            continue
-
-        # Build smart genis block
-        lines = []
-        race_nums = r.get("race_numbers")
-        if race_nums:
-            lines.append(f"📋 Koşular: {','.join(str(n) for n in race_nums)}")
-
-        if sg.get("mode") == "info_only":
-            lines.append(f"🛑 {sg.get('skipped_reason', 'AGF eksik')} — kupon önerisi yok")
-        else:
-            counts = sg.get("counts", [])
-            cost = sg.get("cost", 0)
-            combo = sg.get("combo", 0)
-            lines.append(f"🧠 SMART GENİŞ: {'×'.join(str(c) for c in counts)} = {combo} kombi = {cost:,.0f} TL")
-            for rs in (sg.get("reasoning") or []):
-                horses_str = ", ".join(f"#{h['number']}" for h in (rs.get("horses") or []))
-                lines.append(f"  Ayak {rs['ayak']} [{rs['type']}] {horses_str} — {rs['why']}")
-            cap_acts = sg.get("budget_cap_actions") or []
-            if cap_acts:
-                lines.append(f"  ✂️ Bütçe tavanı: {len(cap_acts)} at çıkarıldı")
-
-        block = "\n".join(lines)
-
-        # Find end of this hippodrome's section (next 🏇 or end)
-        h_idx = out.find(header_pat)
-        next_h = out.find("\U0001f3c7", h_idx + len(header_pat))
-        if next_h < 0:
-            # End of message — append before final disclaimer if any
-            sep_pos = out.rfind("\u2501" * 5)
-            insert_pos = sep_pos if sep_pos > h_idx else len(out)
-        else:
-            sep_back = out.rfind("\u2501" * 5, h_idx, next_h)
-            insert_pos = sep_back if sep_back > h_idx else next_h
-
-        injection = "\n\n" + block + "\n"
-        out = out[:insert_pos] + injection + out[insert_pos:]
-
-    return out
-
-
 # ─────────────────────────────────────────────────────────────────
-# END SMART GENIŞ + DUPLICATE REPAIR
+# END SMART GENİŞ + DUPLICATE REPAIR
 # ─────────────────────────────────────────────────────────────────
+
 
 def _save_live_test_snapshot(result_dict):
     """Append today's canonical kupon to data/live_tests/YYYY-MM-DD.json.
