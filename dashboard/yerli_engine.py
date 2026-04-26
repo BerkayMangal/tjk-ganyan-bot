@@ -1297,6 +1297,80 @@ def build_smart_genis(result):
     return result
 
 
+def _format_smart_genis_for_telegram(base_msg, all_results):
+    """Inject genis_smart / tjk_coverage info into Telegram message per hippodrome."""
+    if not base_msg or not all_results:
+        return base_msg
+
+    out = base_msg
+    for r in all_results:
+        if r.get("error"):
+            continue
+        sg = r.get("genis_smart") or {}
+        if not sg:
+            continue
+
+        hippo_clean = (r.get("hippodrome") or "").replace(" Hipodromu", "").replace(" Hipodrom", "")
+        alt_no = r.get("altili_no", 1)
+        try:
+            from html import escape as _esc
+        except ImportError:
+            _esc = lambda x: x
+        header_pat = f"\U0001f3c7 <b>{_esc(hippo_clean.upper())} {alt_no}. ALTILI</b>"
+        if header_pat not in out:
+            continue
+
+        lines = []
+        race_nums = r.get("race_numbers")
+        if race_nums:
+            lines.append(f"📋 Koşular: {','.join(str(n) for n in race_nums)}")
+
+        mode = sg.get("mode")
+        if mode == "info_only":
+            lines.append(f"🛑 {sg.get('skipped_reason', 'AGF eksik')} — kupon önerisi yok")
+        elif mode == "tjk_coverage":
+            counts = sg.get("counts", [])
+            cost = sg.get("cost", 0)
+            combo = sg.get("combo", 0)
+            label = sg.get("label", "TJK KAPSAMA")
+            lines.append(f"🛡 {label}")
+            lines.append(f"📊 TJK COVERAGE: {'×'.join(str(c) for c in counts)} = {combo} kombi = {cost:,.0f} TL")
+            for rs in (sg.get("reasoning") or []):
+                horses_str = ", ".join(f"#{h['number']}" for h in (rs.get("horses") or []))
+                lines.append(f"  Ayak {rs['ayak']} [{rs['type']}] {horses_str} — {rs['why']}")
+            cap_acts = sg.get("budget_cap_actions") or []
+            if cap_acts:
+                lines.append(f"  ✂️ Bütçe tavanı sonrası: {len(cap_acts)} at çıkarıldı")
+        else:
+            counts = sg.get("counts", [])
+            cost = sg.get("cost", 0)
+            combo = sg.get("combo", 0)
+            lines.append(f"🧠 SMART GENİŞ: {'×'.join(str(c) for c in counts)} = {combo} kombi = {cost:,.0f} TL")
+            for rs in (sg.get("reasoning") or []):
+                horses_str = ", ".join(f"#{h['number']}" for h in (rs.get("horses") or []))
+                lines.append(f"  Ayak {rs['ayak']} [{rs['type']}] {horses_str} — {rs['why']}")
+            cap_acts = sg.get("budget_cap_actions") or []
+            if cap_acts:
+                lines.append(f"  ✂️ Bütçe tavanı: {len(cap_acts)} at çıkarıldı")
+
+        block = "\n".join(lines)
+
+        h_idx = out.find(header_pat)
+        next_h = out.find("\U0001f3c7", h_idx + len(header_pat))
+        if next_h < 0:
+            sep_pos = out.rfind("\u2501" * 5)
+            insert_pos = sep_pos if sep_pos > h_idx else len(out)
+        else:
+            sep_back = out.rfind("\u2501" * 5, h_idx, next_h)
+            insert_pos = sep_back if sep_back > h_idx else next_h
+
+        injection = "\n\n" + block + "\n"
+        out = out[:insert_pos] + injection + out[insert_pos:]
+
+    return out
+
+
+
 # ─────────────────────────────────────────────────────────────────
 # END SMART GENİŞ + DUPLICATE REPAIR
 # ─────────────────────────────────────────────────────────────────
