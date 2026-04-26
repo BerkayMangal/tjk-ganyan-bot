@@ -218,6 +218,19 @@ def send_yerli_telegram():
     except Exception as e:
         return jsonify({"error": str(e)})
 
+# PATCH_V7_PHASE2_RECAP_v1 — daily recap endpoint
+@app.route("/api/yerli_kupon/recap")
+def get_yerli_recap():
+    if not YERLI_ENGINE_OK:
+        return jsonify({"error": "engine off"})
+    target_date = request.args.get("date")
+    send_flag = request.args.get("send", "0") == "1"
+    try:
+        from yerli_engine import run_daily_recap
+        return jsonify(run_daily_recap(target_date_str=target_date, send_telegram=send_flag))
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
 @app.route("/api/diagnostics")
 def get_diagnostics():
     """CANLI TEST diagnostic endpoint — scraper/pipeline ham ciktisini gosterir.

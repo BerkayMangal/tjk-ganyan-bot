@@ -3183,6 +3183,474 @@ def _v7_strict_single_audit(result, mode="advisory"):
     return result
 
 
+# ============================================================================
+# PATCH_V7_PHASE2_RECAP_v1 — minimal daily result tracker.
+# Reuses engine.retro.fetch_results. No model retrain, no calibration update.
+# ============================================================================
+
+def _data_dir_v7(name):
+    """PATCH_V7_PHASE2_RECAP_v1. Resolve <repo>/data/<n> and ensure it exists."""
+    base = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", name))
+    try:
+        os.makedirs(base, exist_ok=True)
+    except Exception:
+        pass
+    return base
+
+
+def _normalize_hippo_v7(s):
+    """PATCH_V7_PHASE2_RECAP_v1. Lowercase, strip ' hipodromu'/'hipodrom'."""
+    if not s:
+        return ""
+    out = str(s).strip().lower()
+    out = out.replace(" hipodromu", "").replace(" hipodrom", "")
+    out = out.replace("\u0130", "i")
+    return out.strip()
+
+
+def _load_snapshot_v7(date_str):
+    """PATCH_V7_PHASE2_RECAP_v1. Read data/live_tests/<date>.json or return None."""
+    path = os.path.join(_data_dir_v7("live_tests"), f"{date_str}.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.warning(f"[recap] snapshot load failed: {e}")
+        return None
+
+
+def _score_altili_v7(snap_alt, official):
+    """PATCH_V7_PHASE2_RECAP_v1. Pure scoring fn — one snap altılı vs one official."""
+    out = {
+        "hippodrome": snap_alt.get("hippodrome"),
+        "altili_no": snap_alt.get("altili_no"),
+        "data_quality_status": snap_alt.get("data_quality_status"),
+        "status": "no_result",
+        "leg_hits": 0,
+        "full_ticket_hit": False,
+        "leg_results": [],
+        "single_log": [],
+        "alpha_legs": [],
+        "chaos_legs": [],
+    }
+    if official is None:
+        return out
+    winners = official.get("winners") or []
+    if len(winners) < 6:
+        out["status"] = "incomplete_result"
+        return out
+    winners_sorted = sorted(winners, key=lambda w: w.get("leg_number", 0))
+
+    gs = snap_alt.get("genis_smart") or {}
+    gs_legs = gs.get("legs") or []
+    legs_summary = snap_alt.get("legs_summary") or []
+    leg_class = snap_alt.get("leg_classification") or []
+
+    n = min(len(winners_sorted), len(gs_legs))
+    leg_hits = 0
+    leg_results = []
+
+    for i in range(n):
+        w = winners_sorted[i]
+        winner_num = w.get("horse_number")
+        winner_name = w.get("horse_name", "")
+        winner_ganyan = w.get("ganyan", 0)
+
+        gleg = gs_legs[i]
+        sel = gleg.get("selected") or []
+        sel_nums = [s.get("number") for s in sel]
+        smart_hit = winner_num in sel_nums
+
+        ls = legs_summary[i] if i < len(legs_summary) else {}
+        top3 = ls.get("top3_v7") or []
+        top3_nums = [t.get("number") for t in top3]
+        in_top3 = winner_num in top3_nums
+
+        cls_entry = leg_class[i] if i < len(leg_class) else {}
+        cls_type = cls_entry.get("type", "?")
+
+        dec = gleg.get("coupon_decision_v7") or {}
+        cov = dec.get("coverage_type", "?")
+        verdict = dec.get("verdict_v7")
+        primary = (dec.get("primary_pick") or {}).get("number")
+        primary_name = (dec.get("primary_pick") or {}).get("name")
+
+        if smart_hit:
+            leg_hits += 1
+
+        leg_results.append({
+            "leg_number": gleg.get("leg_number", i+1),
+            "race_number": gleg.get("race_number"),
+            "winner": {"number": winner_num, "name": winner_name, "ganyan": winner_ganyan},
+            "selected_smart": sel_nums,
+            "smart_hit": smart_hit,
+            "in_top3_v7": in_top3,
+            "leg_class": cls_type,
+            "coverage_type": cov,
+            "verdict_v7": verdict,
+        })
+
+        if cov == "BANKO_like" and primary is not None:
+            out["single_log"].append({
+                "leg_number": gleg.get("leg_number", i+1),
+                "primary_pick": primary,
+                "primary_name": primary_name,
+                "verdict_v7": verdict,
+                "winner": winner_num,
+                "winner_name": winner_name,
+                "hit": (winner_num == primary),
+            })
+
+        if cls_type == "ALPHA":
+            out["alpha_legs"].append({
+                "leg_number": gleg.get("leg_number", i+1),
+                "smart_hit": smart_hit,
+                "in_top3_v7": in_top3,
+                "winner": winner_num,
+                "winner_name": winner_name,
+            })
+
+        if cls_type == "CHAOS":
+            out["chaos_legs"].append({
+                "leg_number": gleg.get("leg_number", i+1),
+                "smart_hit": smart_hit,
+                "in_top3_v7": in_top3,
+                "blowup": (not smart_hit) and (not in_top3),
+                "winner": winner_num,
+                "winner_name": winner_name,
+            })
+
+    out["status"] = "evaluated"
+    out["leg_hits"] = leg_hits
+    out["full_ticket_hit"] = (leg_hits == 6)
+    out["leg_results"] = leg_results
+    return out
+
+
+def _aggregate_totals_v7(per_altili):
+    """PATCH_V7_PHASE2_RECAP_v1. Daily roll-up across all evaluated altılıs."""
+    totals = {
+        "altili_count": len(per_altili),
+        "altili_evaluated": 0,
+        "altili_pending": 0,
+        "altili_incomplete": 0,
+        "ticket_hits_by_count": {0:0,1:0,2:0,3:0,4:0,5:0,6:0},
+        "full_ticket_hits": 0,
+        "alpha_legs_total": 0, "alpha_legs_hit": 0,
+        "chaos_legs_total": 0, "chaos_legs_hit": 0, "chaos_blowups": 0,
+        "single_total": 0, "single_hit": 0,
+        "singles_by_verdict": {
+            "clean_safe_single": {"total": 0, "hit": 0},
+            "clean_alpha_single": {"total": 0, "hit": 0},
+            "suspect_kept": {"total": 0, "hit": 0},
+            "forbidden_would_widen": {"total": 0, "hit": 0},
+            "forbidden_widened": {"total": 0, "hit": 0},
+            "unknown": {"total": 0, "hit": 0},
+        },
+    }
+    for sc in per_altili:
+        st = sc.get("status")
+        if st == "evaluated":
+            totals["altili_evaluated"] += 1
+            n_hit = sc.get("leg_hits", 0)
+            totals["ticket_hits_by_count"][n_hit] = (
+                totals["ticket_hits_by_count"].get(n_hit, 0) + 1
+            )
+            if sc.get("full_ticket_hit"):
+                totals["full_ticket_hits"] += 1
+            for al in sc.get("alpha_legs", []):
+                totals["alpha_legs_total"] += 1
+                if al.get("smart_hit"):
+                    totals["alpha_legs_hit"] += 1
+            for cl in sc.get("chaos_legs", []):
+                totals["chaos_legs_total"] += 1
+                if cl.get("smart_hit"):
+                    totals["chaos_legs_hit"] += 1
+                if cl.get("blowup"):
+                    totals["chaos_blowups"] += 1
+            for sg in sc.get("single_log", []):
+                totals["single_total"] += 1
+                vk = sg.get("verdict_v7") or "unknown"
+                if vk not in totals["singles_by_verdict"]:
+                    vk = "unknown"
+                totals["singles_by_verdict"][vk]["total"] += 1
+                if sg.get("hit"):
+                    totals["single_hit"] += 1
+                    totals["singles_by_verdict"][vk]["hit"] += 1
+        elif st == "incomplete_result":
+            totals["altili_incomplete"] += 1
+        else:
+            totals["altili_pending"] += 1
+    return totals
+
+
+def _format_telegram_recap_v7(date_str, per_altili, totals):
+    """PATCH_V7_PHASE2_RECAP_v1. Build Telegram HTML recap body."""
+    from html import escape
+    lines = []
+    lines.append(f"\U0001f4ca <b>V7 Recap — {date_str}</b>")
+    lines.append("<i>CANLI TEST — gerçek bahis önerisi değildir</i>")
+    lines.append("")
+    for sc in per_altili:
+        hippo = escape(str(sc.get("hippodrome", "?")))
+        anum = sc.get("altili_no", "?")
+        st = sc.get("status")
+        if st == "no_result":
+            lines.append(f"\U0001f3c7 <b>{hippo} altılı#{anum}</b>")
+            lines.append("   \u23f3 Sonuçlar alınamadı, değerlendirme beklemede.")
+            lines.append("")
+            continue
+        if st == "incomplete_result":
+            lines.append(f"\U0001f3c7 <b>{hippo} altılı#{anum}</b>")
+            lines.append("   \u23f3 Eksik sonuç (6 ayak tamamlanmadı), beklemede.")
+            lines.append("")
+            continue
+        n_hit = sc.get("leg_hits", 0)
+        full = sc.get("full_ticket_hit")
+        emoji_full = "\U0001f3af" if full else "\u274c"
+        lines.append(
+            f"\U0001f3c7 <b>{hippo} altılı#{anum}</b>: "
+            f"{n_hit}/6 ayak tuttu  {emoji_full}"
+        )
+        per_leg = []
+        for lr in sc.get("leg_results", []):
+            per_leg.append("\u2713" if lr.get("smart_hit") else "\u2717")
+        if per_leg:
+            lines.append(f"   Ayaklar: {' '.join(per_leg)}")
+        for sg in sc.get("single_log", []):
+            ln = sg.get("leg_number")
+            name = escape(str(sg.get("primary_name") or sg.get("primary_pick") or "?"))
+            verdict = sg.get("verdict_v7") or "?"
+            mark = "\u2705 HIT" if sg.get("hit") else "\u274c MISS"
+            verdict_short = verdict.replace("clean_", "").replace("_single", "")
+            lines.append(f"   Single ayak{ln}: {name} ({verdict_short}) → {mark}")
+        alpha = sc.get("alpha_legs", [])
+        if alpha:
+            a_hit = sum(1 for a in alpha if a.get("smart_hit"))
+            lines.append(f"   ALPHA ayaklar: {a_hit}/{len(alpha)} tuttu")
+        chaos = sc.get("chaos_legs", [])
+        if chaos:
+            c_hit = sum(1 for c in chaos if c.get("smart_hit"))
+            blow = sum(1 for c in chaos if c.get("blowup"))
+            cl = f"   CHAOS ayaklar: {c_hit}/{len(chaos)} tuttu"
+            if blow:
+                cl += f" — {blow} top3 dışı (patladı)"
+            lines.append(cl)
+        lines.append(f"   Full kupon: {'HIT' if full else 'MISS'}")
+        lines.append("")
+    if totals.get("altili_evaluated", 0) > 0:
+        lines.append("\U0001f4c8 <b>Bugün toplam</b>")
+        suffix = ""
+        if totals.get("altili_incomplete"):
+            suffix = f", {totals['altili_incomplete']} eksik"
+        lines.append(
+            f"   Altılı: {totals['altili_count']} "
+            f"({totals['altili_evaluated']} değerlendirildi, "
+            f"{totals['altili_pending']} beklemede{suffix})"
+        )
+        thbc = totals["ticket_hits_by_count"]
+        dist = [f"{k}/6:{thbc.get(k,0)}" for k in (6,5,4,3,2,1,0) if thbc.get(k,0)]
+        if dist:
+            lines.append(f"   Dağılım: {' · '.join(dist)}")
+        if totals["full_ticket_hits"]:
+            lines.append(f"   \U0001f3af Full kupon: {totals['full_ticket_hits']}")
+        if totals["alpha_legs_total"]:
+            lines.append(
+                f"   ALPHA leg: {totals['alpha_legs_hit']}/{totals['alpha_legs_total']}"
+            )
+        if totals["chaos_legs_total"]:
+            cl = (f"   CHAOS leg: {totals['chaos_legs_hit']}"
+                  f"/{totals['chaos_legs_total']}")
+            if totals["chaos_blowups"]:
+                cl += f" — {totals['chaos_blowups']} patladı (top3 dışı)"
+            lines.append(cl)
+        if totals["single_total"]:
+            lines.append(f"   Singles: {totals['single_hit']}/{totals['single_total']}")
+            for vk in ("clean_safe_single", "clean_alpha_single",
+                       "suspect_kept", "forbidden_would_widen",
+                       "forbidden_widened"):
+                stats = totals["singles_by_verdict"][vk]
+                if stats["total"]:
+                    lines.append(f"     • {vk}: {stats['hit']}/{stats['total']}")
+    return "\n".join(lines)
+
+
+def _save_recap_files_v7(date_str, raw_results, recap):
+    """PATCH_V7_PHASE2_RECAP_v1. Persist live_results and daily_recaps JSONs."""
+    try:
+        rpath = os.path.join(_data_dir_v7("live_results"), f"{date_str}.json")
+        with open(rpath, "w", encoding="utf-8") as f:
+            json.dump(raw_results, f, ensure_ascii=False, indent=2, default=str)
+    except Exception as e:
+        logger.warning(f"[recap] live_results save failed: {e}")
+    try:
+        dpath = os.path.join(_data_dir_v7("daily_recaps"), f"{date_str}.json")
+        with open(dpath, "w", encoding="utf-8") as f:
+            json.dump(recap, f, ensure_ascii=False, indent=2, default=str)
+    except Exception as e:
+        logger.warning(f"[recap] daily_recaps save failed: {e}")
+
+
+def _update_cumulative_stats_v7(date_str, recap):
+    """PATCH_V7_PHASE2_RECAP_v1. Idempotent update of data/cumulative_stats.json."""
+    try:
+        path = os.path.join(_data_dir_v7("."), "cumulative_stats.json")
+        cur = {}
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    cur = json.load(f) or {}
+            except Exception:
+                cur = {}
+        by_date = cur.get("by_date") or {}
+        totals = recap.get("totals", {})
+        if totals.get("altili_evaluated", 0) > 0:
+            by_date[date_str] = {
+                "altili_evaluated": totals["altili_evaluated"],
+                "full_ticket_hits": totals["full_ticket_hits"],
+                "alpha_legs_total": totals["alpha_legs_total"],
+                "alpha_legs_hit": totals["alpha_legs_hit"],
+                "chaos_legs_total": totals["chaos_legs_total"],
+                "chaos_legs_hit": totals["chaos_legs_hit"],
+                "chaos_blowups": totals["chaos_blowups"],
+                "single_total": totals["single_total"],
+                "single_hit": totals["single_hit"],
+                "singles_by_verdict": totals["singles_by_verdict"],
+            }
+        cur["by_date"] = by_date
+        cum = {
+            "altili_evaluated": 0, "full_ticket_hits": 0,
+            "alpha_legs_total": 0, "alpha_legs_hit": 0,
+            "chaos_legs_total": 0, "chaos_legs_hit": 0, "chaos_blowups": 0,
+            "single_total": 0, "single_hit": 0,
+            "singles_by_verdict": {
+                "clean_safe_single": {"total": 0, "hit": 0},
+                "clean_alpha_single": {"total": 0, "hit": 0},
+                "suspect_kept": {"total": 0, "hit": 0},
+                "forbidden_would_widen": {"total": 0, "hit": 0},
+                "forbidden_widened": {"total": 0, "hit": 0},
+                "unknown": {"total": 0, "hit": 0},
+            },
+        }
+        for d, day in by_date.items():
+            for k in ("altili_evaluated","full_ticket_hits","alpha_legs_total",
+                     "alpha_legs_hit","chaos_legs_total","chaos_legs_hit",
+                     "chaos_blowups","single_total","single_hit"):
+                cum[k] += day.get(k, 0)
+            for vk, stats in (day.get("singles_by_verdict") or {}).items():
+                if vk not in cum["singles_by_verdict"]:
+                    continue
+                cum["singles_by_verdict"][vk]["total"] += stats.get("total", 0)
+                cum["singles_by_verdict"][vk]["hit"] += stats.get("hit", 0)
+        cur["cumulative"] = cum
+        cur["last_updated"] = datetime.utcnow().isoformat()
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cur, f, ensure_ascii=False, indent=2, default=str)
+    except Exception as e:
+        logger.warning(f"[recap] cumulative update failed: {e}")
+
+
+def _send_telegram_recap_v7(text):
+    """PATCH_V7_PHASE2_RECAP_v1. Dispatch via existing Telegram bot, with chunking."""
+    try:
+        token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+        if not token or not chat_id:
+            logger.warning("[recap] TELEGRAM credentials missing, skipping send")
+            return False
+        chunks = _safe_split_telegram_message(text, max_len=3800)
+        import urllib.request, urllib.parse
+        for ch in chunks:
+            data = urllib.parse.urlencode({
+                "chat_id": chat_id, "text": ch,
+                "parse_mode": "HTML", "disable_web_page_preview": "true",
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                data=data, method="POST",
+            )
+            urllib.request.urlopen(req, timeout=20).read()
+        return True
+    except Exception as e:
+        logger.warning(f"[recap] Telegram send failed: {e}")
+        return False
+
+
+def run_daily_recap(target_date_str=None, send_telegram=False):
+    """PATCH_V7_PHASE2_RECAP_v1. Top-level entry — runs the full recap loop.
+    Never raises — returns structured dict with status."""
+    try:
+        if target_date_str is None:
+            target_date_str = date.today().strftime("%Y-%m-%d")
+        try:
+            from datetime import datetime as _dt
+            target_dt = _dt.strptime(target_date_str, "%Y-%m-%d").date()
+        except Exception:
+            return {"status": "bad_date", "date": target_date_str}
+
+        snap = _load_snapshot_v7(target_date_str)
+        if snap is None:
+            return {
+                "status": "no_snapshot",
+                "date": target_date_str,
+                "message": "Bu tarih için kupon snapshot'ı yok.",
+            }
+
+        raw_results = []
+        results_status = "unavailable"
+        try:
+            from engine.retro import fetch_results
+            raw_results = fetch_results(target_dt) or []
+            if raw_results:
+                results_status = "ok"
+        except Exception as e:
+            logger.warning(f"[recap] fetch_results failed: {e}")
+            results_status = f"error: {e}"
+
+        official_idx = {}
+        for o in raw_results:
+            key = (_normalize_hippo_v7(o.get("hippodrome")), o.get("altili_no"))
+            official_idx[key] = o
+
+        per_altili = []
+        for alt in (snap.get("hippodromes") or []):
+            key = (_normalize_hippo_v7(alt.get("hippodrome")), alt.get("altili_no"))
+            o = official_idx.get(key)
+            sc = _score_altili_v7(alt, o)
+            per_altili.append(sc)
+
+        totals = _aggregate_totals_v7(per_altili)
+
+        recap = {
+            "version": "v7_phase2_recap",
+            "date": target_date_str,
+            "ts_utc": datetime.utcnow().isoformat(),
+            "results_status": results_status,
+            "altili_count": len(per_altili),
+            "per_altili": per_altili,
+            "totals": totals,
+        }
+
+        _save_recap_files_v7(target_date_str, raw_results, recap)
+        _update_cumulative_stats_v7(target_date_str, recap)
+
+        tg_body = _format_telegram_recap_v7(target_date_str, per_altili, totals)
+        recap["telegram_body"] = tg_body
+
+        sent = False
+        if send_telegram:
+            sent = _send_telegram_recap_v7(tg_body)
+
+        recap["status"] = "evaluated" if totals.get("altili_evaluated", 0) > 0 else "evaluation_pending"
+        recap["telegram_sent"] = sent
+        return recap
+    except Exception as e:
+        logger.exception(f"[recap] run_daily_recap failed: {e}")
+        return {"status": "error", "date": target_date_str, "error": str(e)}
+
+
 def send_telegram_simple(results_dict):
     """Send kupon — one message per altili."""
     import time as _time
