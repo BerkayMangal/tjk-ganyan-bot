@@ -219,6 +219,48 @@ def send_yerli_telegram():
         return jsonify({"error": str(e)})
 
 # PATCH_V7_SNAPSHOT_DIAG_v1 — temporary disk introspection
+# PATCH_V7_RECAP_DIAG_v3 — what does the recap reader actually see?
+@app.route("/api/yerli_kupon/recap_diag")
+def recap_diag():
+    import os as _os, traceback
+    from datetime import date as _date
+    info = {}
+    try:
+        from yerli_engine import _data_dir_v7, _load_snapshot_v7
+        date_str = request.args.get("date") or _date.today().strftime("%Y-%m-%d")
+        info["date_str"] = date_str
+        info["pid"] = _os.getpid()
+        info["cwd"] = _os.getcwd()
+        info["hostname"] = _os.uname().nodename if hasattr(_os, "uname") else "?"
+        # Resolve the path the recap reader uses
+        base = _data_dir_v7("live_tests")
+        info["base_dir"] = base
+        info["base_exists"] = _os.path.exists(base)
+        info["base_listdir"] = _os.listdir(base) if _os.path.exists(base) else "no_dir"
+        target = _os.path.join(base, f"{date_str}.json")
+        info["target_path"] = target
+        info["target_exists_via_os_path_exists"] = _os.path.exists(target)
+        info["target_isfile"] = _os.path.isfile(target) if _os.path.exists(target) else False
+        # Try opening it
+        try:
+            with open(target, "r", encoding="utf-8") as f:
+                contents = f.read(500)
+            info["target_open_ok"] = True
+            info["target_first_500_chars"] = contents
+        except Exception as e:
+            info["target_open_exc"] = f"{type(e).__name__}: {e}"
+        # Now call the actual reader
+        try:
+            snap = _load_snapshot_v7(date_str)
+            info["loader_returned"] = "None" if snap is None else f"dict with {len(snap.get('hippodromes', []))} hippos"
+        except Exception as e:
+            info["loader_exc"] = f"{type(e).__name__}: {e}"
+            info["loader_tb"] = traceback.format_exc()
+    except Exception as e:
+        info["outer"] = f"{type(e).__name__}: {e}"
+        info["outer_tb"] = traceback.format_exc()
+    return jsonify(info)
+
 @app.route("/api/yerli_kupon/snap_diag")
 def snap_diag():
     """PATCH_V7_SNAPSHOT_DIAG_v2 — actually call save and report exception."""
