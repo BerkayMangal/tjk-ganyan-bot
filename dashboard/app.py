@@ -219,6 +219,51 @@ def send_yerli_telegram():
         return jsonify({"error": str(e)})
 
 # PATCH_V7_SNAPSHOT_DIAG_v1 — temporary disk introspection
+@app.route("/api/yerli_kupon/snap_diag")
+def snap_diag():
+    """PATCH_V7_SNAPSHOT_DIAG_v2 — actually call save and report exception."""
+    import traceback, json as _json
+    info = {}
+    with _yerli_lock:
+        data = _yerli_cache.get('data')
+    if not data:
+        return jsonify({"error": "no cached data, hit /api/yerli_kupon/refresh first"})
+    info["data_keys"] = list(data.keys())
+    info["data_hippos"] = len(data.get("hippodromes", []))
+    try:
+        from yerli_engine import _save_live_test_snapshot, _data_dir_v7
+        # Try the actual call path
+        try:
+            _save_live_test_snapshot(data)
+            info["snap_call"] = "no exception raised"
+        except Exception as e:
+            info["snap_call_exc"] = f"{type(e).__name__}: {e}"
+            info["snap_call_tb"] = traceback.format_exc()
+        # And try a manual write of the same data to confirm path
+        import os as _os
+        from datetime import date as _date
+        base = _data_dir_v7("live_tests")
+        target = _os.path.join(base, f"{_date.today().strftime('%Y-%m-%d')}.json")
+        info["target_path"] = target
+        info["target_exists_after_call"] = _os.path.exists(target)
+        if _os.path.exists(target):
+            info["target_size"] = _os.path.getsize(target)
+        # Attempt direct JSON dump to isolate
+        try:
+            test_path = _os.path.join(base, "_manual_dump.json")
+            with open(test_path, "w", encoding="utf-8") as f:
+                _json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+            info["manual_dump"] = f"ok, size={_os.path.getsize(test_path)}"
+        except Exception as e:
+            info["manual_dump_exc"] = f"{type(e).__name__}: {e}"
+            info["manual_dump_tb"] = traceback.format_exc()[:500]
+        # List the dir
+        info["files_after"] = _os.listdir(base)
+    except Exception as e:
+        info["outer_exc"] = f"{type(e).__name__}: {e}"
+        info["outer_tb"] = traceback.format_exc()
+    return jsonify(info)
+
 @app.route("/api/yerli_kupon/disk_diag")
 def disk_diag():
     import os as _os
