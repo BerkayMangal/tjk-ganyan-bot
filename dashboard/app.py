@@ -218,6 +218,43 @@ def send_yerli_telegram():
     except Exception as e:
         return jsonify({"error": str(e)})
 
+# PATCH_V7_SNAPSHOT_DIAG_v1 — temporary disk introspection
+@app.route("/api/yerli_kupon/disk_diag")
+def disk_diag():
+    import os as _os
+    info = {}
+    try:
+        from yerli_engine import _data_dir_v7, _save_live_test_snapshot
+        info["data_dir_live_tests"] = _data_dir_v7("live_tests")
+        info["cwd"] = _os.getcwd()
+        info["yerli_engine_file"] = __import__("yerli_engine").__file__
+        # Try to write a probe file
+        probe_path = _os.path.join(info["data_dir_live_tests"], "_probe.json")
+        try:
+            with open(probe_path, "w") as f:
+                f.write('{"probe": true}')
+            info["probe_write"] = "ok"
+            info["probe_path"] = probe_path
+        except Exception as e:
+            info["probe_write"] = f"FAILED: {type(e).__name__}: {e}"
+        # List existing files
+        try:
+            files = _os.listdir(info["data_dir_live_tests"])
+            info["existing_files"] = files
+        except Exception as e:
+            info["existing_files"] = f"listdir failed: {e}"
+        # Check parent
+        parent = _os.path.dirname(info["data_dir_live_tests"])
+        info["parent_data_dir"] = parent
+        info["parent_writable"] = _os.access(parent, _os.W_OK)
+        info["parent_exists"] = _os.path.exists(parent)
+        # Check the path components
+        info["data_dir_writable"] = _os.access(info["data_dir_live_tests"], _os.W_OK)
+        info["data_dir_exists"] = _os.path.exists(info["data_dir_live_tests"])
+    except Exception as e:
+        info["error"] = f"{type(e).__name__}: {e}"
+    return jsonify(info)
+
 # PATCH_V7_PHASE2_RECAP_v1 — daily recap endpoint
 @app.route("/api/yerli_kupon/recap")
 def get_yerli_recap():
