@@ -897,6 +897,194 @@ def _repair_duplicate_altili(result, programme_data, altili_markers):
     return result
 
 
+def _run_model_on_repaired_legs(result, programme_data, target_date):
+    """PATCH_V3_1_REPAIRED_LEG_MODEL_v1.
+
+    For an altılı in REPAIRED_FROM_TJK state, run the V6 model on each leg using
+    the TJK programme data. Idempotent — only fills None fields.
+    """
+    if not isinstance(result, dict):
+        return result
+    if result.get("data_quality_status") != "REPAIRED_FROM_TJK":
+        return result
+
+    if not (_MODEL is not None and _FB is not None):
+        logger.info("[v3.1] model not loaded, skipping inference on repaired legs")
+        return result
+
+    hippo = result.get("hippodrome", "?")
+    legs_summary = result.get("legs_summary") or []
+    race_numbers = result.get("race_numbers") or []
+    if not legs_summary or not race_numbers:
+        return result
+
+    if not programme_data:
+        return result
+    hippo_lower = (hippo or "").lower().replace(" hipodromu", "").replace(" hipodrom", "")
+    matched_races = None
+    for ph in programme_data:
+        pl = (ph.get("hippodrome") or "").lower().replace(" hipodromu", "").replace(" hipodrom", "")
+        if hippo_lower in pl or pl in hippo_lower:
+            matched_races = {r.get("race_number"): r for r in (ph.get("races") or [])}
+            break
+    if not matched_races:
+        return result
+
+    n_legs_processed = 0
+    n_legs_with_model = 0
+
+    for i, leg in enumerate(legs_summary):
+        race_no = leg.get("race_number") or leg.get("ayak")
+        race = matched_races.get(race_no)
+        if not race:
+            continue
+        n_legs_processed += 1
+
+        html_horses = race.get("horses") or []
+        if len(html_horses) < 2:
+            continue
+
+        n_runners = len(html_horses)
+        equal_pct = 100.0 / max(n_runners, 1)
+        hi = []
+        agf_data = []
+        keep_horses = []
+        for h in html_horses:
+            num = h.get("horse_number") or h.get("number")
+            if num is None:
+                continue
+            try:
+                num_int = int(num)
+            except Exception:
+                continue
+            name = h.get("horse_name") or h.get("name") or f"At_{num_int}"
+            hi.append({
+                "horse_name": name,
+                "horse_number": num_int,
+                "weight": h.get("weight") or 57,
+                "age": h.get("age") or 4,
+                "age_text": h.get("age_text") or "4y",
+                "jockey_name": h.get("jockey_name") or "",
+                "trainer_name": h.get("trainer_name") or "",
+                "form": h.get("form") or "",
+                "last_20_score": h.get("last_20_score") or 10,
+                "equipment": h.get("equipment") or "",
+                "handicap": h.get("handicap_rating") or 60,
+                "gate_number": h.get("start_position") or num_int,
+                "extra_weight": 0,
+                "kgs": h.get("kgs") or 30,
+                "sire": h.get("sire_name") or "",
+                "dam": h.get("dam_name") or "",
+                "dam_sire": h.get("dam_sire_name") or "",
+                "sire_sire": "",
+                "dam_dam": "",
+                "total_earnings": h.get("total_earnings") or 0,
+            })
+            agf_data.append({"horse_number": num_int, "agf_pct": equal_pct,
+                             "is_ekuri": False})
+            keep_horses.append(num_int)
+
+        if len(hi) < 2:
+            continue
+
+        group = str(race.get("group_name", "") or "").lower()
+        if "arap" in group:
+            breed = "arab"
+        elif "ngiliz" in group:
+            breed = "english"
+        else:
+            ls_breed = (leg.get("breed") or "").lower()
+            breed = "arab" if "arap" in ls_breed else "english"
+
+        ri = {
+            "distance": race.get("distance") or 1400,
+            "track_type": race.get("track_type") or "dirt",
+            "group_name": race.get("group_name") or "",
+            "hippodrome_name": hippo,
+            "first_prize": race.get("prize") or 100000,
+            "temperature": 15,
+            "humidity": 60,
+            "race_date": str(target_date) if target_date else "",
+        }
+
+        try:
+            matrix, names = _FB.build_race_features(hi, ri, agf_data)
+            import numpy as _np_local
+            nzp = _np_local.count_nonzero(matrix) / matrix.size if matrix.size > 0 else 0
+            if nzp < 0.10:
+                logger.info(f"[v3.1] {hippo} race {race_no}: feature matrix too sparse ({nzp:.2%})")
+                continue
+            scores = _MODEL.predict(matrix, breed=breed)
+            try:
+                probs = _MODEL.predict_proba(matrix, breed=breed)
+                ps = float(probs.sum())
+                pn = (probs / ps) if ps > 0 else probs
+            except Exception as _e_proba:
+                logger.warning(f"[v3.1] {hippo} race {race_no} predict_proba failed: {_e_proba}")
+                pn = None
+        except Exception as _e_predict:
+            logger.warning(f"[v3.1] {hippo} race {race_no} predict failed: {_e_predict}")
+            continue
+
+        all_horses = leg.get("all_horses") or []
+        n_max = min(len(scores), len(keep_horses), len(hi))
+        try:
+            s_min = float(min(scores[:n_max]))
+            s_max = float(max(scores[:n_max]))
+            s_range = s_max - s_min if s_max > s_min else 1.0
+        except Exception:
+            s_min, s_range = 0.0, 1.0
+
+        any_filled = False
+        for k in range(n_max):
+            num = keep_horses[k]
+            normed_score = (float(scores[k]) - s_min) / s_range if s_range else 0.0
+            mp_pct = float(pn[k]) * 100.0 if pn is not None else None
+            for h in all_horses:
+                if h.get("number") != num:
+                    continue
+                if h.get("score") is None:
+                    h["score"] = round(normed_score, 4)
+                    any_filled = True
+                if h.get("model_prob") is None and mp_pct is not None:
+                    h["model_prob"] = round(mp_pct, 1)
+                    any_filled = True
+                break
+
+        if any_filled:
+            n_legs_with_model += 1
+
+        def _rank_key(h):
+            mp = h.get("model_prob")
+            sc = h.get("score")
+            try:
+                num_int = int(h.get("number")) if h.get("number") is not None else 9999
+            except Exception:
+                num_int = 9999
+            if mp is not None:
+                return (0, -float(mp), num_int)
+            if sc is not None:
+                return (1, -float(sc), num_int)
+            return (2, num_int, 0)
+
+        ranked = sorted(all_horses, key=_rank_key)
+        leg["top3"] = ranked[:3]
+        leg["all_horses"] = ranked
+        if any_filled:
+            leg["has_model"] = True
+            leg["model_inference_v3_1"] = True
+
+    logger.info(
+        f"[v3.1] {hippo}#{result.get('altili_no','?')}: "
+        f"model run on {n_legs_with_model}/{n_legs_processed} repaired legs"
+    )
+    result["repaired_leg_model_meta_v3_1"] = {
+        "legs_processed": n_legs_processed,
+        "legs_with_model": n_legs_with_model,
+    }
+    return result
+
+
 def detect_and_repair_duplicates(all_results, programme_data, target_date=None):
     """Top-level: detect duplicate pairs, repair the second one from TJK programme.
 
@@ -934,6 +1122,21 @@ def detect_and_repair_duplicates(all_results, programme_data, target_date=None):
             "repair_status": result.get("repair_status", "?"),
             "race_numbers_recovered": result.get("race_numbers", []),
         })
+    # PATCH_V3_1_REPAIRED_LEG_MODEL_v1: run model on repaired legs first,
+    # so cross-altılı enrichment becomes a fallback rather than the only source.
+    try:
+        for r in all_results:
+            if r.get("data_quality_status") == "REPAIRED_FROM_TJK":
+                try:
+                    _run_model_on_repaired_legs(r, programme_data, target_date)
+                except Exception as _e_rm:
+                    logger.warning(
+                        f"[smart-repair] model inference on {r.get('hippodrome','?')}"
+                        f"#{r.get('altili_no','?')} failed: {_e_rm}"
+                    )
+    except Exception as _e_rm_loop:
+        logger.warning(f"[smart-repair] model-on-repaired loop failed: {_e_rm_loop}")
+
     # PATCH_CROSS_ALTILI_ORDERING_v1: enrich repaired altılıs with model
     # information from same-hippodrome non-repaired altılıs that share races.
     try:
