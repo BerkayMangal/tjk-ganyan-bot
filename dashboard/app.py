@@ -219,6 +219,59 @@ def send_yerli_telegram():
         return jsonify({"error": str(e)})
 
 # PATCH_V7_SNAPSHOT_DIAG_v1 — temporary disk introspection
+# PATCH_V7_LOADER_DIAG_v4 — surface json.load exception directly
+@app.route("/api/yerli_kupon/loader_diag")
+def loader_diag():
+    import os as _os, traceback, json as _json
+    from datetime import date as _date
+    info = {}
+    try:
+        from yerli_engine import _data_dir_v7
+        date_str = request.args.get("date") or _date.today().strftime("%Y-%m-%d")
+        path = _os.path.join(_data_dir_v7("live_tests"), f"{date_str}.json")
+        info["path"] = path
+        info["size"] = _os.path.getsize(path) if _os.path.exists(path) else None
+        # Read raw bytes
+        with open(path, "rb") as f:
+            raw = f.read()
+        info["raw_size"] = len(raw)
+        info["first_100_bytes_repr"] = repr(raw[:100])
+        info["last_100_bytes_repr"] = repr(raw[-100:])
+        # Try json.load via file
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                d = _json.load(f)
+            info["json_load_ok"] = True
+            info["json_top_keys"] = list(d.keys()) if isinstance(d, dict) else "not_dict"
+        except Exception as e:
+            info["json_load_exc"] = f"{type(e).__name__}: {e}"
+        # Try json.loads via decoded string
+        try:
+            text = raw.decode("utf-8")
+            info["text_len"] = len(text)
+            d2 = _json.loads(text)
+            info["json_loads_ok"] = True
+        except UnicodeDecodeError as e:
+            info["unicode_exc"] = f"{type(e).__name__}: {e}"
+        except _json.JSONDecodeError as e:
+            info["jsondecode_exc"] = f"{type(e).__name__}: {e}"
+            info["err_pos"] = e.pos
+            info["err_line"] = e.lineno
+            info["err_col"] = e.colno
+            # Show ±100 chars around the error position
+            try:
+                start = max(0, e.pos - 100)
+                end = min(len(text), e.pos + 100)
+                info["context_around_err"] = repr(text[start:end])
+            except Exception:
+                pass
+        except Exception as e:
+            info["loads_exc"] = f"{type(e).__name__}: {e}"
+    except Exception as e:
+        info["outer"] = f"{type(e).__name__}: {e}"
+        info["outer_tb"] = traceback.format_exc()
+    return jsonify(info)
+
 # PATCH_V7_RECAP_DIAG_v3 — what does the recap reader actually see?
 @app.route("/api/yerli_kupon/recap_diag")
 def recap_diag():
