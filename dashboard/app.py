@@ -49,35 +49,65 @@ try:
     import pytz
 
     def _scheduled_pipeline():
-        """Günlük kupon pipeline'ını çalıştır ve Telegram'a gönder."""
-        app.logger.info("⏰ Scheduled pipeline başlatılıyor...")
+        """PATCH_V7_AUTOSCHED_v1. V7 pipeline + Telegram send.
+        Replaces legacy main.run_daily — which used a different (broken) save path."""
+        app.logger.info("⏰ V7 scheduled pipeline başlatılıyor...")
         try:
-            # Ana pipeline'ı import et (dashboard'dan bağımsız — main.py'deki run_daily)
-            from main import run_daily
-            run_daily()
-            app.logger.info("⏰ Scheduled pipeline tamamlandı ✓")
+            from yerli_engine import run_yerli_pipeline, send_telegram_simple
+            result = run_yerli_pipeline()
+            with _yerli_lock:
+                _yerli_cache['data'] = result
+                _yerli_cache['ts'] = datetime.now(timezone.utc).isoformat()
+            try:
+                send_telegram_simple(result)
+                app.logger.info("⏰ V7 kupon Telegram'a gönderildi ✓")
+            except Exception as _e_tg:
+                app.logger.error(f"⏰ V7 Telegram send failed: {_e_tg}")
+            app.logger.info("⏰ V7 scheduled pipeline tamamlandı ✓")
         except Exception as e:
-            app.logger.error(f"⏰ Scheduled pipeline hatası: {e}")
+            app.logger.error(f"⏰ V7 scheduled pipeline hatası: {e}")
             import traceback; traceback.print_exc()
 
     def _scheduled_retro():
-        """Günlük retro sonuçlarını çalıştır."""
-        app.logger.info("⏰ Retro job başlatılıyor...")
+        """Legacy retro — left in place but no longer the primary recap."""
+        app.logger.info("⏰ Legacy retro job başlatılıyor...")
         try:
             from engine.retro import run_retro
             from bot.telegram_sender import send_sync
             result = run_retro(date.today())
             if result:
                 send_sync(result)
-            app.logger.info("⏰ Retro tamamlandı ✓")
+            app.logger.info("⏰ Legacy retro tamamlandı ✓")
         except Exception as e:
-            app.logger.error(f"⏰ Retro hatası: {e}")
+            app.logger.error(f"⏰ Legacy retro hatası: {e}")
 
-    # RUN_HOUR/RUN_MINUTE config'den al, yoksa default 11:00 İstanbul saati
+    def _scheduled_v7_recap():
+        """PATCH_V7_AUTOSCHED_v1. V7 daily recap — Bugün ne dedik / ne çıktı?
+        Runs at 22:00 İstanbul (after last race). Auto-sends to Telegram.
+        If results aren't published yet, will say 'Sonuçlar alınamadı' — that's fine.
+        Idempotent — running twice on same day produces same recap."""
+        app.logger.info("⏰ V7 recap başlatılıyor...")
+        try:
+            from yerli_engine import run_daily_recap
+            today_str = date.today().strftime("%Y-%m-%d")
+            recap = run_daily_recap(target_date_str=today_str, send_telegram=True)
+            status = recap.get("status", "?") if isinstance(recap, dict) else "?"
+            sent = recap.get("telegram_sent", False) if isinstance(recap, dict) else False
+            app.logger.info(f"⏰ V7 recap tamamlandı ✓ status={status} sent={sent}")
+        except Exception as e:
+            app.logger.error(f"⏰ V7 recap hatası: {e}")
+            import traceback; traceback.print_exc()
+
     try:
         from config import RUN_HOUR, RUN_MINUTE
     except ImportError:
         RUN_HOUR, RUN_MINUTE = 11, 0
+
+    try:
+        RECAP_HOUR = int(os.environ.get("V7_RECAP_HOUR", "22"))
+        RECAP_MINUTE = int(os.environ.get("V7_RECAP_MINUTE", "0"))
+    except Exception:
+        RECAP_HOUR, RECAP_MINUTE = 22, 0
 
     ist_tz = pytz.timezone('Europe/Istanbul')
     scheduler = BackgroundScheduler(timezone=ist_tz)
@@ -85,9 +115,16 @@ try:
                       id='daily_pipeline', replace_existing=True)
     scheduler.add_job(_scheduled_retro, 'cron', hour=21, minute=0,
                       id='daily_retro', replace_existing=True)
+    # PATCH_V7_AUTOSCHED_v1
+    scheduler.add_job(_scheduled_v7_recap, 'cron',
+                      hour=RECAP_HOUR, minute=RECAP_MINUTE,
+                      id='v7_daily_recap', replace_existing=True)
     scheduler.start()
     SCHEDULER_OK = True
-    app.logger.info(f"⏰ APScheduler aktif: pipeline {RUN_HOUR:02d}:{RUN_MINUTE:02d}, retro 21:00 (İstanbul)")
+    app.logger.info(
+        f"⏰ APScheduler aktif: V7 pipeline {RUN_HOUR:02d}:{RUN_MINUTE:02d}, "
+        f"legacy retro 21:00, V7 recap {RECAP_HOUR:02d}:{RECAP_MINUTE:02d} (İstanbul)"
+    )
 except Exception as e:
     app.logger.warning(f"APScheduler yüklenemedi (schedule çalışmayacak): {e}")
     app.logger.warning("APScheduler için: pip install apscheduler pytz")
