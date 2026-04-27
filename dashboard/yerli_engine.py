@@ -4,7 +4,7 @@ Yerli Engine v4 — 3-Tier AGF Import, 6-Leg Fix
 Railway'de dashboard/ root'tan calisir.
 model/, scraper/, engine/ icin birden fazla path dener.
 """
-import os, sys, logging
+import os, sys, logging, json
 import numpy as np
 from datetime import date, datetime
 from html import escape
