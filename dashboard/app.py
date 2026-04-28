@@ -396,6 +396,83 @@ def snap_diag():
         info["outer_tb"] = traceback.format_exc()
     return jsonify(info)
 
+# PATCH_TJK_AGF_PROBE_v1 — does TJK programme HTML contain AGF percentages?
+@app.route("/api/tjk_agf_probe")
+def tjk_agf_probe():
+    """Probe: fetch raw TJK HTML programme via Railway (which has working egress),
+    inspect whether the AGF column contains percentage values for Şanlıurfa race 7-9.
+    """
+    import urllib.request as _ur, re as _re, traceback
+    from datetime import date as _date
+    info = {}
+    try:
+        target = request.args.get("date") or _date.today().strftime("%d.%m.%Y")
+        info["date"] = target
+        url = ("https://www.tjk.org/TR/YarisSever/Info/Page/GunlukYarisProgrami"
+               f"?QueryParameter_Tarih={target}")
+        info["url"] = url
+        req = _ur.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+            "Accept": "text/html,*/*",
+        })
+        html = _ur.urlopen(req, timeout=30).read().decode("utf-8", errors="ignore")
+        info["html_len"] = len(html)
+        info["agf_header_count"] = html.count(">AGF<")
+        agf_pos = html.find(">AGF<")
+        info["agf_header_pos"] = agf_pos
+        if agf_pos > 0:
+            info["around_agf_header"] = html[max(0, agf_pos-100):agf_pos+500]
+        # Find Şanlıurfa section
+        urfa_pos = html.find("Şanlıurfa")
+        if urfa_pos < 0:
+            urfa_pos = html.find("ŞANLIURFA")
+        info["urfa_pos"] = urfa_pos
+        if urfa_pos > 0:
+            # Find race 7 marker after Şanlıurfa
+            urfa_section = html[urfa_pos:urfa_pos+200000]
+            # Find tables with AGF data
+            # Pattern: lots of horse rows in Şanlıurfa section
+            # Sample 1500 chars roughly where race 7 would be
+            r7_match = _re.search(r"7\.\s*KO[ŞS]U", urfa_section)
+            if r7_match:
+                start = r7_match.start()
+                info["urfa_r7_pos_in_section"] = start
+                info["urfa_r7_sample"] = urfa_section[start:start+5000]
+        # Also: parse a single race table to see if scraper would find AGF
+        try:
+            from scraper.tjk_html_scraper import get_todays_races_html
+            from datetime import datetime as _dt
+            target_dt = _dt.strptime(target, "%d.%m.%Y").date()
+            data = get_todays_races_html(target_dt)
+            if data:
+                # Find Şanlıurfa
+                for ph in data:
+                    if "anlıurfa" in (ph.get("hippodrome", "") or "").lower() or                        "anliurfa" in (ph.get("hippodrome", "") or "").lower():
+                        info["urfa_in_scraper"] = True
+                        races = ph.get("races", [])
+                        info["urfa_race_numbers"] = [r.get("race_number") for r in races]
+                        # Sample race 7
+                        r7 = next((r for r in races if r.get("race_number") == 7), None)
+                        if r7:
+                            horses = r7.get("horses", [])
+                            info["r7_n_horses"] = len(horses)
+                            if horses:
+                                info["r7_first_horse_keys"] = list(horses[0].keys())
+                                info["r7_first_horse_sample"] = horses[0]
+                                # Check if any horse has agf_pct or similar
+                                info["r7_horses_with_agf_field"] = sum(
+                                    1 for h in horses if h.get("agf_pct") or h.get("agf")
+                                )
+                        break
+                else:
+                    info["urfa_in_scraper"] = False
+        except Exception as e:
+            info["scraper_probe_error"] = f"{type(e).__name__}: {e}"
+    except Exception as e:
+        info["outer"] = f"{type(e).__name__}: {e}"
+        info["outer_tb"] = traceback.format_exc()
+    return jsonify(info)
+
 @app.route("/api/yerli_kupon/disk_diag")
 def disk_diag():
     import os as _os
