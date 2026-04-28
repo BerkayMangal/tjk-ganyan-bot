@@ -408,7 +408,7 @@ def tjk_agf_probe():
     try:
         target = request.args.get("date") or _date.today().strftime("%d.%m.%Y")
         info["date"] = target
-        url = ("https://www.tjk.org/TR/YarisSever/Info/Page/GunlukYarisProgrami"
+        url = ("https://www.tjk.org/TR/yarissever/Info/Page/GunlukYarisProgrami"
                f"?QueryParameter_Tarih={target}")
         info["url"] = url
         req = _ur.Request(url, headers={
