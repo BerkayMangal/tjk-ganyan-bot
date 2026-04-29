@@ -1348,6 +1348,20 @@ def _refresh_repaired_altili_summary_fields(result):
                     main_danger = ls.get("ayak") or ls.get("race_number")
     result["main_danger_leg"] = main_danger
 
+    # PATCH_FAZ7C1B_V7_REPAIRED_RECOMPUTE_v1: V7 preview was injected by
+    # _process_proper_altili BEFORE this altılı was identified as REPAIRED.
+    # That early inject ran on stale (broken-AGF) legs_summary that mirrored
+    # the duplicate partner. Now that data_quality_status and legs_summary
+    # are fully repaired, recompute V7 — which will correctly skip because
+    # dq=REPAIRED_FROM_TJK and legs[i].agf_missing=True.
+    try:
+        result["v7_coupon"] = _v7_build_preview(result)
+    except Exception as _v7_e:
+        try: logger.warning(f"[v7_repaired_recompute] failed: {_v7_e}")
+        except Exception: pass
+        result["v7_coupon"] = {"status": "error", "phase": "7C-1",
+                                "error": f"{type(_v7_e).__name__}: {_v7_e}"}
+
 
 
 def _enrich_repaired_legs_with_cross_altili_data(all_results):
