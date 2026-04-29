@@ -396,82 +396,76 @@ def snap_diag():
         info["outer_tb"] = traceback.format_exc()
     return jsonify(info)
 
-# PATCH_TJK_AGF_PROBE_v1 — does TJK programme HTML contain AGF percentages?
+# PATCH_TJK_AGF_PROBE_v2 — use proven scraper directly + dump raw HTML
 @app.route("/api/tjk_agf_probe")
 def tjk_agf_probe():
-    """Probe: fetch raw TJK HTML programme via Railway (which has working egress),
-    inspect whether the AGF column contains percentage values for Şanlıurfa race 7-9.
-    """
-    import urllib.request as _ur, re as _re, traceback
-    from datetime import date as _date
-    info = {}
+    """Use the actual working scraper to fetch today, then inspect what came back."""
+    import traceback, json as _json
+    info = {"version": "v2"}
     try:
-        target = request.args.get("date") or _date.today().strftime("%d.%m.%Y")
-        info["date"] = target
-        url = ("https://www.tjk.org/TR/yarissever/Info/Page/GunlukYarisProgrami"
-               f"?QueryParameter_Tarih={target}")
-        info["url"] = url
-        req = _ur.Request(url, headers={
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
-            "Accept": "text/html,*/*",
-        })
-        html = _ur.urlopen(req, timeout=30).read().decode("utf-8", errors="ignore")
-        info["html_len"] = len(html)
-        info["agf_header_count"] = html.count(">AGF<")
-        agf_pos = html.find(">AGF<")
-        info["agf_header_pos"] = agf_pos
-        if agf_pos > 0:
-            info["around_agf_header"] = html[max(0, agf_pos-100):agf_pos+500]
-        # Find Şanlıurfa section
-        urfa_pos = html.find("Şanlıurfa")
-        if urfa_pos < 0:
-            urfa_pos = html.find("ŞANLIURFA")
-        info["urfa_pos"] = urfa_pos
-        if urfa_pos > 0:
-            # Find race 7 marker after Şanlıurfa
-            urfa_section = html[urfa_pos:urfa_pos+200000]
-            # Find tables with AGF data
-            # Pattern: lots of horse rows in Şanlıurfa section
-            # Sample 1500 chars roughly where race 7 would be
-            r7_match = _re.search(r"7\.\s*KO[ŞS]U", urfa_section)
-            if r7_match:
-                start = r7_match.start()
-                info["urfa_r7_pos_in_section"] = start
-                info["urfa_r7_sample"] = urfa_section[start:start+5000]
-        # Also: parse a single race table to see if scraper would find AGF
+        from datetime import datetime as _dt, date as _date
+        target_str = request.args.get("date") or _date.today().strftime("%d.%m.%Y")
+        # Accept both 28.04.2026 and 28/04/2026
         try:
-            from scraper.tjk_html_scraper import get_todays_races_html
-            from datetime import datetime as _dt
-            target_dt = _dt.strptime(target, "%d.%m.%Y").date()
-            data = get_todays_races_html(target_dt)
-            if data:
-                # Find Şanlıurfa
-                for ph in data:
-                    if "anlıurfa" in (ph.get("hippodrome", "") or "").lower() or                        "anliurfa" in (ph.get("hippodrome", "") or "").lower():
-                        info["urfa_in_scraper"] = True
-                        races = ph.get("races", [])
-                        info["urfa_race_numbers"] = [r.get("race_number") for r in races]
-                        # Sample race 7
-                        r7 = next((r for r in races if r.get("race_number") == 7), None)
-                        if r7:
-                            horses = r7.get("horses", [])
-                            info["r7_n_horses"] = len(horses)
-                            if horses:
-                                info["r7_first_horse_keys"] = list(horses[0].keys())
-                                info["r7_first_horse_sample"] = horses[0]
-                                # Check if any horse has agf_pct or similar
-                                info["r7_horses_with_agf_field"] = sum(
-                                    1 for h in horses if h.get("agf_pct") or h.get("agf")
-                                )
-                        break
-                else:
-                    info["urfa_in_scraper"] = False
+            target_dt = _dt.strptime(target_str.replace("/", "."), "%d.%m.%Y").date()
         except Exception as e:
-            info["scraper_probe_error"] = f"{type(e).__name__}: {e}"
+            return jsonify({"error": f"bad date: {e}", "got": target_str})
+        info["date"] = target_dt.isoformat()
+
+        # Call the scraper that is proven to work
+        from scraper.tjk_html_scraper import get_todays_races_html
+        data = get_todays_races_html(target_dt)
+        if not data:
+            return jsonify({**info, "scraper_returned": "empty"})
+
+        info["n_hippodromes"] = len(data)
+        info["hippodromes"] = [ph.get("hippodrome") for ph in data]
+
+        # Find Şanlıurfa
+        urfa = None
+        for ph in data:
+            name = (ph.get("hippodrome") or "").lower()
+            if "anlıurfa" in name or "anliurfa" in name or "anlıurfa" in name.replace("ı","i"):
+                urfa = ph
+                break
+        if urfa is None:
+            # Try first hippodrome as fallback to still see data structure
+            urfa = data[0]
+            info["urfa_not_found_using_first"] = urfa.get("hippodrome")
+
+        races = urfa.get("races", []) or []
+        info["urfa_race_numbers"] = [r.get("race_number") for r in races]
+
+        # Pick race 7 if present, else first race
+        target_race = next((r for r in races if r.get("race_number") == 7), None)
+        if target_race is None and races:
+            target_race = races[0]
+            info["used_race_fallback"] = target_race.get("race_number")
+
+        if target_race:
+            horses = target_race.get("horses", []) or []
+            info["picked_race_number"] = target_race.get("race_number")
+            info["picked_race_keys"] = list(target_race.keys())
+            info["n_horses"] = len(horses)
+            if horses:
+                # Full first horse dict
+                info["first_horse_full"] = horses[0]
+                info["first_horse_keys"] = list(horses[0].keys())
+                # Check ALL horses for any AGF-like field
+                agf_field_candidates = ["agf", "agf_pct", "agf_percent", "agfPct"]
+                seen_agf_fields = {}
+                for h in horses:
+                    for f in agf_field_candidates:
+                        if f in h and h[f] not in (None, "", 0):
+                            seen_agf_fields[f] = seen_agf_fields.get(f, 0) + 1
+                info["horses_with_agf_field"] = seen_agf_fields
+                # Dump 3 sample horses fully (compact)
+                info["sample_horses"] = horses[:3]
     except Exception as e:
-        info["outer"] = f"{type(e).__name__}: {e}"
-        info["outer_tb"] = traceback.format_exc()
+        info["error"] = f"{type(e).__name__}: {e}"
+        info["tb"] = traceback.format_exc()
     return jsonify(info)
+
 
 @app.route("/api/yerli_kupon/disk_diag")
 def disk_diag():
