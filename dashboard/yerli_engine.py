@@ -3248,6 +3248,21 @@ def _build_legs_summary(legs):
         def _h_mp(_h):
             return _h[3].get('model_prob', 0) if isinstance(_h[3], dict) else 0
         horses_by_mp = sorted(horses, key=_h_mp, reverse=True)
+        # PATCH_FAZ7A_LEGS_SUMMARY_FULL_HORSES_v1: build full per-horse list
+        # with the same field schema as top3. V7 builder consumes this for
+        # entropy / marginal-coverage analysis. top3 unchanged below.
+        all_horses_with_mp = []
+        for h in horses_by_mp:
+            ap = 0
+            for a in agf:
+                if a['horse_number'] == h[2]: ap = a['agf_pct']; break
+            mp = h[3].get('model_prob', 0)*100 if isinstance(h[3], dict) else 0
+            ve = (h[3].get('model_prob', 0) - ap/100.0)*100 if isinstance(h[3], dict) and ap > 0 else 0
+            all_horses_with_mp.append({
+                'name': h[0], 'number': h[2], 'score': round(h[1], 4),
+                'agf_pct': ap, 'model_prob': round(mp, 1), 'value_edge': round(ve, 1),
+            })
+        # Existing top3 logic — UNCHANGED.
         top3 = []
         for h in horses_by_mp[:3]:
             ap = 0
@@ -3261,6 +3276,7 @@ def _build_legs_summary(legs):
         out.append({'ayak':i+1,'race_number':leg.get('race_number',i+1),'n_runners':leg.get('n_runners',0),
             'has_model':leg.get('has_model',False),'confidence':round(leg.get('confidence',0),4),
             'agreement':round(leg.get('model_agreement',0),2),'leg_type':lt,'top3':top3,
+            'all_horses_with_mp':all_horses_with_mp,
             'distance':leg.get('distance',''),'breed':'Arap' if leg.get('is_arab') else ('\u0130ngiliz' if leg.get('is_english') else '')})
     return out
 
