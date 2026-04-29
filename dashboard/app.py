@@ -113,8 +113,9 @@ try:
     scheduler = BackgroundScheduler(timezone=ist_tz)
     scheduler.add_job(_scheduled_pipeline, 'cron', hour=RUN_HOUR, minute=RUN_MINUTE,
                       id='daily_pipeline', replace_existing=True)
-    scheduler.add_job(_scheduled_retro, 'cron', hour=21, minute=0,
-                      id='daily_retro', replace_existing=True)
+    # PATCH_FAZ1_STABILITY_v1: legacy retro disabled — V7 recap @ 22:00 replaces it.
+    # scheduler.add_job(_scheduled_retro, 'cron', hour=21, minute=0,
+    #                   id='daily_retro', replace_existing=True)
     # PATCH_V7_AUTOSCHED_v1
     scheduler.add_job(_scheduled_v7_recap, 'cron',
                       hour=RECAP_HOUR, minute=RECAP_MINUTE,

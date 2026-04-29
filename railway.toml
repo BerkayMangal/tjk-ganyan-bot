@@ -2,4 +2,4 @@
 builder = "NIXPACKS"
 
 [deploy]
-startCommand = "sh -c 'cd dashboard && gunicorn app:app -b 0.0.0.0:${PORT:-8080} --workers 2 --timeout 120'"
+startCommand = "sh -c 'cd dashboard && gunicorn app:app -b 0.0.0.0:${PORT:-8080} --workers 1 --timeout 120'"
