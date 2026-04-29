@@ -2968,6 +2968,14 @@ def _inject_selection_integrity_audit(result, legs):
         try: logger.warning(f"[selection_integrity_audit] failed: {e}")
         except Exception: pass
         result["selection_integrity_audit"] = {"error": f"{type(e).__name__}: {e}"}
+    # PATCH_FAZ7C1_V7_RISK_PREVIEW_v1: V7 risk preview injection (never raises)
+    try:
+        result["v7_coupon"] = _v7_build_preview(result)
+    except Exception as _v7_e:
+        try: logger.warning(f"[v7_preview] failed: {_v7_e}")
+        except Exception: pass
+        result["v7_coupon"] = {"status": "error", "phase": "7C-1",
+                                "error": f"{type(_v7_e).__name__}: {_v7_e}"}
     return result
 
 
@@ -3167,6 +3175,361 @@ def _faz6_format_forced_inclusion_lines(forced_inclusions):
     return lines
 
 # PATCH_FAZ6_MANDATORY_INCLUSION_v1: END ───────────────────────────
+
+
+# PATCH_FAZ7B_HISTORICAL_PRIOR_PLACEHOLDER_v1: BEGIN ───────────────
+# Returns None until persistent volume + nightly compute job is added.
+# V7 builder treats None as "no prior available" — falls back to
+# calibration warnings + max_singles disciplines for surprise protection.
+def _v7_lookup_historical_prior(ayak_num, hippo, breed=None, distance=None,
+                                  n_runners=None, race_type=None):
+    return None
+# PATCH_FAZ7B_HISTORICAL_PRIOR_PLACEHOLDER_v1: END ─────────────────
+
+
+# PATCH_FAZ7C1_V7_RISK_PREVIEW_v1: BEGIN ───────────────────────────
+# V7 risk classification preview. Read-only result field.
+# No coupon generation in this phase — analysis only.
+
+import math as _math_v7
+
+# Risk thresholds
+_V7_LOW_RISK_MAX  = -1.0   # risk_score <= -1 → LOW
+_V7_HIGH_RISK_MIN =  2.0   # risk_score >=  2 → HIGH
+
+# Calibration thresholds (mp, agf)
+_V7_CAL_EXTREME_MP_MIN  = 70.0
+_V7_CAL_EXTREME_AGF_MAX = 5.0
+_V7_CAL_LOWAGF_MP_MIN   = 50.0
+_V7_CAL_LOWAGF_AGF_MAX  = 3.0
+_V7_CAL_BLIND_MP_MIN    = 80.0
+_V7_CAL_BLIND_AGF_MAX   = 10.0
+
+# Coverage targets
+_V7_COVERAGE_LOW    = 0.60
+_V7_COVERAGE_MEDIUM = 0.70
+_V7_COVERAGE_HIGH   = 0.75
+
+# Width caps (force horses can override)
+_V7_WIDTH_LOW_MAX    = 2
+_V7_WIDTH_MEDIUM_MAX = 4
+_V7_WIDTH_HIGH_MAX   = 6
+
+
+def _v7_horse_pool(leg_summary):
+    """Defensive resolver: prefer Phase 7A all_horses_with_mp, then legacy
+    all_horses (REPAIRED), final fallback top3."""
+    pool = leg_summary.get("all_horses_with_mp")
+    if pool: return pool, "all_horses_with_mp"
+    pool = leg_summary.get("all_horses")
+    if pool: return pool, "all_horses"
+    pool = leg_summary.get("top3") or []
+    return pool, "top3"
+
+
+def _v7_safe_mp(h):
+    v = h.get("model_prob")
+    return float(v) if isinstance(v, (int, float)) else 0.0
+
+
+def _v7_safe_ve(h):
+    v = h.get("value_edge")
+    return float(v) if isinstance(v, (int, float)) else 0.0
+
+
+def _v7_safe_agf(h):
+    v = h.get("agf_pct")
+    return float(v) if isinstance(v, (int, float)) else 0.0
+
+
+def _v7_compute_entropy(probabilities):
+    """Shannon entropy over normalized probabilities. Returns 0 if all zero."""
+    total = sum(p for p in probabilities if p > 0)
+    if total <= 0:
+        return 0.0
+    H = 0.0
+    for p in probabilities:
+        if p <= 0:
+            continue
+        q = p / total
+        H -= q * _math_v7.log(q)
+    return round(H, 3)
+
+
+def _v7_top1_top2(horses_sorted_desc):
+    """Return (top1_mp, top2_mp, gap, top1_num, top2_num)."""
+    if not horses_sorted_desc:
+        return 0.0, 0.0, 0.0, None, None
+    h1 = horses_sorted_desc[0]
+    mp1 = _v7_safe_mp(h1)
+    n1  = h1.get("number")
+    if len(horses_sorted_desc) < 2:
+        return mp1, 0.0, mp1, n1, None
+    h2 = horses_sorted_desc[1]
+    mp2 = _v7_safe_mp(h2)
+    n2  = h2.get("number")
+    return mp1, mp2, (mp1 - mp2), n1, n2
+
+
+def _v7_agf_top1(horses):
+    """Return (agf_top1_num, agf_top1_pct)."""
+    if not horses:
+        return None, 0.0
+    sorted_h = sorted(horses, key=_v7_safe_agf, reverse=True)
+    return sorted_h[0].get("number"), _v7_safe_agf(sorted_h[0])
+
+
+def _v7_calibration_warnings(top1_horse):
+    """Calibration disagreement flags for the leg's model-top1 horse."""
+    mp  = _v7_safe_mp(top1_horse)
+    agf = _v7_safe_agf(top1_horse)
+    out = []
+    if mp >= _V7_CAL_EXTREME_MP_MIN and agf < _V7_CAL_EXTREME_AGF_MAX:
+        out.append("EXTREME_DISAGREEMENT")
+    if mp >= _V7_CAL_LOWAGF_MP_MIN and agf < _V7_CAL_LOWAGF_AGF_MAX:
+        out.append("LOW_AGF_HIGH_MP")
+    if mp >= _V7_CAL_BLIND_MP_MIN and agf < _V7_CAL_BLIND_AGF_MAX:
+        out.append("PUBLIC_BLIND")
+    return out
+
+
+def _v7_classify_risk_and_width(leg_summary, ayak_num, hippo):
+    """Run Layer 1+2+3+4 analysis on a single leg.
+    Returns analysis dict (per-leg). No coupon generation — preview only.
+    """
+    horses, source = _v7_horse_pool(leg_summary)
+    n_runners = leg_summary.get("n_runners", len(horses) or 0)
+    breed = leg_summary.get("breed") or ""
+    distance = leg_summary.get("distance") or ""
+
+    # ---- Layer 1: model signals ----
+    horses_by_mp = sorted(horses, key=_v7_safe_mp, reverse=True)
+    top1_mp, top2_mp, gap, top1_num, top2_num = _v7_top1_top2(horses_by_mp)
+    mp_list = [_v7_safe_mp(h) for h in horses]
+    model_entropy = _v7_compute_entropy(mp_list)
+
+    # ---- Layer 2: AGF + disagreement + calibration ----
+    agf_list = [_v7_safe_agf(h) for h in horses]
+    agf_entropy = _v7_compute_entropy(agf_list)
+    agf_top1_num, agf_top1_pct = _v7_agf_top1(horses)
+    disagreement = (top1_num is not None and agf_top1_num is not None and
+                    top1_num != agf_top1_num and top1_mp >= 30)
+    top1_horse = horses_by_mp[0] if horses_by_mp else {}
+    cal_warnings = _v7_calibration_warnings(top1_horse)
+
+    # ---- Layer 3: historical prior (placeholder, returns None) ----
+    hist_prior = _v7_lookup_historical_prior(
+        ayak_num, hippo, breed=breed, distance=distance,
+        n_runners=n_runners,
+    )
+
+    # ---- Layer 4: mandatory + force ----
+    mandatory = []
+    force = []
+    for h in horses:
+        mp = _v7_safe_mp(h); ve = _v7_safe_ve(h)
+        qn, qf = _faz6_qualifies(mp, ve)
+        if qn or qf:
+            entry = {
+                "number": h.get("number"), "name": h.get("name"),
+                "model_prob": round(mp, 1), "value_edge": round(ve, 1),
+                "agf_pct": round(_v7_safe_agf(h), 2),
+                "force": qf,
+            }
+            mandatory.append(entry)
+            if qf:
+                force.append(entry)
+
+    # ---- Risk scoring (Layer 1+2 weighted) ----
+    risk_score = 0.0
+
+    if top1_mp < 30:    risk_score += 2
+    elif top1_mp < 50:  risk_score += 1
+    elif top1_mp >= 65: risk_score -= 1
+
+    if gap < 10:        risk_score += 2
+    elif gap < 20:      risk_score += 1
+    elif gap >= 30:     risk_score -= 1
+
+    if model_entropy > 1.6:    risk_score += 1
+    elif model_entropy > 1.3:  risk_score += 0.5
+
+    if disagreement:
+        risk_score += 1
+
+    if n_runners >= 12:
+        risk_score += 1
+    elif n_runners <= 7:
+        risk_score -= 0.5
+
+    breed_low = (breed or "").lower()
+    leg_type_low = (leg_summary.get("leg_type") or "").lower()
+    is_maiden = "maiden" in breed_low or "maiden" in leg_type_low or "dhÖ" in breed_low
+    is_handicap = "handikap" in breed_low or "hndkp" in breed_low or "hnd" in leg_type_low
+    if (is_maiden or is_handicap) and n_runners >= 10:
+        risk_score += 0.5
+
+    # ---- Risk class ----
+    if risk_score <= _V7_LOW_RISK_MAX:
+        risk = "LOW"
+    elif risk_score >= _V7_HIGH_RISK_MIN:
+        risk = "HIGH"
+    else:
+        risk = "MEDIUM"
+
+    # ---- Width hint ----
+    forbid_single = bool(cal_warnings)  # any calibration warning → no single
+
+    if risk == "LOW":
+        base_width = 2 if forbid_single else 1
+        max_w = _V7_WIDTH_LOW_MAX
+        coverage_target = _V7_COVERAGE_LOW
+    elif risk == "MEDIUM":
+        base_width = 2
+        max_w = _V7_WIDTH_MEDIUM_MAX
+        coverage_target = _V7_COVERAGE_MEDIUM
+    else:  # HIGH
+        base_width = 4
+        max_w = _V7_WIDTH_HIGH_MAX
+        coverage_target = _V7_COVERAGE_HIGH
+
+    # Coverage refinement for MEDIUM/HIGH (LOW stays at base)
+    if risk in ("MEDIUM", "HIGH"):
+        cum = 0.0
+        cov_width = base_width
+        for k, h in enumerate(horses_by_mp, start=1):
+            cum += _v7_safe_mp(h) / 100.0
+            if cum >= coverage_target:
+                cov_width = k
+                break
+        else:
+            cov_width = len(horses_by_mp) if horses_by_mp else base_width
+        base_width = max(base_width, cov_width)
+
+    # Mandatory floor
+    width_hint = max(base_width, len(mandatory))
+    # Force atlar override max_w
+    effective_max = max(max_w, len(force))
+    width_hint = min(width_hint, effective_max)
+    # Field size cap
+    if n_runners >= 2:
+        width_hint = min(width_hint, n_runners - 1)
+    width_hint = max(1, width_hint)  # never zero
+
+    # ---- Reasoning string (Turkish, compact) ----
+    parts = []
+    if risk == "LOW":
+        parts.append(f"top1={top1_mp:.0f} gap={gap:.0f} → düşük belirsizlik")
+    elif risk == "HIGH":
+        parts.append(f"top1={top1_mp:.0f} gap={gap:.0f} ent={model_entropy:.2f} → yüksek belirsizlik")
+    else:
+        parts.append(f"top1={top1_mp:.0f} gap={gap:.0f} → orta belirsizlik")
+
+    if cal_warnings:
+        parts.append(f"kalibrasyon ({','.join(cal_warnings)})")
+    if disagreement:
+        parts.append(f"model #{top1_num} vs AGF #{agf_top1_num}")
+    if n_runners >= 12:
+        parts.append(f"{n_runners} atlı geniş kadro")
+    if is_maiden and n_runners >= 10:
+        parts.append("maiden+büyük field")
+    if is_handicap and n_runners >= 10:
+        parts.append("handikap+büyük field")
+    if force:
+        parts.append(f"{len(force)} force at zorunlu")
+    elif mandatory:
+        parts.append(f"{len(mandatory)} mandatory at")
+    if hist_prior is None:
+        parts.append("hist=yok")
+
+    reasoning = "; ".join(parts) + f" → width hint {width_hint}"
+
+    return {
+        "ayak": ayak_num,
+        "race_number": leg_summary.get("race_number", ayak_num),
+        "n_runners": n_runners,
+        "surprise_risk": risk,
+        "risk_score": round(risk_score, 2),
+        "recommended_width_hint": width_hint,
+        "top1_model_prob": round(top1_mp, 1),
+        "top2_model_prob": round(top2_mp, 1),
+        "top1_top2_gap": round(gap, 1),
+        "top1_number": top1_num,
+        "top2_number": top2_num,
+        "model_entropy": model_entropy,
+        "agf_entropy": agf_entropy,
+        "agf_top1_number": agf_top1_num,
+        "agf_top1_pct": round(agf_top1_pct, 2),
+        "model_agf_disagreement": disagreement,
+        "calibration_warning": cal_warnings,
+        "forbid_single": forbid_single,
+        "mandatory_horses": mandatory,
+        "force_horses": force,
+        "historical_prior": hist_prior,
+        "horse_pool_source": source,
+        "breed": breed,
+        "distance": distance,
+        "is_maiden": is_maiden,
+        "is_handicap": is_handicap,
+        "reasoning": reasoning,
+    }
+
+
+def _v7_product(nums):
+    p = 1
+    for n in nums:
+        if isinstance(n, (int, float)) and n > 0:
+            p *= int(n)
+    return p
+
+
+def _v7_build_preview(result):
+    """Top-level: build v7_coupon preview-only field from result.
+    Skip if REPAIRED or AGF missing.
+    """
+    dq = (result.get("data_quality_status") or "").upper()
+    if dq in ("REPAIRED_FROM_TJK", "DIAGNOSTIC_NO_BET", "REPAIRED"):
+        return {"status": "skipped", "phase": "7C-1",
+                "reason": f"repaired_or_agf_missing ({dq})"}
+
+    legs_summary = result.get("legs_summary") or []
+    if not legs_summary:
+        return {"status": "skipped", "phase": "7C-1",
+                "reason": "no_legs_summary"}
+
+    any_agf_missing = any(ls.get("agf_missing") for ls in legs_summary)
+    if any_agf_missing:
+        return {"status": "skipped", "phase": "7C-1",
+                "reason": "agf_missing_in_at_least_one_leg"}
+
+    hippo = result.get("hippodrome") or ""
+    legs_out = []
+    for ls in legs_summary:
+        ayak = ls.get("ayak", 0)
+        analysis = _v7_classify_risk_and_width(ls, ayak, hippo)
+        legs_out.append(analysis)
+
+    risk_vec = [l["surprise_risk"] for l in legs_out]
+    width_vec = [l["recommended_width_hint"] for l in legs_out]
+    summary = {
+        "risk_vector": risk_vec,
+        "width_hint_vector": width_vec,
+        "n_low":    sum(1 for r in risk_vec if r == "LOW"),
+        "n_medium": sum(1 for r in risk_vec if r == "MEDIUM"),
+        "n_high":   sum(1 for r in risk_vec if r == "HIGH"),
+        "n_calibration_warnings": sum(1 for l in legs_out if l["calibration_warning"]),
+        "n_mandatory_horses": sum(len(l["mandatory_horses"]) for l in legs_out),
+        "n_force_horses":     sum(len(l["force_horses"])     for l in legs_out),
+        "tentative_combo_if_using_hint": _v7_product(width_vec),
+    }
+    return {
+        "status": "preview_only",
+        "phase": "7C-1",
+        "legs": legs_out,
+        "summary": summary,
+    }
+
+# PATCH_FAZ7C1_V7_RISK_PREVIEW_v1: END ─────────────────────────────
 
 
 def _simple_kupon(legs, hippo, mode='dar'):
