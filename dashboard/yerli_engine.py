@@ -1168,7 +1168,167 @@ def detect_and_repair_duplicates(all_results, programme_data, target_date=None):
             logger.warning(f"[smart-repair] cross-altılı enrichment failed: {_e_enrich}")
         except Exception:
             pass
+
+    # PATCH_FAZ3_AUDIT_KALIBRASYON_v1: BUG 6 — after repair has identified the
+    # broken altılı, the clean partner (still flagged DUPLICATE_SUSPICIOUS by
+    # the earlier detect_duplicate_altili_warning pass) should be cleared.
+    try:
+        _by_hippo = {}
+        for _i, _r in enumerate(all_results):
+            _h = (_r.get("hippodrome") or "?").lower().strip()
+            _by_hippo.setdefault(_h, []).append(_i)
+        for _hippo, _idxs in _by_hippo.items():
+            if len(_idxs) < 2:
+                continue
+            _repaired_alts = {
+                all_results[_i].get("altili_no") for _i in _idxs
+                if all_results[_i].get("data_quality_status") == "REPAIRED_FROM_TJK"
+            }
+            if not _repaired_alts:
+                continue
+            for _i in _idxs:
+                _r = all_results[_i]
+                if (_r.get("data_quality_status") == "DUPLICATE_SUSPICIOUS"
+                        and _r.get("altili_no") not in _repaired_alts):
+                    _r["data_quality_status"] = "OK"
+                    _notes = _r.get("diagnostic_notes") or []
+                    _r["diagnostic_notes"] = [
+                        _n for _n in _notes
+                        if "aynı atları gösteriyor" not in _n
+                    ]
+    except Exception as _e_dup_clear:
+        try:
+            logger.warning(f"[smart-repair] dup-flag cleanup failed: {_e_dup_clear}")
+        except Exception:
+            pass
+
+    # PATCH_FAZ3_AUDIT_KALIBRASYON_v1: BUG 12 — refresh stale header fields
+    # (consensus, value_horses, leg_classification, main_alpha_leg,
+    # main_danger_leg) on REPAIRED_FROM_TJK altılıs. They were populated by
+    # _process_proper_altili from the broken-AGF data which referenced the
+    # WRONG races (those of the duplicate partner).
+    try:
+        for _r in all_results:
+            if _r.get("data_quality_status") == "REPAIRED_FROM_TJK":
+                try:
+                    _refresh_repaired_altili_summary_fields(_r)
+                except Exception as _e_rh:
+                    try:
+                        logger.warning(
+                            f"[smart-repair] header refresh failed for "
+                            f"{_r.get('hippodrome','?')}#{_r.get('altili_no','?')}: {_e_rh}"
+                        )
+                    except Exception:
+                        pass
+    except Exception as _e_rh_loop:
+        try:
+            logger.warning(f"[smart-repair] header refresh loop failed: {_e_rh_loop}")
+        except Exception:
+            pass
+
     return all_results, actions
+
+
+def _refresh_repaired_altili_summary_fields(result):
+    """PATCH_FAZ3_AUDIT_KALIBRASYON_v1. BUG 12.
+
+    Recomputes summary fields after a duplicate altılı is repaired from TJK.
+    The original values were derived from broken-AGF data that mirrored the
+    duplicate partner; after repair, legs_summary references the correct
+    races so we rebuild from there.
+    """
+    legs = result.get("legs_summary") or []
+    if not legs:
+        return
+
+    # 1. Consensus cannot be reliably reconstructed; clear honestly.
+    result["consensus"] = []
+
+    # 2. Rebuild value_horses from each leg's top1 by model_prob.
+    new_vh = []
+    for ls in legs:
+        ayak = ls.get("ayak") or ls.get("race_number")
+        race = ls.get("race_number") or ayak
+        top3 = ls.get("top3") or []
+        if not top3:
+            continue
+        h = top3[0]
+        mp_raw = h.get("model_prob")
+        if mp_raw is None:
+            continue
+        try:
+            mp = float(mp_raw)
+        except Exception:
+            continue
+        ap = h.get("agf_pct")
+        try:
+            ap_f = float(ap) if ap is not None else None
+        except Exception:
+            ap_f = None
+        ed = h.get("value_edge")
+        try:
+            ed_f = float(ed) if ed is not None else None
+        except Exception:
+            ed_f = None
+        odds = round(100.0 / ap_f, 1) if (ap_f is not None and ap_f > 1) else 99
+        new_vh.append({
+            "leg": ayak, "race": race,
+            "name": h.get("name", "?"), "number": h.get("number"),
+            "model_prob": round(mp, 1),
+            "agf_prob": round(ap_f, 1) if ap_f is not None else None,
+            "edge": round(ed_f, 1) if ed_f is not None else None,
+            "odds": odds,
+        })
+    new_vh.sort(key=lambda v: -(v.get("model_prob") or 0))
+    result["value_horses"] = new_vh[:5]
+
+    # 3. Rebuild leg_classification on new legs.
+    leg_class = []
+    for ls in legs:
+        cls = classify_leg_for_display(ls)
+        cls["ayak"] = ls.get("ayak") or ls.get("race_number")
+        leg_class.append(cls)
+    result["leg_classification"] = leg_class
+
+    # 4. main_alpha_leg / main_danger_leg from refreshed classification.
+    alpha_legs = [c for c in leg_class if c.get("type") == "ALPHA"]
+    chaos_legs = [c for c in leg_class if c.get("type") == "CHAOS"]
+
+    main_alpha = None
+    if alpha_legs:
+        best_mp = -1.0
+        for c in alpha_legs:
+            for ls in legs:
+                if (ls.get("ayak") == c.get("ayak")
+                        or ls.get("race_number") == c.get("ayak")):
+                    top3 = ls.get("top3") or []
+                    if top3:
+                        try:
+                            mp = float(top3[0].get("model_prob") or 0)
+                        except Exception:
+                            mp = 0.0
+                        if mp > best_mp:
+                            best_mp = mp
+                            main_alpha = c.get("ayak")
+                    break
+    result["main_alpha_leg"] = main_alpha
+
+    main_danger = None
+    if chaos_legs:
+        main_danger = chaos_legs[0].get("ayak")
+    else:
+        worst_mp = 999.0
+        for ls in legs:
+            top3 = ls.get("top3") or []
+            if top3:
+                try:
+                    mp = float(top3[0].get("model_prob") or 0)
+                except Exception:
+                    mp = 0.0
+                if mp < worst_mp:
+                    worst_mp = mp
+                    main_danger = ls.get("ayak") or ls.get("race_number")
+    result["main_danger_leg"] = main_danger
 
 
 
@@ -1311,9 +1471,9 @@ def build_tjk_coverage_kupon(result):
         if n_pick < 2:
             n_pick = min(2, len(all_horses))
 
-        # PATCH_CROSS_ALTILI_ORDERING_v1: prefer model-informed horses when
-        # cross-altılı enrichment populated score / model_prob; fall back to
-        # ascending horse_number for legs with no model info available.
+        # PATCH_CROSS_ALTILI_ORDERING_v1 + PATCH_FAZ3_AUDIT_KALIBRASYON_v1:
+        # BUG 11b — prefer model_prob (calibrated) over score (rank output).
+        # V3.1 cross-altılı enrichment can mislead via score vs. native model_prob.
         def _cov_sort_key(h):
             score = h.get("score")
             mp = h.get("model_prob")
@@ -1321,14 +1481,14 @@ def build_tjk_coverage_kupon(result):
                 num_int = int(h.get("number")) if h.get("number") is not None else 9999
             except Exception:
                 num_int = 9999
-            if score is not None:
-                try:
-                    return (0, -float(score), num_int)
-                except Exception:
-                    pass
             if mp is not None:
                 try:
-                    return (1, -float(mp), num_int)
+                    return (0, -float(mp), num_int)
+                except Exception:
+                    pass
+            if score is not None:
+                try:
+                    return (1, -float(score), num_int)
                 except Exception:
                     pass
             return (2, num_int, 0)
@@ -2944,17 +3104,20 @@ def _apply_v7_step1(result):
             return None
 
     def _rank_key(h):
+        # PATCH_FAZ3_AUDIT_KALIBRASYON_v1: BUG 11a — model_prob is the
+        # calibrated probability; score is the LambdaMART rank output.
+        # Calibrated > uncalibrated for downstream audit decisions.
         score = h.get("score")
         mp = h.get("model_prob")
         num = _safe_int(h.get("number"))
-        if score is not None:
-            try:
-                return (0, -float(score), num)
-            except Exception:
-                pass
         if mp is not None:
             try:
-                return (1, -float(mp), num)
+                return (0, -float(mp), num)
+            except Exception:
+                pass
+        if score is not None:
+            try:
+                return (1, -float(score), num)
             except Exception:
                 pass
         return (2, num, 0)
@@ -3325,9 +3488,12 @@ def _v7_strict_single_audit(result, mode="advisory"):
         if (top1_mp is not None and top2_mp is not None
                 and top1_mp - top2_mp < 12):
             safe_reasons.append(f"top1-top2 gap < 12pp")
-        if top1_edge is not None and top1_edge < -5:
-            safe_reasons.append(f"edge {top1_edge} < -5")
-        if market_read not in ("agrees", "underestimates"):
+        # PATCH_FAZ3_AUDIT_KALIBRASYON_v1: BUG 3 — SAFE accepts market_read='confused'
+        # provided edge >= -10. agrees/underestimates keep stricter edge >= -5.
+        _edge_floor = -10 if market_read == "confused" else -5
+        if top1_edge is not None and top1_edge < _edge_floor:
+            safe_reasons.append(f"edge {top1_edge} < {_edge_floor}")
+        if market_read not in ("agrees", "underestimates", "confused"):
             safe_reasons.append(f"market_read {market_read}")
 
         if not safe_reasons:
