@@ -234,15 +234,24 @@ def detect_duplicate_altili_warning(all_results):
                         "type": "DUPLICATE_KUPON_SUSPICIOUS",
                         "message": msg,
                     })
-                    # Annotate both
+                    # PATCH_FAZ4_ANA_ALPHA_DANGER_v1: BUG 15 — each side's
+                    # note must reference the OTHER altılı, not itself. The old
+                    # `r_a is items[a_idx][1]` check was always True so r_b's
+                    # note pointed at r_b.altili_no (its own number).
                     r_a["data_quality_status"] = "DUPLICATE_SUSPICIOUS"
                     r_b["data_quality_status"] = "DUPLICATE_SUSPICIOUS"
-                    note = (f"Bu altılı, hipodromdaki diğer altılı (#"
-                            f"{r_b.get('altili_no') if r_a is items[a_idx][1] else r_a.get('altili_no')}"
-                            f") ile aynı atları gösteriyor. AGF kaynağında "
-                            f"farklı atlar gelmedi. Kupon bilgi amaçlıdır.")
-                    r_a.setdefault("diagnostic_notes", []).append(note)
-                    r_b.setdefault("diagnostic_notes", []).append(note)
+                    def _note_for(other_alt):
+                        return (
+                            f"Bu altılı, hipodromdaki diğer altılı (#{other_alt}) "
+                            f"ile aynı atları gösteriyor. AGF kaynağında farklı "
+                            f"atlar gelmedi. Kupon bilgi amaçlıdır."
+                        )
+                    r_a.setdefault("diagnostic_notes", []).append(
+                        _note_for(r_b.get("altili_no"))
+                    )
+                    r_b.setdefault("diagnostic_notes", []).append(
+                        _note_for(r_a.get("altili_no"))
+                    )
                     logger.warning(f"[smart] {msg}")
 
     return all_results, warnings
@@ -1279,7 +1288,16 @@ def _refresh_repaired_altili_summary_fields(result):
             "edge": round(ed_f, 1) if ed_f is not None else None,
             "odds": odds,
         })
-    new_vh.sort(key=lambda v: -(v.get("model_prob") or 0))
+    # PATCH_FAZ4_ANA_ALPHA_DANGER_v1: BUG 16 — match find_value_horses
+    # convention: sort by edge desc (with model_prob desc tiebreaker for legs
+    # that have no AGF / no edge available).
+    def _vh_key(v):
+        e = v.get("edge")
+        m = v.get("model_prob") or 0
+        if e is None:
+            return (1, -m)
+        return (0, -float(e))
+    new_vh.sort(key=_vh_key)
     result["value_horses"] = new_vh[:5]
 
     # 3. Rebuild leg_classification on new legs.
@@ -1812,23 +1830,12 @@ def build_smart_genis(result):
         "budget_cap_actions": cap_notes,
     }
 
-    # Identify main alpha + main danger from classification
-    alpha_legs = [c for c in leg_class if c.get("type") == "ALPHA"]
-    if alpha_legs:
-        # Pick alpha with highest value_edge
-        best = max(alpha_legs, key=lambda c: c.get("value_edge", 0) or 0)
-        result["main_alpha_leg"] = best.get("ayak")
-    chaos_legs = [c for c in leg_class if c.get("type") == "CHAOS"]
-    if chaos_legs:
-        # Lowest model_top1 chaos
-        worst = min(chaos_legs, key=lambda c: c.get("model_top1", 100) or 100)
-        result["main_danger_leg"] = worst.get("ayak")
-    else:
-        # Fallback: leg with weakest top1 model_prob (excluding SAFE)
-        non_safe = [c for c in leg_class if c.get("type") not in ("SAFE",)]
-        if non_safe:
-            worst = min(non_safe, key=lambda c: c.get("model_top1", 100) or 100)
-            result["main_danger_leg"] = worst.get("ayak")
+    # PATCH_FAZ4_ANA_ALPHA_DANGER_v1: BUG 14 — redundant main_alpha/main_danger
+    # overwrite removed. classify_leg_for_display does NOT populate value_edge or
+    # model_top1 keys, so the previous max()/min() always defaulted to 0/100 and
+    # picked the first leg — producing the production paradox where
+    # main_alpha_leg == main_danger_leg == 1. smart_postprocess_kupon already
+    # sets these correctly via legs_summary[i].top3 lookup; let it stand.
 
     return result
 
@@ -3542,13 +3549,22 @@ def _v7_strict_single_audit(result, mode="advisory"):
             continue
 
         verdict = "suspect_kept"
-        merged = []
-        if "leg_type" not in " ".join(safe_reasons + alpha_reasons):
-            merged.append("not classified SAFE or ALPHA")
-        merged.extend(r for r in safe_reasons if "leg_type" not in r)
-        merged = list(dict.fromkeys(merged))
+        # PATCH_FAZ4_ANA_ALPHA_DANGER_v1: BUG 13 — surface the rule-set that
+        # matches the leg's actual classification. Previously safe_reasons were
+        # always primary, so an ALPHA leg short of the +45% threshold would show
+        # "leg_type ALPHA ≠ SAFE" instead of the true "top1 < 45%" reason.
+        if leg_type == "ALPHA":
+            primary, secondary = alpha_reasons, safe_reasons
+        elif leg_type == "SAFE":
+            primary, secondary = safe_reasons, alpha_reasons
+        else:
+            primary, secondary = safe_reasons, alpha_reasons
+        merged = [r for r in primary if "leg_type" not in r]
         if not merged:
-            merged = safe_reasons or alpha_reasons or ["unspecified"]
+            merged = [r for r in secondary if "leg_type" not in r]
+        if not merged:
+            merged = primary or secondary or ["unspecified"]
+        merged = list(dict.fromkeys(merged))
         dec["verdict_v7"] = verdict
         dec["audit_rule_reasons_v7"] = merged
         dec["would_widen_to_v7"] = []
