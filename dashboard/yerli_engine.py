@@ -1943,6 +1943,194 @@ def _format_smart_genis_for_telegram(base_msg, all_results):
 # ─────────────────────────────────────────────────────────────────
 
 
+# PATCH_FAZ7E_V7_TELEGRAM_BLOCK_v1: BEGIN ─────────────────────────
+# Render v7_coupon as Telegram block per altılı.
+# Untouched: DAR/GENİŞ formatting, engine/kupon.py, V7 builder logic.
+
+_V7_TG_RISK_LABEL = {"LOW": "LOW", "MEDIUM": "MED", "HIGH": "HIGH"}
+_V7_TG_PLACE_THRESHOLD_PCT = 5.0
+_V7_TG_PLACE_MAX_PER_LEG   = 2
+
+
+def _v7_role_marker(role):
+    if role == "force":
+        return "★"
+    if role == "mandatory":
+        return "◆"
+    return ""
+
+
+def _v7_format_horse(s):
+    num = s.get("number")
+    name = (s.get("name") or "?").strip()
+    marker = _v7_role_marker(s.get("role"))
+    return f"#{num} {name}{marker}"
+
+
+def _v7_get_place_candidates(leg_data, leg_summary,
+                              threshold_pct=None, max_count=None):
+    if threshold_pct is None:
+        threshold_pct = _V7_TG_PLACE_THRESHOLD_PCT
+    if max_count is None:
+        max_count = _V7_TG_PLACE_MAX_PER_LEG
+    selected = leg_data.get("selected") or []
+    selected_nums = {s.get("number") for s in selected}
+    horses, _src = _v7_horse_pool(leg_summary)
+    out = []
+    for h in horses:
+        if h.get("number") in selected_nums:
+            continue
+        mp = _v7_safe_mp(h)
+        if mp < threshold_pct:
+            continue
+        out.append({"number": h.get("number"),
+                     "name": (h.get("name") or "?").strip(),
+                     "model_prob": round(mp, 1)})
+    out.sort(key=lambda x: -(x.get("model_prob") or 0))
+    return out[:max_count]
+
+
+def _v7_format_summary_line(v7):
+    s = v7.get("summary") or {}
+    cost = s.get("cost", 0)
+    bf = s.get("birim_fiyat", 1.0)
+    joint = s.get("joint_hit_prob_estimate", 0) or 0
+    payout = s.get("payout_leverage_estimate", 0) or 0
+    ev = s.get("ev_proxy_score", 0) or 0
+    width_vec = s.get("final_width_vector") or []
+    combo = s.get("combo", 0)
+    budget_status = s.get("budget_status", "?")
+
+    line1 = (f"🎯 V7 ÖNERİ\n"
+             f"{cost:,.0f} TL × bf {bf}  •  "
+             f"isabet ~%{joint*100:.1f}  •  "
+             f"{payout:,.0f}× leverage  •  "
+             f"EV {ev:+.2f}")
+
+    width_str = "-".join(str(w) for w in width_vec) if width_vec else "?"
+    if budget_status == "within_budget":
+        bs_label = "✅ bütçe içinde"
+    elif budget_status == "shrunken_to_fit":
+        n_shrink = len(s.get("shrink_actions") or [])
+        bs_label = f"⚠ bütçe altına sıkıştırıldı ({n_shrink} shrink)"
+    else:
+        bs_label = f"⚠ {budget_status}"
+    line2 = f"🎫 {width_str}  ({combo:,} kombi)  {bs_label}"
+
+    return line1 + "\n" + line2
+
+
+def _v7_format_leg_block(leg, leg_summary):
+    ayak = leg.get("ayak", "?")
+    risk = leg.get("surprise_risk", "?")
+    risk_label = _V7_TG_RISK_LABEL.get(risk, risk)
+    cal = leg.get("calibration_warning") or []
+    cal_marker = "⚠" if cal else " "
+    selected = leg.get("selected") or []
+    selected_sorted = sorted(selected, key=lambda s: (s.get("number") or 999))
+    horses_str = " • ".join(_v7_format_horse(s) for s in selected_sorted)
+    head = f"A{ayak} {risk_label}{cal_marker} {horses_str}"
+    lines = [head]
+    place = _v7_get_place_candidates(leg, leg_summary)
+    if place:
+        place_str = ", ".join(f"#{p['number']} {p['name']} (mp={p['model_prob']})"
+                               for p in place)
+        lines.append(f"         📌 2.şans: {place_str}")
+    return lines
+
+
+def _v7_format_built_block(v7, legs_summary):
+    lines = ["━" * 17, _v7_format_summary_line(v7), ""]
+    legs = v7.get("legs") or []
+    for leg in legs:
+        ayak_idx = (leg.get("ayak") or 1) - 1
+        ls = legs_summary[ayak_idx] if 0 <= ayak_idx < len(legs_summary) else {}
+        lines.extend(_v7_format_leg_block(leg, ls))
+    lines.append("")
+    lines.append("ℹ️ Bağlayıcı değil — yardımcı bakış. DAR/GENİŞ aynı şekilde yukarıda.")
+    return "\n".join(lines)
+
+
+def _v7_format_skip_block(v7):
+    reason = v7.get("reason", "?")
+    if "REPAIRED" in reason or "repaired" in reason:
+        msg = "REPAIRED altılı (AGF güvenilmez)"
+    elif "agf_missing" in reason:
+        msg = "AGF eksik"
+    elif "no_legs_summary" in reason:
+        msg = "ayak verisi yok"
+    else:
+        msg = reason
+    return ("━" * 17) + "\n" + f"🎯 V7 atlandı: {msg}"
+
+
+def _v7_format_unrecoverable_block(v7):
+    s = v7.get("summary") or {}
+    cost = s.get("cost", 0)
+    risk_vec = s.get("risk_vector") or []
+    risk_str = " ".join(_V7_TG_RISK_LABEL.get(r, r) for r in risk_vec)
+    return (("━" * 17) + "\n"
+            f"🎯 V7 — bütçeye sığmadı (cost {cost:,.0f} TL > 5000 TL)\n"
+            f"   Risk vektörü: {risk_str}\n"
+            "   Bu kart için V7 önerisi yok.")
+
+
+def _format_v7_for_telegram(base_msg, all_results):
+    """Inject V7 block per altılı into Telegram message.
+    Mirrors _format_smart_genis_for_telegram pattern. Silent on missing v7."""
+    if not base_msg or not all_results:
+        return base_msg
+
+    out = base_msg
+    for r in all_results:
+        if r.get("error"):
+            continue
+        v7 = r.get("v7_coupon")
+        if not v7:
+            continue
+        status = v7.get("status")
+        if status not in ("built", "skipped", "unrecoverable"):
+            continue
+
+        hippo_clean = (r.get("hippodrome") or "").replace(" Hipodromu", "").replace(" Hipodrom", "")
+        alt_no = r.get("altili_no", 1)
+        try:
+            from html import escape as _esc
+        except ImportError:
+            _esc = lambda x: x
+        header_pat = f"🏇 <b>{_esc(hippo_clean.upper())} {alt_no}. ALTILI</b>"
+        if header_pat not in out:
+            continue
+
+        legs_summary = r.get("legs_summary") or []
+        if status == "built":
+            block_raw = _v7_format_built_block(v7, legs_summary)
+        elif status == "skipped":
+            block_raw = _v7_format_skip_block(v7)
+        elif status == "unrecoverable":
+            block_raw = _v7_format_unrecoverable_block(v7)
+        else:
+            continue
+
+        block = block_raw.replace("\\n", "\n").replace("\n", chr(10))
+
+        h_idx = out.find(header_pat)
+        next_h = out.find("🏇", h_idx + len(header_pat))
+        if next_h < 0:
+            sep_pos = out.rfind("━" * 5)
+            insert_pos = sep_pos if sep_pos > h_idx else len(out)
+        else:
+            sep_back = out.rfind("━" * 5, h_idx, next_h)
+            insert_pos = sep_back if sep_back > h_idx else next_h
+
+        injection = chr(10) + chr(10) + block + chr(10)
+        out = out[:insert_pos] + injection + out[insert_pos:]
+
+    return out
+
+# PATCH_FAZ7E_V7_TELEGRAM_BLOCK_v1: END ───────────────────────────
+
+
 def _save_live_test_snapshot(result_dict):
     """Append today's canonical kupon to data/live_tests/YYYY-MM-DD.json.
     Idempotent; never raises (fire-and-forget)."""
@@ -2367,6 +2555,7 @@ def run_yerli_pipeline(target_date=None):
             base_msg = format_live_test_annotations(base_msg, all_results)
             base_msg = _inject_leg_tags_in_telegram(base_msg, all_results)
             base_msg = _format_smart_genis_for_telegram(base_msg, all_results)
+            base_msg = _format_v7_for_telegram(base_msg, all_results)  # PATCH_FAZ7E_V7_TELEGRAM_BLOCK_v1
         except Exception as _e_ann:
             logger.warning(f"[smart] telegram annotation failed: {_e_ann}")
         banner_lines = [LIVE_TEST_DISCLAIMER,
