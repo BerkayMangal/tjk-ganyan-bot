@@ -1896,6 +1896,14 @@ def _format_smart_genis_for_telegram(base_msg, all_results):
             if cap_acts:
                 lines.append(f"  ✂️ Bütçe tavanı: {len(cap_acts)} at çıkarıldı")
 
+        # PATCH_FAZ5_SELECTION_INTEGRITY_AUDIT_v1: append audit lines.
+        try:
+            _sia_lines = _format_selection_integrity_for_telegram_lines(
+                r.get("selection_integrity_audit"))
+            if _sia_lines:
+                lines.extend(_sia_lines)
+        except Exception:
+            pass
         block = "\n".join(lines)
 
         h_idx = out.find(header_pat)
@@ -2412,14 +2420,14 @@ def _process_proper_altili(agf_alt, program_data, target_date, model_ok):
     value_horses = _try_value(legs, model_ok)
     consensus = _try_consensus(hippo, legs, target_date)
 
-    return {
+    return _inject_selection_integrity_audit({
         'hippodrome': hippo, 'altili_no': altili_no, 'time': time_str,
         'dar': _ticket_to_json(dar), 'genis': _ticket_to_json(genis),
         'rating': {'rating': rating['rating'], 'stars': rating['stars'], 'verdict': rating['verdict'],
                    'score': round(rating.get('score', 0), 2), 'reasons': rating.get('reasons', [])},
         'value_horses': value_horses, 'consensus': consensus,
         'legs_summary': _build_legs_summary(legs),
-        'model_used': model_ok and any(l.get('has_model') for l in legs)}
+        'model_used': model_ok and any(l.get('has_model') for l in legs)}, legs)
 
 
 def _fetch_domestic_tracks():
@@ -2532,14 +2540,14 @@ def _process_track(track, program_data, target_date, model_ok):
     genis = _try_fn(lambda: _ext_kupon(legs, hippo, 'genis'), lambda: _simple_kupon(legs, hippo, 'genis'))
     value_horses = _try_value(legs, model_ok)
     consensus = _try_consensus(hippo, legs, target_date)
-    return {
+    return _inject_selection_integrity_audit({
         'hippodrome': hippo, 'altili_no': altili_no, 'time': time_str,
         'dar': _ticket_to_json(dar), 'genis': _ticket_to_json(genis),
         'rating': {'rating': rating['rating'], 'stars': rating['stars'], 'verdict': rating['verdict'],
                    'score': round(rating.get('score', 0), 2), 'reasons': rating.get('reasons', [])},
         'value_horses': value_horses, 'consensus': consensus,
         'legs_summary': _build_legs_summary(legs),
-        'model_used': model_ok and any(l.get('has_model') for l in legs)}
+        'model_used': model_ok and any(l.get('has_model') for l in legs)}, legs)
 
 
 def _process_html_only(hippo_name, races, target_date, model_ok):
@@ -2631,7 +2639,7 @@ def _process_html_only(hippo_name, races, target_date, model_ok):
     genis = _try_fn(lambda: _ext_kupon(legs, hippo_name, 'genis'), lambda: _simple_kupon(legs, hippo_name, 'genis'))
     consensus = _try_consensus(hippo_name, legs, target_date)
     
-    return {
+    return _inject_selection_integrity_audit({
         'hippodrome': hippo_name, 'altili_no': 1, 'time': '',
         'dar': _ticket_to_json(dar), 'genis': _ticket_to_json(genis),
         'rating': {'rating': rating['rating'], 'stars': rating['stars'],
@@ -2642,7 +2650,7 @@ def _process_html_only(hippo_name, races, target_date, model_ok):
         'legs_summary': _build_legs_summary(legs),
         'model_used': model_ok and any(l.get('has_model') for l in legs),
         'agf_available': False,
-    }
+    }, legs)
 
 
 def _try_fn(ext_fn, fallback_fn):
@@ -2789,6 +2797,199 @@ def _simple_rating(legs):
         if avg >= 35: return {'rating': 3, 'stars': '\u2b50\u2b50\u2b50', 'verdict': 'G\u00dc\u00c7L\u00dc G\u00dcN', 'score': 5, 'reasons': []}
         elif avg >= 22: return {'rating': 2, 'stars': '\u2b50\u2b50', 'verdict': 'NORMAL G\u00dcN', 'score': 3, 'reasons': []}
     return {'rating': 1, 'stars': '\u2b50', 'verdict': 'ZOR G\u00dcN', 'score': 1, 'reasons': []}
+
+
+
+# PATCH_FAZ5_SELECTION_INTEGRITY_AUDIT_v1: BEGIN ────────────────────
+# READ-ONLY audit. Compares DAR/GENİŞ selection (score-based) against
+# the model_prob/edge truth. Never mutates selection or coupon logic.
+
+_SIA_HIGH_PROB_THRESHOLD = 35.0
+_SIA_VALUE_EDGE_THRESHOLD = 20.0
+
+
+def _sia_horse_pool(leg_summary):
+    """Return (pool, is_full). REPAIRED legs have all_horses; full-data only top3."""
+    pool = leg_summary.get("all_horses")
+    if pool: return pool, True
+    return leg_summary.get("top3") or [], False
+
+
+def _sia_selected_numbers(ticket_leg):
+    out = set()
+    for h in (ticket_leg.get("selected") or []):
+        n = h.get("number") if isinstance(h, dict) else None
+        if n is not None: out.add(n)
+    return out
+
+
+def _sia_topk_by(horses, key, k=3, want_non_null=True):
+    items = []
+    for h in horses:
+        v = h.get(key)
+        if want_non_null and v is None: continue
+        items.append(h)
+    items.sort(key=lambda h: -(h.get(key) or 0))
+    return [{"number": h.get("number"), "name": h.get("name"), key: h.get(key)}
+            for h in items[:k]]
+
+
+def _selection_integrity_audit_leg(leg_summary, ticket_leg, mode):
+    """READ-ONLY per-leg audit. Never raises."""
+    horses, is_full_pool = _sia_horse_pool(leg_summary)
+    selected_nums = _sia_selected_numbers(ticket_leg)
+    score_top3      = _sia_topk_by(horses, "score",      k=3)
+    model_prob_top3 = _sia_topk_by(horses, "model_prob", k=3)
+    agf_top3        = _sia_topk_by(horses, "agf_pct",    k=3)
+    flags = []
+    high_prob_not_selected = []
+    value_not_selected = []
+    for h in horses:
+        num = h.get("number")
+        if num is None or num in selected_nums: continue
+        mp = h.get("model_prob"); ve = h.get("value_edge")
+        if mp is not None and mp >= _SIA_HIGH_PROB_THRESHOLD:
+            high_prob_not_selected.append({"number": num, "name": h.get("name"),
+                                           "model_prob": mp, "value_edge": ve})
+        if ve is not None and ve >= _SIA_VALUE_EDGE_THRESHOLD:
+            if not any(x["number"] == num for x in value_not_selected):
+                value_not_selected.append({"number": num, "name": h.get("name"),
+                                           "model_prob": mp, "value_edge": ve})
+    if high_prob_not_selected: flags.append("HIGH_PROB_NOT_SELECTED")
+    if value_not_selected:     flags.append("VALUE_NOT_SELECTED")
+    score_top1 = score_top3[0] if score_top3 else None
+    model_top1 = model_prob_top3[0] if model_prob_top3 else None
+    ranking_conflict = None
+    if score_top1 is not None and model_top1 is not None:
+        agree = (score_top1.get("number") == model_top1.get("number"))
+        ranking_conflict = {"score_top1": score_top1, "model_top1": model_top1, "agree": agree}
+        if not agree: flags.append("RANKING_CONFLICT")
+    leg_data_quality = "REPAIRED_TJK" if leg_summary.get("agf_missing") else "FULL"
+    return {
+        "ayak":         leg_summary.get("ayak"),
+        "race_number":  leg_summary.get("race_number"),
+        "mode":         mode,
+        "leg_data_quality": leg_data_quality,
+        "audit_pool":   "all_horses" if is_full_pool else "top3_only",
+        "n_runners":    leg_summary.get("n_runners"),
+        "selected":     sorted(selected_nums),
+        "n_selected":   len(selected_nums),
+        "score_top3":      score_top3,
+        "model_prob_top3": model_prob_top3,
+        "agf_top3":        agf_top3,
+        "high_prob_not_selected": high_prob_not_selected,
+        "value_not_selected":     value_not_selected,
+        "ranking_conflict":       ranking_conflict,
+        "flags": flags,
+    }
+
+
+def _sia_rollup(legs_audit_list):
+    n = len(legs_audit_list)
+    if n == 0: return {"total_legs": 0}
+    n_hp  = sum(1 for a in legs_audit_list if "HIGH_PROB_NOT_SELECTED" in a["flags"])
+    n_val = sum(1 for a in legs_audit_list if "VALUE_NOT_SELECTED"     in a["flags"])
+    n_rk  = sum(1 for a in legs_audit_list if "RANKING_CONFLICT"       in a["flags"])
+    return {"total_legs": n,
+            "legs_with_high_prob_not_selected": n_hp,
+            "legs_with_value_not_selected":     n_val,
+            "legs_with_ranking_conflict":       n_rk,
+            "score_vs_model_disagreement_pct":  round(100.0 * n_rk / n, 1)}
+
+
+def _selection_integrity_audit_hippo(legs_summary, dar, genis):
+    """Audit DAR + classic GENİŞ. READ-ONLY. Returns audit dict."""
+    out = {"dar": {"legs": [], "summary": {}},
+           "genis": {"legs": [], "summary": {}},
+           "worst_misses": []}
+    legs_summary = legs_summary or []
+    if not legs_summary: return out
+    for mode_name, ticket in [("dar", dar), ("genis", genis)]:
+        if not ticket: continue
+        ticket_legs = ticket.get("legs") or []
+        per_leg = []
+        for ls in legs_summary:
+            ayak = ls.get("ayak")
+            if ayak is None: continue
+            tl = next((t for t in ticket_legs if t.get("leg_number") == ayak), None)
+            if tl is None: continue
+            per_leg.append(_selection_integrity_audit_leg(ls, tl, mode_name))
+        out[mode_name]["legs"] = per_leg
+        full_legs     = [a for a in per_leg if a["leg_data_quality"] == "FULL"]
+        repaired_legs = [a for a in per_leg if a["leg_data_quality"] == "REPAIRED_TJK"]
+        out[mode_name]["summary"] = {
+            "full_data_legs":             _sia_rollup(full_legs),
+            "repaired_tjk_coverage_legs": _sia_rollup(repaired_legs),
+        }
+    combined = {}
+    for mode_name in ("dar", "genis"):
+        for a in out[mode_name]["legs"]:
+            for h in a["high_prob_not_selected"] + a["value_not_selected"]:
+                key = (a["ayak"], h["number"])
+                rec = combined.get(key)
+                if rec is None:
+                    rec = {"ayak": a["ayak"], "race_number": a["race_number"],
+                           "leg_data_quality": a["leg_data_quality"],
+                           "number": h["number"], "name": h["name"],
+                           "model_prob": h.get("model_prob"),
+                           "value_edge": h.get("value_edge"),
+                           "missing_in": []}
+                    combined[key] = rec
+                if mode_name not in rec["missing_in"]:
+                    rec["missing_in"].append(mode_name)
+    worst = list(combined.values())
+    worst.sort(key=lambda w: (-(w.get("model_prob") or 0),
+                              -(w.get("value_edge") or 0)))
+    out["worst_misses"] = worst[:3]
+    return out
+
+
+def _inject_selection_integrity_audit(result, legs):
+    try:
+        ls = result.get("legs_summary") or []
+        result["selection_integrity_audit"] = _selection_integrity_audit_hippo(
+            ls, result.get("dar"), result.get("genis"))
+    except Exception as e:
+        try: logger.warning(f"[selection_integrity_audit] failed: {e}")
+        except Exception: pass
+        result["selection_integrity_audit"] = {"error": f"{type(e).__name__}: {e}"}
+    return result
+
+
+def _format_selection_integrity_for_telegram_lines(sia):
+    """Compact telegram lines. Empty list if audit absent."""
+    if not sia or sia.get("error"): return []
+    lines = []
+    def _fmt_summary(label, summ_dict):
+        full_summ = summ_dict.get("full_data_legs") or {}
+        rep_summ  = summ_dict.get("repaired_tjk_coverage_legs") or {}
+        s = full_summ if full_summ.get("total_legs") else rep_summ
+        if not s.get("total_legs"): return None
+        tag = "full" if full_summ.get("total_legs") else "repaired"
+        return (f"  {label} {tag}: {s['total_legs']} ayak | "
+                f"{s.get('legs_with_high_prob_not_selected',0)} yüksek-prob eksik · "
+                f"{s.get('legs_with_value_not_selected',0)} edge≥20 eksik · "
+                f"{s.get('legs_with_ranking_conflict',0)} score≠model")
+    dar_line   = _fmt_summary("DAR  ", (sia.get("dar")   or {}).get("summary") or {})
+    genis_line = _fmt_summary("GENİŞ", (sia.get("genis") or {}).get("summary") or {})
+    if not (dar_line or genis_line): return []
+    lines.append("🔍 Seçim Integrity Audit")
+    if dar_line:   lines.append(dar_line)
+    if genis_line: lines.append(genis_line)
+    worst = sia.get("worst_misses") or []
+    if worst:
+        lines.append("  En kötü 3 miss:")
+        for w in worst:
+            mp = w.get("model_prob"); ve = w.get("value_edge")
+            mp_s = f"m={mp:.0f}%" if isinstance(mp, (int, float)) else "m=?"
+            ve_s = (f"+{ve:.0f} edge" if isinstance(ve, (int, float)) and ve >= 0 else
+                    (f"{ve:.0f} edge" if isinstance(ve, (int, float)) else "edge=?"))
+            mi = "+".join(m.upper() for m in (w.get("missing_in") or []))
+            lines.append(f"    ⚠ Ayak {w.get('ayak')} #{w.get('number')} "
+                         f"{w.get('name')} {mp_s} {ve_s} — {mi}'da eksik")
+    return lines
+
+# PATCH_FAZ5_SELECTION_INTEGRITY_AUDIT_v1: END ──────────────────────
 
 
 def _simple_kupon(legs, hippo, mode='dar'):
