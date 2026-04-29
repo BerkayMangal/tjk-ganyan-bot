@@ -3391,44 +3391,95 @@ def _v7_classify_risk_and_width(leg_summary, ayak_num, hippo):
     else:
         risk = "MEDIUM"
 
-    # ---- Width hint ----
+    # ---- Dynamic width determination (PATCH_FAZ7C2_V7_BUILDER_v1) ----
+    # Width is driven by uncertainty signals + field size + mandatory atlar.
+    # NO hard caps like "max 6". HIGH risk + 14 atlı handikap may need 8-9.
     forbid_single = bool(cal_warnings)  # any calibration warning → no single
 
+    # Adaptive coverage target
     if risk == "LOW":
-        base_width = 2 if forbid_single else 1
-        max_w = _V7_WIDTH_LOW_MAX
         coverage_target = _V7_COVERAGE_LOW
     elif risk == "MEDIUM":
-        base_width = 2
-        max_w = _V7_WIDTH_MEDIUM_MAX
         coverage_target = _V7_COVERAGE_MEDIUM
-    else:  # HIGH
-        base_width = 4
-        max_w = _V7_WIDTH_HIGH_MAX
+    else:  # HIGH — adaptive 75-85%
         coverage_target = _V7_COVERAGE_HIGH
+        if risk_score >= 4:
+            coverage_target = max(coverage_target, 0.80)
+        if n_runners >= 12:
+            coverage_target = max(coverage_target, 0.80)
+        if risk_score >= 5 and n_runners >= 12:
+            coverage_target = max(coverage_target, 0.85)
+        if cal_warnings and (is_maiden or is_handicap) and n_runners >= 12:
+            coverage_target = 0.85
 
-    # Coverage refinement for MEDIUM/HIGH (LOW stays at base)
-    if risk in ("MEDIUM", "HIGH"):
-        cum = 0.0
-        cov_width = base_width
-        for k, h in enumerate(horses_by_mp, start=1):
-            cum += _v7_safe_mp(h) / 100.0
-            if cum >= coverage_target:
-                cov_width = k
-                break
-        else:
-            cov_width = len(horses_by_mp) if horses_by_mp else base_width
-        base_width = max(base_width, cov_width)
+    # Base width = smallest k where cumulative top-k mp >= coverage_target
+    _cum = 0.0
+    base_width = 1
+    for k, h in enumerate(horses_by_mp, start=1):
+        _cum += _v7_safe_mp(h) / 100.0
+        if _cum >= coverage_target:
+            base_width = k
+            break
+    else:
+        base_width = len(horses_by_mp) if horses_by_mp else 1
 
-    # Mandatory floor
-    width_hint = max(base_width, len(mandatory))
-    # Force atlar override max_w
-    effective_max = max(max_w, len(force))
-    width_hint = min(width_hint, effective_max)
-    # Field size cap
+    # Uncertainty bump (HIGH gets meaningful bumps; MEDIUM small; LOW none)
+    uncertainty_bump = 0
+    if risk == "HIGH":
+        if n_runners >= 14:
+            uncertainty_bump += 2
+        elif n_runners >= 12:
+            uncertainty_bump += 1
+        if model_entropy > 1.8:
+            uncertainty_bump += 1
+        if disagreement and top1_mp < 35:
+            uncertainty_bump += 1
+        if is_handicap and n_runners >= 11:
+            uncertainty_bump += 1
+        if is_maiden and n_runners >= 11:
+            uncertainty_bump += 1
+    elif risk == "MEDIUM":
+        if n_runners >= 12 and model_entropy > 1.5:
+            uncertainty_bump += 1
+
+    # Risk minimum
+    if risk == "LOW":
+        risk_minimum = 2 if forbid_single else 1
+    elif risk == "MEDIUM":
+        risk_minimum = 3
+    else:  # HIGH
+        risk_minimum = 5
+
+    # Floors
+    mandatory_floor = len(mandatory)
+    force_floor = len(force)
+
+    # Final width: max of all floors + coverage demand + uncertainty
+    width_hint = max(
+        base_width + uncertainty_bump,
+        risk_minimum,
+        mandatory_floor,
+        force_floor,
+    )
+
+    # Field cap: always at least 1 horse outside (so race result has info)
     if n_runners >= 2:
-        width_hint = min(width_hint, n_runners - 1)
+        field_cap = n_runners - 1
+    else:
+        field_cap = max(1, n_runners or 1)
+    width_hint = min(width_hint, field_cap)
     width_hint = max(1, width_hint)  # never zero
+
+    width_breakdown = {
+        "coverage_target_pct": round(coverage_target * 100, 1),
+        "base_width_from_coverage": base_width,
+        "uncertainty_bump": uncertainty_bump,
+        "risk_minimum": risk_minimum,
+        "mandatory_floor": mandatory_floor,
+        "force_floor": force_floor,
+        "field_cap": field_cap,
+        "final": width_hint,
+    }
 
     # ---- Reasoning string (Turkish, compact) ----
     parts = []
@@ -3465,6 +3516,7 @@ def _v7_classify_risk_and_width(leg_summary, ayak_num, hippo):
         "surprise_risk": risk,
         "risk_score": round(risk_score, 2),
         "recommended_width_hint": width_hint,
+        "width_breakdown": width_breakdown,
         "top1_model_prob": round(top1_mp, 1),
         "top2_model_prob": round(top2_mp, 1),
         "top1_top2_gap": round(gap, 1),
@@ -3496,54 +3548,524 @@ def _v7_product(nums):
             p *= int(n)
     return p
 
+# PATCH_FAZ7C1_V7_RISK_PREVIEW_v1: END ─────────────────────────────
+
+
+# PATCH_FAZ7C2_V7_BUILDER_v1: BEGIN ────────────────────────────────
+# Real V7 coupon builder.
+# Selection + dynamic-width budget reconciliation + max_singles guardrail.
+
+# Tunables (env-overridable in future)
+_V7_LAMBDA_VALUE = 0.5     # payout weight in EV score
+_V7_LAMBDA_COST  = 0.3     # cost weight in EV score
+_V7_BUDGET_TL    = 5000.0  # hard ceiling
+_V7_MAX_SINGLES  = 2       # default max number of width=1 legs
+_V7_HIGH_FLOOR_DEFAULT = 4 # HIGH legs do not shrink below 4 normally
+_V7_HIGH_FLOOR_EXTREME = 3 # HIGH legs may shrink to 3 only as last resort
+
+
+def _v7_get_birim_fiyat(hippo):
+    """Use engine.kupon.birim_fiyat if importable, else fallback 1.0/1.25."""
+    try:
+        from engine.kupon import birim_fiyat as _ext_bf
+        return float(_ext_bf(hippo))
+    except Exception:
+        return 1.0
+
+
+def _v7_select_horses(analysis, leg_summary, target_width):
+    """Build selected list of size target_width.
+    Steps:
+      1. Include all mandatory atlar (force + mandatory) — never droppable.
+      2. Fill remaining slots by composite priority desc.
+    Composite priority = mp + 0.3*max(ve,0) + 0.1*(1-agf_share)
+    Returns list of {number, name, model_prob, agf_pct, value_edge, role}
+    """
+    horses, _src = _v7_horse_pool(leg_summary)
+    if not horses:
+        return []
+
+    mandatory_horses = analysis.get("mandatory_horses", []) or []
+    force_horses    = analysis.get("force_horses", [])     or []
+
+    selected = []
+    selected_nums = set()
+
+    for src_list, role_label in [(force_horses, "force"),
+                                  (mandatory_horses, "mandatory")]:
+        for entry in src_list:
+            num = entry.get("number")
+            if num is None or num in selected_nums:
+                continue
+            h = next((hh for hh in horses if hh.get("number") == num), entry)
+            mp  = _v7_safe_mp(h); ve = _v7_safe_ve(h); agf = _v7_safe_agf(h)
+            selected.append({
+                "number": num, "name": h.get("name"),
+                "model_prob": round(mp, 1),
+                "agf_pct":    round(agf, 2),
+                "value_edge": round(ve, 1),
+                "role": role_label,
+            })
+            selected_nums.add(num)
+
+    remaining = target_width - len(selected)
+    if remaining > 0:
+        candidates = [h for h in horses if h.get("number") not in selected_nums]
+        def _priority(h):
+            mp  = _v7_safe_mp(h)
+            ve  = max(_v7_safe_ve(h), 0)
+            agf_share = _v7_safe_agf(h) / 100.0
+            return mp + 0.3 * ve + 0.1 * (1 - agf_share)
+        candidates.sort(key=_priority, reverse=True)
+
+        is_cal = bool(analysis.get("calibration_warning"))
+        for h in candidates[:remaining]:
+            mp  = _v7_safe_mp(h); ve = _v7_safe_ve(h); agf = _v7_safe_agf(h)
+            if is_cal and len(force_horses) > 0:
+                role = "calibration_buffer"
+            else:
+                role = "coverage"
+            selected.append({
+                "number": h.get("number"), "name": h.get("name"),
+                "model_prob": round(mp, 1),
+                "agf_pct":    round(agf, 2),
+                "value_edge": round(ve, 1),
+                "role": role,
+            })
+            selected_nums.add(h.get("number"))
+
+    selected.sort(key=lambda s: -(s.get("model_prob") or 0))
+    return selected
+
+
+def _v7_compute_leg_metrics(selected):
+    """leg_joint_prob, leg_agf_share, leg_payout_factor."""
+    total_mp  = sum((s.get("model_prob") or 0) for s in selected) / 100.0
+    total_agf = sum((s.get("agf_pct")    or 0) for s in selected) / 100.0
+    leg_joint     = max(0.001, min(1.0, total_mp))
+    leg_agf_share = max(0.001, min(1.0, total_agf))
+    return {
+        "leg_joint_prob":   round(leg_joint, 4),
+        "leg_agf_share":    round(leg_agf_share, 4),
+        "leg_payout_factor": round(1.0 / leg_agf_share, 2),
+    }
+
+
+def _v7_compute_card_metrics(legs_data, bf):
+    """Card-level: combo, cost, joint_hit_prob, payout_leverage, ev_proxy."""
+    import math as _m
+    combo = 1
+    joint = 1.0
+    crowd_overlap = 1.0
+    for leg in legs_data:
+        combo *= max(1, leg.get("n_pick", 1))
+        joint *= leg.get("leg_joint_prob", 1.0)
+        crowd_overlap *= leg.get("leg_agf_share", 1.0)
+    cost = combo * float(bf)
+    payout_leverage = 1.0 / max(1e-6, crowd_overlap)
+    if joint > 0 and payout_leverage > 0 and cost > 0:
+        ev = (_m.log(joint) +
+              _V7_LAMBDA_VALUE * _m.log(payout_leverage) -
+              _V7_LAMBDA_COST  * _m.log(cost))
+    else:
+        ev = -999.0
+    return {
+        "combo": int(combo),
+        "cost":  round(cost, 2),
+        "birim_fiyat": float(bf),
+        "joint_hit_prob_estimate": round(joint, 4),
+        "payout_leverage_estimate": round(payout_leverage, 1),
+        "ev_proxy_score": round(ev, 3),
+    }
+
+
+def _v7_leg_shrink_floor(analysis, allow_extreme=False):
+    """Per-leg minimum width when shrinking. Mandatory + force + risk-based."""
+    mandatory_floor = max(len(analysis.get("mandatory_horses", []) or []), 1)
+    force_floor = len(analysis.get("force_horses", []) or [])
+    risk = analysis.get("surprise_risk", "MEDIUM")
+    if risk == "HIGH":
+        risk_floor = _V7_HIGH_FLOOR_EXTREME if allow_extreme else _V7_HIGH_FLOOR_DEFAULT
+    elif risk == "MEDIUM":
+        risk_floor = 2
+    else:
+        risk_floor = 1
+    return max(mandatory_floor, force_floor, risk_floor)
+
+
+def _v7_reconcile_budget(legs_data, all_analyses, bf, budget=None):
+    """Greedy shrink LOW first, MEDIUM second, HIGH last (only as last resort).
+    Returns: (legs_data, status, shrink_actions)
+      status ∈ {"within_budget", "shrunken_to_fit", "unrecoverable_under_constraints"}
+    """
+    import math as _m
+    if budget is None:
+        budget = _V7_BUDGET_TL
+    shrink_actions = []
+
+    def _current_cost(legs):
+        c = 1
+        for l in legs:
+            c *= max(1, l.get("n_pick", 1))
+        return c * float(bf)
+
+    cost = _current_cost(legs_data)
+    if cost <= budget:
+        return legs_data, "within_budget", shrink_actions
+
+    phases = [
+        ("phase1_low_medium",     ("LOW", "MEDIUM"), False),
+        ("phase2_high_to_floor4", ("LOW", "MEDIUM", "HIGH"), False),
+        ("phase3_high_to_floor3", ("LOW", "MEDIUM", "HIGH"), True),
+    ]
+
+    for phase_label, allowed_risks, extreme in phases:
+        max_iter = 200
+        for _it in range(max_iter):
+            cost = _current_cost(legs_data)
+            if cost <= budget:
+                break
+
+            best_leg_idx = -1
+            best_delta_score = -float("inf")
+            best_drop_horse = None
+
+            for idx, leg in enumerate(legs_data):
+                analysis = all_analyses[idx]
+                risk = analysis.get("surprise_risk", "MEDIUM")
+                if risk not in allowed_risks:
+                    continue
+                w = leg.get("n_pick", 1)
+                floor = _v7_leg_shrink_floor(analysis, allow_extreme=extreme)
+                if w <= floor:
+                    continue
+
+                selected = leg.get("selected", [])
+                droppable = [s for s in selected
+                             if s.get("role") not in ("force", "mandatory")]
+                if not droppable:
+                    continue
+                droppable_sorted = sorted(droppable, key=lambda s: (s.get("model_prob") or 0))
+                drop_h = droppable_sorted[0]
+
+                old_joint = leg.get("leg_joint_prob", 0.001) or 0.001
+                old_share = leg.get("leg_agf_share", 0.5) or 0.5
+                drop_mp_frac  = (drop_h.get("model_prob") or 0) / 100.0
+                drop_agf_frac = (drop_h.get("agf_pct")    or 0) / 100.0
+                new_joint = max(0.001, old_joint - drop_mp_frac)
+                new_share = max(0.001, old_share - drop_agf_frac)
+
+                try:
+                    delta_p = _m.log(new_joint / old_joint)
+                    delta_l = _m.log(old_share / new_share) if new_share > 0 else 0
+                    delta_c = _m.log((w - 1) / w)
+                except (ValueError, ZeroDivisionError):
+                    continue
+
+                delta_score = (delta_p +
+                               _V7_LAMBDA_VALUE * delta_l -
+                               _V7_LAMBDA_COST  * delta_c)
+
+                if delta_score > best_delta_score:
+                    best_delta_score = delta_score
+                    best_leg_idx = idx
+                    best_drop_horse = drop_h
+
+            if best_leg_idx < 0:
+                break
+
+            leg = legs_data[best_leg_idx]
+            old_w = leg["n_pick"]
+            leg["selected"] = [s for s in leg["selected"]
+                               if s.get("number") != best_drop_horse.get("number")]
+            leg["n_pick"] = max(1, old_w - 1)
+            metrics = _v7_compute_leg_metrics(leg["selected"])
+            leg.update(metrics)
+
+            shrink_actions.append({
+                "ayak": leg.get("ayak"),
+                "from_width": old_w, "to_width": leg["n_pick"],
+                "dropped": {
+                    "number": best_drop_horse.get("number"),
+                    "name":   best_drop_horse.get("name"),
+                    "model_prob": best_drop_horse.get("model_prob"),
+                    "role":   best_drop_horse.get("role"),
+                },
+                "phase": phase_label,
+                "delta_score": round(best_delta_score, 3),
+            })
+
+        cost = _current_cost(legs_data)
+        if cost <= budget:
+            return legs_data, "shrunken_to_fit", shrink_actions
+
+    cost = _current_cost(legs_data)
+    if cost > budget:
+        return legs_data, "unrecoverable_under_constraints", shrink_actions
+    return legs_data, "shrunken_to_fit", shrink_actions
+
+
+def _v7_apply_max_singles_guardrail(legs_data, all_analyses, leg_summaries,
+                                     bf, budget=None):
+    """If singles_count > _V7_MAX_SINGLES, try to widen weakest single by 1."""
+    if budget is None:
+        budget = _V7_BUDGET_TL
+    actions = []
+
+    max_iter = 5
+    for _it in range(max_iter):
+        singles_idxs = [i for i, l in enumerate(legs_data)
+                        if l.get("n_pick", 1) == 1]
+        if len(singles_idxs) <= _V7_MAX_SINGLES:
+            break
+
+        def _sort_key(idx):
+            a = all_analyses[idx]
+            risk = a.get("surprise_risk", "MEDIUM")
+            risk_order = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}.get(risk, 1)
+            top1 = a.get("top1_model_prob", 0) or 0
+            has_cal = bool(a.get("calibration_warning"))
+            return (-int(has_cal), risk_order, top1)
+
+        candidates = sorted(singles_idxs, key=_sort_key)
+        widened = False
+        for idx in candidates:
+            leg = legs_data[idx]
+            analysis = all_analyses[idx]
+            n_runners = analysis.get("n_runners", 0) or 0
+            if n_runners <= 1:
+                continue
+
+            ev_before = _v7_compute_card_metrics(legs_data, bf)
+
+            ls = leg_summaries[idx]
+            horses, _src = _v7_horse_pool(ls)
+            sel_nums = {s.get("number") for s in leg.get("selected", [])}
+            cand_pool = [h for h in horses if h.get("number") not in sel_nums]
+            if not cand_pool:
+                continue
+            def _priority(h):
+                mp  = _v7_safe_mp(h)
+                ve  = max(_v7_safe_ve(h), 0)
+                agf_share = _v7_safe_agf(h) / 100.0
+                return mp + 0.3 * ve + 0.1 * (1 - agf_share)
+            cand_pool.sort(key=_priority, reverse=True)
+            new_horse = cand_pool[0]
+
+            saved_selected = list(leg["selected"])
+            saved_n_pick   = leg["n_pick"]
+            saved_metrics  = {k: leg.get(k) for k in
+                              ("leg_joint_prob", "leg_agf_share", "leg_payout_factor")}
+
+            mp = _v7_safe_mp(new_horse); ve = _v7_safe_ve(new_horse); agf = _v7_safe_agf(new_horse)
+            new_entry = {
+                "number": new_horse.get("number"), "name": new_horse.get("name"),
+                "model_prob": round(mp, 1),
+                "agf_pct":    round(agf, 2),
+                "value_edge": round(ve, 1),
+                "role": "guardrail_buffer",
+            }
+            leg["selected"] = saved_selected + [new_entry]
+            leg["selected"].sort(key=lambda s: -(s.get("model_prob") or 0))
+            leg["n_pick"] = saved_n_pick + 1
+            leg.update(_v7_compute_leg_metrics(leg["selected"]))
+
+            ev_after = _v7_compute_card_metrics(legs_data, bf)
+
+            if ev_after["cost"] > budget:
+                leg["selected"] = saved_selected
+                leg["n_pick"] = saved_n_pick
+                leg.update(saved_metrics)
+                actions.append({
+                    "ayak": leg.get("ayak"),
+                    "action": "skip_widen_budget_exceeded",
+                    "candidate": {"number": new_horse.get("number"),
+                                  "name": new_horse.get("name")},
+                    "would_cost": ev_after["cost"],
+                })
+                continue
+
+            if ev_after["ev_proxy_score"] >= ev_before["ev_proxy_score"]:
+                actions.append({
+                    "ayak": leg.get("ayak"),
+                    "action": "widened",
+                    "added": {"number": new_horse.get("number"),
+                              "name": new_horse.get("name"),
+                              "model_prob": round(mp, 1)},
+                    "ev_before": ev_before["ev_proxy_score"],
+                    "ev_after":  ev_after["ev_proxy_score"],
+                })
+                widened = True
+                break
+            else:
+                leg["selected"] = saved_selected
+                leg["n_pick"] = saved_n_pick
+                leg.update(saved_metrics)
+                actions.append({
+                    "ayak": leg.get("ayak"),
+                    "action": "skip_widen_ev_worsens",
+                    "candidate": {"number": new_horse.get("number"),
+                                  "name": new_horse.get("name")},
+                    "ev_before": ev_before["ev_proxy_score"],
+                    "ev_after":  ev_after["ev_proxy_score"],
+                })
+
+        if not widened:
+            break
+
+    return legs_data, actions
+
+
+def _v7_build_selection_reasoning(analysis, selected, width_breakdown):
+    parts = []
+    n_force = sum(1 for s in selected if s.get("role") == "force")
+    n_mand  = sum(1 for s in selected if s.get("role") == "mandatory")
+    n_cb    = sum(1 for s in selected if s.get("role") == "calibration_buffer")
+    n_cov   = sum(1 for s in selected if s.get("role") == "coverage")
+    if n_force: parts.append(f"{n_force} force")
+    if n_mand:  parts.append(f"{n_mand} mandatory")
+    if n_cb:    parts.append(f"{n_cb} kalibrasyon buffer")
+    if n_cov:   parts.append(f"{n_cov} coverage")
+    bd = width_breakdown or {}
+    parts.append(f"hedef coverage {bd.get('coverage_target_pct','?')}%")
+    if bd.get("uncertainty_bump", 0) > 0:
+        parts.append(f"+{bd['uncertainty_bump']} belirsizlik bump")
+    if bd.get("force_floor", 0) > bd.get("base_width_from_coverage", 0):
+        parts.append("force floor dominant")
+    return "; ".join(parts) if parts else "standart seçim"
+
 
 def _v7_build_preview(result):
-    """Top-level: build v7_coupon preview-only field from result.
-    Skip if REPAIRED or AGF missing.
-    """
+    """PATCH_FAZ7C2_V7_BUILDER_v1 orchestrator — produces real coupon."""
     dq = (result.get("data_quality_status") or "").upper()
     if dq in ("REPAIRED_FROM_TJK", "DIAGNOSTIC_NO_BET", "REPAIRED"):
-        return {"status": "skipped", "phase": "7C-1",
+        return {"status": "skipped", "phase": "7C-2",
                 "reason": f"repaired_or_agf_missing ({dq})"}
 
     legs_summary = result.get("legs_summary") or []
     if not legs_summary:
-        return {"status": "skipped", "phase": "7C-1",
+        return {"status": "skipped", "phase": "7C-2",
                 "reason": "no_legs_summary"}
 
     any_agf_missing = any(ls.get("agf_missing") for ls in legs_summary)
     if any_agf_missing:
-        return {"status": "skipped", "phase": "7C-1",
+        return {"status": "skipped", "phase": "7C-2",
                 "reason": "agf_missing_in_at_least_one_leg"}
 
     hippo = result.get("hippodrome") or ""
-    legs_out = []
+    bf = _v7_get_birim_fiyat(hippo)
+
+    all_analyses = []
     for ls in legs_summary:
         ayak = ls.get("ayak", 0)
         analysis = _v7_classify_risk_and_width(ls, ayak, hippo)
-        legs_out.append(analysis)
+        all_analyses.append(analysis)
 
-    risk_vec = [l["surprise_risk"] for l in legs_out]
-    width_vec = [l["recommended_width_hint"] for l in legs_out]
+    legs_data = []
+    for analysis, ls in zip(all_analyses, legs_summary):
+        target_width = analysis.get("recommended_width_hint", 1) or 1
+        selected = _v7_select_horses(analysis, ls, target_width)
+        n_pick = max(1, len(selected))
+        leg_metrics = _v7_compute_leg_metrics(selected)
+        wb = analysis.get("width_breakdown") or {}
+        sel_reasoning = _v7_build_selection_reasoning(analysis, selected, wb)
+
+        leg_data = {
+            "ayak": analysis.get("ayak"),
+            "race_number": analysis.get("race_number"),
+            "n_runners": analysis.get("n_runners"),
+            "surprise_risk": analysis.get("surprise_risk"),
+            "risk_score":    analysis.get("risk_score"),
+            "top1_model_prob": analysis.get("top1_model_prob"),
+            "top2_model_prob": analysis.get("top2_model_prob"),
+            "top1_top2_gap":   analysis.get("top1_top2_gap"),
+            "top1_number":     analysis.get("top1_number"),
+            "model_entropy":   analysis.get("model_entropy"),
+            "agf_entropy":     analysis.get("agf_entropy"),
+            "agf_top1_number": analysis.get("agf_top1_number"),
+            "agf_top1_pct":    analysis.get("agf_top1_pct"),
+            "model_agf_disagreement": analysis.get("model_agf_disagreement"),
+            "calibration_warning":    analysis.get("calibration_warning"),
+            "forbid_single":          analysis.get("forbid_single"),
+            "mandatory_horses":       analysis.get("mandatory_horses"),
+            "force_horses":           analysis.get("force_horses"),
+            "historical_prior":       analysis.get("historical_prior"),
+            "horse_pool_source":      analysis.get("horse_pool_source"),
+            "breed":     analysis.get("breed"),
+            "distance":  analysis.get("distance"),
+            "is_maiden": analysis.get("is_maiden"),
+            "is_handicap": analysis.get("is_handicap"),
+            "reasoning": analysis.get("reasoning"),
+            "width_breakdown": wb,
+            "recommended_width_hint": analysis.get("recommended_width_hint"),
+            "n_pick": n_pick,
+            "selected": selected,
+            "leg_joint_prob":    leg_metrics["leg_joint_prob"],
+            "leg_agf_share":     leg_metrics["leg_agf_share"],
+            "leg_payout_factor": leg_metrics["leg_payout_factor"],
+            "selection_reasoning": sel_reasoning,
+        }
+        legs_data.append(leg_data)
+
+    initial_card = _v7_compute_card_metrics(legs_data, bf)
+    initial_width_vector = [l["n_pick"] for l in legs_data]
+
+    legs_data, budget_status, shrink_actions = _v7_reconcile_budget(
+        legs_data, all_analyses, bf)
+
+    guardrail_actions = []
+    if budget_status != "unrecoverable_under_constraints":
+        legs_data, guardrail_actions = _v7_apply_max_singles_guardrail(
+            legs_data, all_analyses, legs_summary, bf)
+
+    final_card = _v7_compute_card_metrics(legs_data, bf)
+    final_width_vector = [l["n_pick"] for l in legs_data]
+    singles_count = sum(1 for w in final_width_vector if w == 1)
+
+    unused_budget_reason = None
+    if budget_status == "within_budget":
+        if final_card["cost"] < _V7_BUDGET_TL * 0.5:
+            unused_budget_reason = ("cost_is_constraint_not_target — model's "
+                                    "uncertainty did not justify wider coverage")
+
+    risk_vec = [l["surprise_risk"] for l in legs_data]
+
     summary = {
         "risk_vector": risk_vec,
-        "width_hint_vector": width_vec,
+        "width_hint_vector":  initial_width_vector,
+        "final_width_vector": final_width_vector,
+        "combo": final_card["combo"],
+        "cost":  final_card["cost"],
+        "birim_fiyat": final_card["birim_fiyat"],
+        "joint_hit_prob_estimate":   final_card["joint_hit_prob_estimate"],
+        "payout_leverage_estimate":  final_card["payout_leverage_estimate"],
+        "ev_proxy_score":            final_card["ev_proxy_score"],
+        "budget_status": budget_status,
+        "unused_budget_reason": unused_budget_reason,
+        "shrink_actions":    shrink_actions,
+        "guardrail_actions": guardrail_actions,
+        "singles_count": singles_count,
+        "max_singles_default": _V7_MAX_SINGLES,
         "n_low":    sum(1 for r in risk_vec if r == "LOW"),
         "n_medium": sum(1 for r in risk_vec if r == "MEDIUM"),
         "n_high":   sum(1 for r in risk_vec if r == "HIGH"),
-        "n_calibration_warnings": sum(1 for l in legs_out if l["calibration_warning"]),
-        "n_mandatory_horses": sum(len(l["mandatory_horses"]) for l in legs_out),
-        "n_force_horses":     sum(len(l["force_horses"])     for l in legs_out),
-        "tentative_combo_if_using_hint": _v7_product(width_vec),
+        "n_calibration_warnings": sum(1 for l in legs_data if l.get("calibration_warning")),
+        "n_mandatory_horses": sum(len(l.get("mandatory_horses") or []) for l in legs_data),
+        "n_force_horses":     sum(len(l.get("force_horses")     or []) for l in legs_data),
+        "lambda_value": _V7_LAMBDA_VALUE,
+        "lambda_cost":  _V7_LAMBDA_COST,
+        "budget_ceiling_tl": _V7_BUDGET_TL,
     }
+
+    status = "built" if budget_status != "unrecoverable_under_constraints" else "unrecoverable"
     return {
-        "status": "preview_only",
-        "phase": "7C-1",
-        "legs": legs_out,
+        "status": status,
+        "phase":  "7C-2",
+        "legs":   legs_data,
         "summary": summary,
     }
 
-# PATCH_FAZ7C1_V7_RISK_PREVIEW_v1: END ─────────────────────────────
+# PATCH_FAZ7C2_V7_BUILDER_v1: END ──────────────────────────────────
 
 
 def _simple_kupon(legs, hippo, mode='dar'):
