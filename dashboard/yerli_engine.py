@@ -1896,10 +1896,12 @@ def _format_smart_genis_for_telegram(base_msg, all_results):
             if cap_acts:
                 lines.append(f"  ✂️ Bütçe tavanı: {len(cap_acts)} at çıkarıldı")
 
-        # PATCH_FAZ5_SELECTION_INTEGRITY_AUDIT_v1: append audit lines.
+        # PATCH_FAZ5_SELECTION_INTEGRITY_AUDIT_v1 (extended by
+        # PATCH_FAZ6_MANDATORY_INCLUSION_v1): forced inclusion + audit lines.
         try:
             _sia_lines = _format_selection_integrity_for_telegram_lines(
-                r.get("selection_integrity_audit"))
+                r.get("selection_integrity_audit"),
+                r.get("forced_inclusions"))
             if _sia_lines:
                 lines.extend(_sia_lines)
         except Exception:
@@ -2945,8 +2947,21 @@ def _selection_integrity_audit_hippo(legs_summary, dar, genis):
 
 
 def _inject_selection_integrity_audit(result, legs):
+    """PATCH_FAZ6_MANDATORY_INCLUSION_v1: now runs mandatory inclusion BEFORE
+    the audit, so the audit sees the post-inclusion state. Misses should drop
+    to 0 in full-data DAR/GENİŞ legs.
+    """
     try:
         ls = result.get("legs_summary") or []
+        try:
+            forced_dar   = _apply_mandatory_inclusion(result.get("dar"),   ls, "dar")
+            forced_genis = _apply_mandatory_inclusion(result.get("genis"), ls, "genis")
+            all_forced = (forced_dar or []) + (forced_genis or [])
+            if all_forced:
+                result["forced_inclusions"] = all_forced
+        except Exception as _fi_e:
+            try: logger.warning(f"[mandatory_inclusion] failed: {_fi_e}")
+            except Exception: pass
         result["selection_integrity_audit"] = _selection_integrity_audit_hippo(
             ls, result.get("dar"), result.get("genis"))
     except Exception as e:
@@ -2956,10 +2971,29 @@ def _inject_selection_integrity_audit(result, legs):
     return result
 
 
-def _format_selection_integrity_for_telegram_lines(sia):
-    """Compact telegram lines. Empty list if audit absent."""
-    if not sia or sia.get("error"): return []
+def _format_selection_integrity_for_telegram_lines(sia, forced_inclusions=None):
+    """PATCH_FAZ6_MANDATORY_INCLUSION_v1:
+    - prepend forced inclusion lines (always when present)
+    - audit summary only when actual misses persist (HP/VAL > 0)
+    """
     lines = []
+    fi_lines = _faz6_format_forced_inclusion_lines(forced_inclusions or [])
+    if fi_lines:
+        lines.extend(fi_lines)
+    if not sia or sia.get("error"):
+        return lines
+    def _problems(summ_dict):
+        full = summ_dict.get("full_data_legs") or {}
+        rep  = summ_dict.get("repaired_tjk_coverage_legs") or {}
+        for s in (full, rep):
+            if (s.get("legs_with_high_prob_not_selected", 0) > 0 or
+                s.get("legs_with_value_not_selected",     0) > 0):
+                return True
+        return False
+    dar_problems   = _problems((sia.get("dar")   or {}).get("summary") or {})
+    genis_problems = _problems((sia.get("genis") or {}).get("summary") or {})
+    if not (dar_problems or genis_problems):
+        return lines
     def _fmt_summary(label, summ_dict):
         full_summ = summ_dict.get("full_data_legs") or {}
         rep_summ  = summ_dict.get("repaired_tjk_coverage_legs") or {}
@@ -2972,13 +3006,12 @@ def _format_selection_integrity_for_telegram_lines(sia):
                 f"{s.get('legs_with_ranking_conflict',0)} score≠model")
     dar_line   = _fmt_summary("DAR  ", (sia.get("dar")   or {}).get("summary") or {})
     genis_line = _fmt_summary("GENİŞ", (sia.get("genis") or {}).get("summary") or {})
-    if not (dar_line or genis_line): return []
-    lines.append("🔍 Seçim Integrity Audit")
+    lines.append("🔍 Seçim Integrity Audit (sorun var)")
     if dar_line:   lines.append(dar_line)
     if genis_line: lines.append(genis_line)
     worst = sia.get("worst_misses") or []
     if worst:
-        lines.append("  En kötü 3 miss:")
+        lines.append("  En kötü miss:")
         for w in worst:
             mp = w.get("model_prob"); ve = w.get("value_edge")
             mp_s = f"m={mp:.0f}%" if isinstance(mp, (int, float)) else "m=?"
@@ -2990,6 +3023,150 @@ def _format_selection_integrity_for_telegram_lines(sia):
     return lines
 
 # PATCH_FAZ5_SELECTION_INTEGRITY_AUDIT_v1: END ──────────────────────
+
+
+# PATCH_FAZ6_MANDATORY_INCLUSION_v1: BEGIN ─────────────────────────
+# Mandatory inclusion of high-model-prob / high-edge horses into DAR/GENİŞ.
+# Runs AFTER the score-based selection has been built.
+
+_FAZ6_NORMAL_MP_THRESHOLD = 35.0
+_FAZ6_NORMAL_VE_THRESHOLD = 30.0
+_FAZ6_FORCE_MP_THRESHOLD  = 50.0
+_FAZ6_FORCE_VE_THRESHOLD  = 50.0
+
+
+def _faz6_qualifies(mp, ve):
+    qn = ((mp is not None and mp >= _FAZ6_NORMAL_MP_THRESHOLD) or
+          (ve is not None and ve >= _FAZ6_NORMAL_VE_THRESHOLD))
+    qf = ((mp is not None and mp >= _FAZ6_FORCE_MP_THRESHOLD) or
+          (ve is not None and ve >= _FAZ6_FORCE_VE_THRESHOLD))
+    return qn, qf
+
+
+def _apply_mandatory_inclusion(ticket_dict, legs_summary, mode_label):
+    """Mutate ticket_dict.legs[i].selected. Returns forced inclusion records.
+    Skip if mode not in (dar, genis)."""
+    if not ticket_dict or not isinstance(ticket_dict, dict): return []
+    if ticket_dict.get("mode") not in ("dar", "genis"): return []
+    if not ticket_dict.get("legs"): return []
+
+    forced = []
+    for tl in ticket_dict["legs"]:
+        ayak = tl.get("leg_number")
+        if ayak is None: continue
+        ls = next((l for l in (legs_summary or []) if l.get("ayak") == ayak), None)
+        if not ls: continue
+        horses, _ = _sia_horse_pool(ls)
+        if not horses: continue
+
+        selected = list(tl.get("selected") or [])
+        sel_nums = {h.get("number") for h in selected
+                    if isinstance(h, dict) and h.get("number") is not None}
+
+        candidates = []
+        for h in horses:
+            num = h.get("number")
+            if num is None or num in sel_nums: continue
+            mp = h.get("model_prob"); ve = h.get("value_edge")
+            qn, qf = _faz6_qualifies(mp, ve)
+            if qn or qf:
+                candidates.append({
+                    "number": num, "name": h.get("name"),
+                    "model_prob": mp, "value_edge": ve,
+                    "score": h.get("score"), "agf_pct": h.get("agf_pct"),
+                    "force": qf,
+                })
+        if not candidates: continue
+
+        candidates.sort(key=lambda c: (-int(c["force"]),
+                                        -(c["model_prob"] or 0),
+                                        -(c["value_edge"] or 0)))
+
+        n_pick = tl.get("n_pick") or len(selected) or 0
+        is_tek = (n_pick == 1)
+
+        def _mp_of(num):
+            for h in horses:
+                if h.get("number") == num: return h.get("model_prob")
+            return None
+
+        for cand in candidates:
+            if any(s.get("number") == cand["number"] for s in selected): continue
+            cand_mp = cand["model_prob"] or 0
+
+            if len(selected) < n_pick:
+                selected.append({"name": cand["name"], "number": cand["number"],
+                                 "score": cand["score"] or 0})
+                sel_nums.add(cand["number"])
+                forced.append({
+                    "ayak": ayak, "race_number": tl.get("race_number"),
+                    "mode": mode_label, "number": cand["number"],
+                    "name": cand["name"], "model_prob": cand["model_prob"],
+                    "value_edge": cand["value_edge"], "force": cand["force"],
+                    "action": "added_under_width",
+                })
+                continue
+
+            sel_with_mp = []
+            for s in selected:
+                s_mp = _mp_of(s.get("number"))
+                sel_with_mp.append((s, s_mp if s_mp is not None else 0))
+            sel_with_mp.sort(key=lambda x: x[1])
+            weakest_horse, weakest_mp = sel_with_mp[0]
+
+            replace = False
+            if is_tek:
+                if cand_mp > (weakest_mp or 0): replace = True
+            else:
+                if cand["force"]: replace = True
+                elif cand_mp > (weakest_mp or 0): replace = True
+
+            if replace:
+                selected.remove(weakest_horse)
+                sel_nums.discard(weakest_horse.get("number"))
+                selected.append({"name": cand["name"], "number": cand["number"],
+                                 "score": cand["score"] or 0})
+                sel_nums.add(cand["number"])
+                forced.append({
+                    "ayak": ayak, "race_number": tl.get("race_number"),
+                    "mode": mode_label, "number": cand["number"],
+                    "name": cand["name"], "model_prob": cand["model_prob"],
+                    "value_edge": cand["value_edge"], "force": cand["force"],
+                    "action": "replaced_weakest",
+                    "replaced": {"name": weakest_horse.get("name"),
+                                 "number": weakest_horse.get("number"),
+                                 "model_prob": weakest_mp},
+                })
+
+        selected.sort(key=lambda h: -(h.get("score") or 0))
+        if n_pick > 0: tl["selected"] = selected[:n_pick]
+        else: tl["selected"] = selected
+    return forced
+
+
+def _faz6_format_forced_inclusion_lines(forced_inclusions):
+    if not forced_inclusions: return []
+    combined = {}
+    for fi in forced_inclusions:
+        key = (fi.get("ayak"), fi.get("number"))
+        if key not in combined:
+            combined[key] = {**fi, "modes": []}
+        m = fi.get("mode")
+        if m and m not in combined[key]["modes"]:
+            combined[key]["modes"].append(m)
+    items = list(combined.values())
+    items.sort(key=lambda fi: (fi.get("ayak") or 0, -(fi.get("model_prob") or 0)))
+    lines = []
+    for fi in items:
+        mp = fi.get("model_prob"); ve = fi.get("value_edge")
+        mp_s = f"m={mp:.0f}%" if isinstance(mp, (int, float)) else "m=?"
+        ve_s = (f"edge +{ve:.0f}" if isinstance(ve, (int, float)) and ve >= 0 else
+                (f"edge {ve:.0f}" if isinstance(ve, (int, float)) else "edge ?"))
+        lines.append(f"🧠 Model zorunlu ekleme: Ayak {fi.get('ayak')} "
+                     f"#{fi.get('number')} {fi.get('name')} ({mp_s}, {ve_s})")
+    return lines
+
+# PATCH_FAZ6_MANDATORY_INCLUSION_v1: END ───────────────────────────
 
 
 def _simple_kupon(legs, hippo, mode='dar'):
