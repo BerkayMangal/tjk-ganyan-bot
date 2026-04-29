@@ -101,6 +101,28 @@ _BUDGET_DAR_MAX      = 2500.0
 _BUDGET_GENIS_MAX    = 5000.0
 
 
+# PATCH_FAZ2_TR_WHITELIST_v1: Turkish hippodrome whitelist (BUG 1: foreign leak)
+_TR_HIPPODROMES_WHITELIST = frozenset({
+    'istanbul', 'ankara', 'izmir', 'adana', 'bursa',
+    'şanlıurfa', 'sanliurfa', 'şanliurfa', 'sanlıurfa', 'urfa',
+    'diyarbakır', 'diyarbakir',
+    'elazığ', 'elazig',
+    'kocaeli',
+})
+
+
+def _is_turkish_hippodrome(name):
+    """PATCH_FAZ2_TR_WHITELIST_v1.
+    True iff name matches a Turkish hippodrome by substring on lower-cased
+    and 'hipodromu/hipodrom' stripped form. Used to gate all hippodrome
+    iteration entry points (AGF main, dashboard fallback, HTML-only fallback).
+    """
+    if not name:
+        return False
+    n = str(name).lower().replace(' hipodromu', '').replace(' hipodrom', '').strip()
+    return any(t in n for t in _TR_HIPPODROMES_WHITELIST)
+
+
 def classify_leg_for_display(leg_summary):
     """Sınıflandır: SAFE / ALPHA / NARROW / CHAOS.
 
@@ -1994,6 +2016,10 @@ def run_yerli_pipeline(target_date=None):
             logger.warning(f"[pipeline] {len(_removed_dups)} duplicate altılı atıldı")
 
         for agf_alt in agf_altilis:
+            # PATCH_FAZ2_TR_WHITELIST_v1: drop foreign hippodromes (BUG 1)
+            if not _is_turkish_hippodrome(agf_alt.get('hippodrome', '')):
+                logger.info(f"[whitelist] skip foreign hippo: {agf_alt.get('hippodrome','?')}")
+                continue
             try:
                 result = _process_proper_altili(agf_alt, program_data, target_date, model_ok)
                 all_results.append(result)
@@ -2009,6 +2035,10 @@ def run_yerli_pipeline(target_date=None):
         # FALLBACK: dashboard scraper — partial legs
         if tracks:
             for track in tracks:
+                # PATCH_FAZ2_TR_WHITELIST_v1: drop foreign hippodromes (BUG 1)
+                if not _is_turkish_hippodrome(track.get('name', '')):
+                    logger.info(f"[whitelist] skip foreign track: {track.get('name','?')}")
+                    continue
                 try:
                     result = _process_track(track, program_data, target_date, model_ok)
                     all_results.append(result)
@@ -2027,9 +2057,8 @@ def run_yerli_pipeline(target_date=None):
         for ph in program_data:
             ph_name = ph.get('hippodrome', '')
             ph_lower = ph_name.lower().replace(' hipodromu','').replace(' hipodrom','')
-            # Yabancı hipodromları atla
-            if any(x in ph_lower for x in ['abd', 'fransa', 'malezya', 'ingiltere',
-                                            'avustralya', 'dubai', 'singapur', 'hong kong']):
+            # PATCH_FAZ2_TR_WHITELIST_v1: WHITELIST instead of blacklist (BUG 1)
+            if not _is_turkish_hippodrome(ph_name):
                 continue
             # Zaten işlenen hipodromları atla
             if any(ph_lower in p or p in ph_lower for p in processed_hippos):
@@ -2669,8 +2698,13 @@ def _build_legs_summary(legs):
     for i, leg in enumerate(legs):
         agf = leg.get('agf_data', [])
         horses = leg.get('horses', [])
+        # PATCH_FAZ2_TR_WHITELIST_v1: BUG 4 — sort by model_prob desc for top3
+        # (was horses[:3] which used V6 score, inconsistent with find_value_horses)
+        def _h_mp(_h):
+            return _h[3].get('model_prob', 0) if isinstance(_h[3], dict) else 0
+        horses_by_mp = sorted(horses, key=_h_mp, reverse=True)
         top3 = []
-        for h in horses[:3]:
+        for h in horses_by_mp[:3]:
             ap = 0
             for a in agf:
                 if a['horse_number'] == h[2]: ap = a['agf_pct']; break

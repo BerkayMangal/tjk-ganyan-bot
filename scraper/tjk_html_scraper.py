@@ -28,6 +28,16 @@ SESSION.headers.update({
 })
 
 
+# PATCH_FAZ2_TR_WHITELIST_v1: Turkish hippodrome whitelist (BUG 1)
+_TR_HIPPODROMES_WHITELIST = frozenset({
+    'istanbul', 'ankara', 'izmir', 'adana', 'bursa',
+    'şanlıurfa', 'sanliurfa', 'şanliurfa', 'sanlıurfa', 'urfa',
+    'diyarbakır', 'diyarbakir',
+    'elazığ', 'elazig',
+    'kocaeli',
+})
+
+
 def _discover_hippodromes(target_date):
     date_str = target_date.strftime('%d/%m/%Y')
     url = f"{TJK_PROGRAM_URL}?QueryParameter_Tarih={date_str}&Era=today"
@@ -42,7 +52,9 @@ def _discover_hippodromes(target_date):
             if 'SehirId=' not in href:
                 continue
             text = link.get_text(strip=True)
-            if any(x in text for x in ['ABD', 'Fransa', 'Afrika', 'Birleşik']):
+            # PATCH_FAZ2_TR_WHITELIST_v1: WHITELIST Turkish hippodromes (BUG 1)
+            text_lower = text.lower()
+            if not any(t in text_lower for t in _TR_HIPPODROMES_WHITELIST):
                 continue
             sm = re.search(r'SehirId=(\d+)', href)
             nm = re.search(r'SehirAdi=([^&]+)', href)
