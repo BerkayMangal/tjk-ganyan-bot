@@ -974,3 +974,59 @@ def diag_raw_program():
         info["tb"] = traceback.format_exc()
     return jsonify(info)
 
+
+@app.route("/api/diag/discover_trace")
+def diag_discover_trace():
+    """Step through the discover loop manually, log each link decision."""
+    import traceback, re
+    from datetime import date as _date
+    from bs4 import BeautifulSoup
+    from urllib.parse import unquote
+    info = {"links_inspected": []}
+    try:
+        from scraper.tjk_html_scraper import TJK_PROGRAM_URL, SESSION
+        today = _date.today().strftime("%d/%m/%Y")
+        url = f"{TJK_PROGRAM_URL}?QueryParameter_Tarih={today}&Era=today"
+        resp = SESSION.get(url, timeout=30)
+        info["status"] = resp.status_code
+        info["html_len"] = len(resp.text)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        all_a = soup.find_all("a", href=True)
+        info["total_a_with_href"] = len(all_a)
+        seen = set()
+        accepted = []
+        for i, link in enumerate(all_a):
+            href = link["href"]
+            if "SehirId=" not in href:
+                continue
+            text = link.get_text(strip=True)
+            entry = {"i": i, "text": text[:80], "href": href[:200]}
+            blacklist_hit = None
+            for x in ["ABD", "Fransa", "Afrika", "Birleşik"]:
+                if x in text:
+                    blacklist_hit = x
+                    break
+            entry["blacklist_hit"] = blacklist_hit
+            sm = re.search(r"SehirId=(\d+)", href)
+            entry["sid_match"] = sm.group(1) if sm else None
+            nm = re.search(r"SehirAdi=([^&]+)", href)
+            entry["sname_match"] = unquote(nm.group(1)) if nm else None
+            if blacklist_hit:
+                entry["decision"] = "skip_blacklist"
+            elif not sm:
+                entry["decision"] = "skip_no_sid"
+            else:
+                sid = int(sm.group(1))
+                if sid in seen:
+                    entry["decision"] = "skip_dup_sid"
+                else:
+                    seen.add(sid)
+                    accepted.append(sid)
+                    entry["decision"] = "accept"
+            info["links_inspected"].append(entry)
+        info["accepted_sids"] = accepted
+    except Exception as e:
+        info["error"] = f"{type(e).__name__}: {e}"
+        info["tb"] = traceback.format_exc()
+    return jsonify(info)
+
