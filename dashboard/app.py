@@ -1104,3 +1104,42 @@ def diag_full_program():
         info["tb"] = traceback.format_exc()
     return jsonify(info)
 
+
+@app.route("/api/diag/loop_trace")
+def diag_loop_trace():
+    """Manually replicate get_todays_races_html loop, log every step."""
+    import traceback
+    from datetime import date as _date
+    info = {"steps": []}
+    try:
+        from scraper.tjk_html_scraper import (
+            _discover_hippodromes, _fetch_and_parse_html, _try_csv
+        )
+        today = _date.today()
+        hippodromes = _discover_hippodromes(today)
+        info["discovered_count"] = len(hippodromes or [])
+        info["discovered"] = [(h["sehir_id"], h["sehir_name"]) for h in (hippodromes or [])]
+        for hippo in (hippodromes or []):
+            sid = hippo["sehir_id"]
+            sname = hippo["sehir_name"]
+            step = {"sid": sid, "sname": sname}
+            try:
+                races = _fetch_and_parse_html(sid, sname, today)
+                if races is None:
+                    step["html_result"] = "None"
+                elif isinstance(races, list):
+                    step["html_result"] = f"list[{len(races)}]"
+                    if races:
+                        step["first_race_n"] = races[0].get("race_number")
+                        step["first_race_horses"] = len(races[0].get("horses", []) or [])
+                else:
+                    step["html_result"] = f"unknown:{type(races).__name__}"
+            except Exception as e:
+                step["html_error"] = f"{type(e).__name__}: {e}"
+                step["html_tb"] = traceback.format_exc()[-600:]
+            info["steps"].append(step)
+    except Exception as e:
+        info["outer_error"] = f"{type(e).__name__}: {e}"
+        info["outer_tb"] = traceback.format_exc()
+    return jsonify(info)
+
