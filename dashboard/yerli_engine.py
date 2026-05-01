@@ -119,7 +119,14 @@ def _is_turkish_hippodrome(name):
     """
     if not name:
         return False
-    n = str(name).lower().replace(' hipodromu', '').replace(' hipodrom', '').strip()
+    # PATCH_TR_LOWERCASE_FIX_ENGINE_v1: Turkish İ.lower() = 'i̇' (combining dot
+    # above) which breaks 'istanbul' substring match. Normalize to plain ASCII.
+    import unicodedata as _ud_tr
+    n = (
+        _ud_tr.normalize("NFKD", str(name))
+        .encode("ascii", "ignore").decode("ascii").lower()
+        .replace(' hipodromu', '').replace(' hipodrom', '').strip()
+    )
     return any(t in n for t in _TR_HIPPODROMES_WHITELIST)
 
 
