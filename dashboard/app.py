@@ -780,3 +780,69 @@ def demo_tracks():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8050))
     app.run(host="0.0.0.0", port=port, debug=True)
+
+
+# DIAG_PROGRAMME_v1 — what does the scraper return today?
+@app.route("/api/diag/programme")
+def diag_programme():
+    """Show what TJK program returns + what AGF returns + what engine kept/dropped."""
+    import traceback
+    from datetime import date as _date
+    info = {"version": "DIAG_PROGRAMME_v1", "date": _date.today().isoformat()}
+    try:
+        # 1. TJK program scraper
+        try:
+            from scraper.tjk_html_scraper import get_todays_races_html
+            program = get_todays_races_html(_date.today())
+            info["tjk_programme"] = []
+            for ph in (program or []):
+                races = ph.get("races", []) or []
+                info["tjk_programme"].append({
+                    "hippodrome": ph.get("hippodrome"),
+                    "n_races": len(races),
+                    "race_numbers": [r.get("race_number") for r in races],
+                    "first_race_n_horses": (
+                        len(races[0].get("horses", []) or []) if races else 0
+                    ),
+                })
+        except Exception as e:
+            info["tjk_programme_error"] = f"{type(e).__name__}: {e}"
+            info["tjk_tb"] = traceback.format_exc()
+
+        # 2. AGF scraper
+        try:
+            from scraper.agf_scraper import get_todays_agf
+            agf = get_todays_agf(_date.today())
+            info["agf"] = []
+            for ah in (agf or []):
+                info["agf"].append({
+                    "hippodrome": ah.get("hippodrome"),
+                    "n_races": len(ah.get("races", []) or []),
+                    "race_numbers": [
+                        r.get("race_number") for r in (ah.get("races", []) or [])
+                    ],
+                })
+        except Exception as e:
+            info["agf_error"] = f"{type(e).__name__}: {e}"
+            info["agf_tb"] = traceback.format_exc()
+
+        # 3. What hipodroms ended up in final result?
+        try:
+            from dashboard.yerli_engine import run_yerli_pipeline
+            result = run_yerli_pipeline()
+            info["pipeline_hippos"] = []
+            for h in (result.get("hippodromes", []) if result else []):
+                info["pipeline_hippos"].append({
+                    "hippodrome": h.get("hippodrome"),
+                    "altili_no": h.get("altili_no"),
+                    "races": h.get("race_numbers"),
+                    "status": h.get("data_quality_status"),
+                })
+        except Exception as e:
+            info["pipeline_error"] = f"{type(e).__name__}: {e}"
+            info["pipeline_tb"] = traceback.format_exc()
+    except Exception as e:
+        info["outer"] = f"{type(e).__name__}: {e}"
+        info["outer_tb"] = traceback.format_exc()
+    return jsonify(info)
+
