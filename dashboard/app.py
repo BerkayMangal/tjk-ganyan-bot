@@ -1074,3 +1074,33 @@ def diag_fetch_istanbul():
         info["tb"] = traceback.format_exc()
     return jsonify(info)
 
+
+@app.route("/api/diag/full_program")
+def diag_full_program():
+    """Call get_todays_races_html and report what each hippodrome returned."""
+    import traceback
+    from datetime import date as _date
+    info = {"summaries": []}
+    try:
+        from scraper.tjk_html_scraper import get_todays_races_html
+        result = get_todays_races_html(_date.today())
+        if result is None:
+            info["result"] = "None"
+            return jsonify(info)
+        info["n_hippos"] = len(result)
+        for ph in result:
+            info["summaries"].append({
+                "hippodrome": ph.get("hippodrome"),
+                "source": ph.get("source"),
+                "n_races": len(ph.get("races", []) or []),
+                "race_numbers": [r.get("race_number") for r in (ph.get("races", []) or [])],
+                "first_race_n_horses": (
+                    len(ph.get("races", [{}])[0].get("horses", []) or [])
+                    if ph.get("races") else 0
+                ),
+            })
+    except Exception as e:
+        info["error"] = f"{type(e).__name__}: {e}"
+        info["tb"] = traceback.format_exc()
+    return jsonify(info)
+
