@@ -934,3 +934,43 @@ def diag_istanbul():
         info["tb"] = traceback.format_exc()
     return jsonify(info)
 
+
+@app.route("/api/diag/raw_program")
+def diag_raw_program():
+    """Fetch raw TJK program page from Railway and report what's in it."""
+    import traceback, re, requests
+    from datetime import date as _date
+    info = {}
+    try:
+        from scraper.tjk_html_scraper import TJK_PROGRAM_URL, SESSION
+        today = _date.today().strftime("%d/%m/%Y")
+        # First with the SESSION (what discover uses)
+        url1 = f"{TJK_PROGRAM_URL}?QueryParameter_Tarih={today}&Era=today"
+        info["url"] = url1
+        r1 = SESSION.get(url1, timeout=30)
+        info["session_status"] = r1.status_code
+        info["session_html_len"] = len(r1.text)
+        sehirler = re.findall(r"SehirAdi=([^&\"\']+)", r1.text)
+        info["session_sehirler"] = list(dict.fromkeys(sehirler))[:30]
+        info["session_count_istanbul"] = r1.text.lower().count("stanbul")
+        info["session_count_bursa"] = r1.text.lower().count("bursa")
+        # Second with bare requests, fresh
+        r2 = requests.get(url1, timeout=30, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Language": "tr-TR,tr;q=0.9",
+        })
+        info["bare_status"] = r2.status_code
+        info["bare_html_len"] = len(r2.text)
+        sehirler2 = re.findall(r"SehirAdi=([^&\"\']+)", r2.text)
+        info["bare_sehirler"] = list(dict.fromkeys(sehirler2))[:30]
+        info["bare_count_istanbul"] = r2.text.lower().count("stanbul")
+        # Sample 1000 chars where Istanbul might appear
+        idx = r2.text.lower().find("stanbul")
+        if idx > 0:
+            info["istanbul_context"] = r2.text[max(0, idx-200):idx+500]
+    except Exception as e:
+        info["error"] = f"{type(e).__name__}: {e}"
+        info["tb"] = traceback.format_exc()
+    return jsonify(info)
+
