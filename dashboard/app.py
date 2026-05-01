@@ -1030,3 +1030,47 @@ def diag_discover_trace():
         info["tb"] = traceback.format_exc()
     return jsonify(info)
 
+
+@app.route("/api/diag/fetch_istanbul")
+def diag_fetch_istanbul():
+    """Test _fetch_and_parse_html for Istanbul + report exact URL + raw response."""
+    import traceback, requests
+    from urllib.parse import quote
+    from datetime import date as _date
+    info = {}
+    try:
+        from scraper.tjk_html_scraper import (
+            TJK_DETAIL_URL, SESSION, _fetch_and_parse_html
+        )
+        today = _date.today()
+        date_str = today.strftime("%d/%m/%Y")
+        # The exact URL the scraper builds
+        sehir_name = "İstanbul"
+        url_built = (f"{TJK_DETAIL_URL}?SehirId=3"
+                     f"&QueryParameter_Tarih={date_str}"
+                     f"&SehirAdi={quote(sehir_name)}&Era=today")
+        info["url_built"] = url_built
+        # Direct fetch via SESSION
+        r = SESSION.get(url_built, timeout=30)
+        info["session_status"] = r.status_code
+        info["session_html_len"] = len(r.text)
+        info["session_url_after"] = r.url
+        # Sample first 500 chars
+        info["session_html_head"] = r.text[:600]
+        # Now invoke the actual scraper function
+        result = _fetch_and_parse_html(3, "İstanbul", today)
+        if result is None:
+            info["fn_returned"] = "None"
+        else:
+            info["fn_returned_type"] = type(result).__name__
+            if isinstance(result, dict):
+                info["fn_hippodrome"] = result.get("hippodrome")
+                info["fn_n_races"] = len(result.get("races", []) or [])
+                info["fn_race_numbers"] = [
+                    r.get("race_number") for r in (result.get("races", []) or [])
+                ]
+    except Exception as e:
+        info["error"] = f"{type(e).__name__}: {e}"
+        info["tb"] = traceback.format_exc()
+    return jsonify(info)
+
