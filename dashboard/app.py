@@ -846,3 +846,47 @@ def diag_programme():
         info["outer_tb"] = traceback.format_exc()
     return jsonify(info)
 
+# DIAG_PROGRAMME_v2 — raw TJK HTML inspection
+@app.route("/api/diag/raw_tjk")
+def diag_raw_tjk():
+    """Fetch the raw TJK programme page and check what hippodromes the HTML mentions."""
+    import traceback, re
+    info = {"version": "DIAG_PROGRAMME_v2"}
+    try:
+        from scraper.tjk_html_scraper import TJK_PROGRAM_URL, _get_session
+        from datetime import date as _date
+        target = _date.today().strftime("%d/%m/%Y")
+        info["target_date"] = target
+        info["url"] = TJK_PROGRAM_URL
+        # Use the scraper's own session (matches headers/cookies)
+        sess = _get_session() if "_get_session" in dir() else None
+        try:
+            from scraper.tjk_html_scraper import requests as _req
+        except Exception:
+            import requests as _req
+        params = {"QueryParameter_Tarih": target}
+        resp = _req.get(TJK_PROGRAM_URL, params=params, timeout=30,
+                        headers={"User-Agent": "Mozilla/5.0"})
+        info["status_code"] = resp.status_code
+        info["final_url"] = resp.url
+        html = resp.text
+        info["html_len"] = len(html)
+        # Find all SehirAdi links
+        sehir_matches = re.findall(r'SehirAdi=([^&"\']+)', html)
+        info["sehir_link_names"] = list(dict.fromkeys(sehir_matches))[:30]
+        # Find all SehirId values too
+        id_matches = re.findall(r'SehirId=(\d+)', html)
+        info["sehir_ids"] = sorted(set(id_matches))
+        # Does the word "Istanbul" or "İstanbul" appear anywhere?
+        info["contains_istanbul_lowercase"] = "stanbul" in html.lower()
+        info["count_istanbul"] = html.lower().count("stanbul")
+        info["count_bursa"] = html.lower().count("bursa")
+        # Sample 200 chars around first Istanbul mention
+        idx = html.lower().find("stanbul")
+        if idx >= 0:
+            info["istanbul_context"] = html[max(0, idx-100):idx+200]
+    except Exception as e:
+        info["error"] = f"{type(e).__name__}: {e}"
+        info["tb"] = traceback.format_exc()
+    return jsonify(info)
+
