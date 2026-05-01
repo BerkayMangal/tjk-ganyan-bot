@@ -10,7 +10,7 @@ import io
 import logging
 from datetime import date
 from typing import Optional, List, Dict
-from urllib.parse import unquote
+from urllib.parse import unquote, quote
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
@@ -76,7 +76,7 @@ def _fetch_and_parse_html(sehir_id, sehir_name, target_date):
     """Bir hipodromun HTML sayfasını çek ve parse et."""
     date_str = target_date.strftime('%d/%m/%Y')
     url = (f"{TJK_DETAIL_URL}?SehirId={sehir_id}"
-           f"&QueryParameter_Tarih={date_str}&SehirAdi={sehir_name}&Era=today")
+           f"&QueryParameter_Tarih={date_str}&SehirAdi={quote(sehir_name)}&Era=today")
     try:
         resp = SESSION.get(url, timeout=30)
         resp.raise_for_status()
