@@ -2435,7 +2435,8 @@ def run_yerli_pipeline(target_date=None):
     if program_data and model_ok:
         for ph in program_data:
             ph_name = ph.get('hippodrome', '')
-            ph_lower = ph_name.lower().replace(' hipodromu','').replace(' hipodrom','')
+            import unicodedata as _ud
+            ph_lower = (_ud.normalize("NFKD", ph_name).encode("ascii", "ignore").decode("ascii").lower()).replace(' hipodromu','').replace(' hipodrom','')
             # PATCH_FAZ2_TR_WHITELIST_v1: WHITELIST instead of blacklist (BUG 1)
             if not _is_turkish_hippodrome(ph_name):
                 continue

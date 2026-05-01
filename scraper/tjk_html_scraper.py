@@ -53,7 +53,16 @@ def _discover_hippodromes(target_date):
                 continue
             text = link.get_text(strip=True)
             # PATCH_FAZ2_TR_WHITELIST_v1: WHITELIST Turkish hippodromes (BUG 1)
-            text_lower = text.lower()
+            # PATCH_TR_LOWERCASE_FIX_v1: Turkish İ.lower() = 'i̇' (with combining
+            # dot above) which breaks "istanbul" substring match. Normalize to
+            # plain ASCII first so İstanbul→istanbul, Şanlıurfa→sanliurfa, etc.
+            import unicodedata as _ud
+            text_lower = (
+                _ud.normalize("NFKD", text)
+                .encode("ascii", "ignore")
+                .decode("ascii")
+                .lower()
+            )
             if not any(t in text_lower for t in _TR_HIPPODROMES_WHITELIST):
                 continue
             sm = re.search(r'SehirId=(\d+)', href)
