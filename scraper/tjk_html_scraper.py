@@ -42,12 +42,7 @@ def _discover_hippodromes(target_date):
     date_str = target_date.strftime('%d/%m/%Y')
     url = f"{TJK_PROGRAM_URL}?QueryParameter_Tarih={date_str}&Era=today"
     try:
-        # PATCH_FRESH_FETCH_v1: fresh request, no shared session
-        resp = requests.get(url, timeout=30, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'text/html,application/xhtml+xml',
-            'Accept-Language': 'tr-TR,tr;q=0.9',
-        })
+        resp = SESSION.get(url, timeout=30)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, 'html.parser')
         hippodromes = []
@@ -83,12 +78,7 @@ def _fetch_and_parse_html(sehir_id, sehir_name, target_date):
     url = (f"{TJK_DETAIL_URL}?SehirId={sehir_id}"
            f"&QueryParameter_Tarih={date_str}&SehirAdi={quote(sehir_name)}&Era=today")
     try:
-        # PATCH_FRESH_FETCH_v1: fresh request, no shared session
-        resp = requests.get(url, timeout=30, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'text/html,application/xhtml+xml',
-            'Accept-Language': 'tr-TR,tr;q=0.9',
-        })
+        resp = SESSION.get(url, timeout=30)
         resp.raise_for_status()
         html = resp.text
         logger.info(f"HTML fetched for {sehir_name}: {len(html)} chars")
