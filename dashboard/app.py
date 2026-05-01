@@ -846,54 +846,7 @@ def diag_programme():
         info["outer_tb"] = traceback.format_exc()
     return jsonify(info)
 
-# DIAG_PROGRAMME_v3 — raw TJK HTML inspection (fixed imports)
-@app.route("/api/diag/raw_tjk")
-def diag_raw_tjk():
-    """Fetch the raw TJK programme page and check what hippodromes the HTML mentions."""
-    import traceback, re, requests
-    from datetime import date as _date
-    info = {"version": "DIAG_PROGRAMME_v3"}
-    try:
-        from scraper.tjk_html_scraper import TJK_PROGRAM_URL
-        target = _date.today().strftime("%d/%m/%Y")
-        info["target_date"] = target
-        info["url"] = TJK_PROGRAM_URL
-        params = {"QueryParameter_Tarih": target}
-        resp = requests.get(TJK_PROGRAM_URL, params=params, timeout=30,
-                            headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64)"})
-        info["status_code"] = resp.status_code
-        info["final_url"] = resp.url
-        html = resp.text
-        info["html_len"] = len(html)
-        sehir_matches = re.findall(r'SehirAdi=([^&"\\\']+)', html)
-        info["sehir_link_names"] = list(dict.fromkeys(sehir_matches))[:30]
-        id_matches = re.findall(r'SehirId=(\d+)', html)
-        info["sehir_ids"] = sorted(set(id_matches))
-        info["contains_istanbul_lowercase"] = "stanbul" in html.lower()
-        info["count_istanbul"] = html.lower().count("stanbul")
-        info["count_bursa"] = html.lower().count("bursa")
-        idx = html.lower().find("stanbul")
-        if idx >= 0:
-            info["istanbul_context"] = html[max(0, idx-100):idx+300]
-        # Also: try the discover_hippodromes function directly
-        try:
-            from scraper.tjk_html_scraper import _discover_hippodromes_from_html as _disc
-            info["scraper_discovered"] = _disc(html) if html else None
-        except Exception as e2:
-            info["disc_error"] = f"{type(e2).__name__}: {e2}"
-            # Try alternate names
-            try:
-                import scraper.tjk_html_scraper as _mod
-                fns = [n for n in dir(_mod) if "discover" in n.lower() or "hippo" in n.lower()]
-                info["scraper_module_candidates"] = fns
-            except Exception as e3:
-                info["mod_inspect_error"] = str(e3)
-    except Exception as e:
-        info["error"] = f"{type(e).__name__}: {e}"
-        info["tb"] = traceback.format_exc()
-    return jsonify(info)
-
-
+# DIAG_PROGRAMME_v2 — raw TJK HTML inspection
 @app.route("/api/diag/raw_tjk")
 def diag_raw_tjk():
     """Fetch the raw TJK programme page and check what hippodromes the HTML mentions."""
