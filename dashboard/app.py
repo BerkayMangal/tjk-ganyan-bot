@@ -1143,3 +1143,23 @@ def diag_loop_trace():
         info["outer_tb"] = traceback.format_exc()
     return jsonify(info)
 
+
+@app.route("/api/diag/disc_source")
+def diag_disc_source():
+    """Show the actual deployed _discover_hippodromes source AND call it."""
+    import inspect, traceback
+    from datetime import date as _date
+    info = {}
+    try:
+        from scraper import tjk_html_scraper as mod
+        # Get function source from the loaded module
+        info["module_file"] = mod.__file__
+        info["disc_source"] = inspect.getsource(mod._discover_hippodromes)
+        # Now call it
+        result = mod._discover_hippodromes(_date.today())
+        info["call_result"] = [(h["sehir_id"], h["sehir_name"]) for h in (result or [])]
+    except Exception as e:
+        info["error"] = f"{type(e).__name__}: {e}"
+        info["tb"] = traceback.format_exc()
+    return jsonify(info)
+
