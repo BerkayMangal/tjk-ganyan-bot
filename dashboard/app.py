@@ -890,3 +890,47 @@ def diag_raw_tjk():
         info["tb"] = traceback.format_exc()
     return jsonify(info)
 
+
+@app.route("/api/diag/istanbul")
+def diag_istanbul():
+    import traceback
+    from datetime import date as _date
+    info = {}
+    try:
+        from scraper.tjk_html_scraper import _fetch_and_parse_html, _discover_hippodromes
+        today = _date.today()
+        all_hippos = _discover_hippodromes(today)
+        info["discovered"] = [(h["sehir_id"], h["sehir_name"]) for h in (all_hippos or [])]
+        # Find Istanbul
+        ist = None
+        for h in (all_hippos or []):
+            if "stanbul" in h["sehir_name"]:
+                ist = h
+                break
+        if not ist:
+            info["istanbul_in_discover"] = False
+            return jsonify(info)
+        info["istanbul_in_discover"] = True
+        info["istanbul_sid"] = ist["sehir_id"]
+        info["istanbul_sname"] = ist["sehir_name"]
+        # Now actually fetch
+        result = _fetch_and_parse_html(ist["sehir_id"], ist["sehir_name"], today)
+        if result is None:
+            info["fetch_returned"] = "None"
+        else:
+            info["fetch_returned_type"] = type(result).__name__
+            info["fetch_keys"] = list(result.keys()) if isinstance(result, dict) else None
+            if isinstance(result, dict):
+                info["fetch_hippodrome"] = result.get("hippodrome")
+                info["fetch_n_races"] = len(result.get("races", []) or [])
+                info["fetch_race_numbers"] = [
+                    r.get("race_number") for r in (result.get("races", []) or [])
+                ]
+                if result.get("races"):
+                    first = result["races"][0]
+                    info["fetch_first_race_n_horses"] = len(first.get("horses", []) or [])
+    except Exception as e:
+        info["error"] = f"{type(e).__name__}: {e}"
+        info["tb"] = traceback.format_exc()
+    return jsonify(info)
+
