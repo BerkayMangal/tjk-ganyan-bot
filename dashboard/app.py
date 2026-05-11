@@ -2,6 +2,7 @@
 import os, sys, logging, threading
 from datetime import datetime, timezone, date
 from flask import Flask, jsonify, send_from_directory, request
+from html import escape
 
 # Parent path for model/, engine/, scraper/, config.py
 PARENT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -38,6 +39,77 @@ except Exception as e:
 
 app.logger.info(f"Edge={EDGE_OK} Scraper={SCRAPER_OK} YerliEngine={YERLI_ENGINE_OK}")
 
+
+# PATCH_M1_STABILIZE_v1: lightweight runtime state for watchdog/deep health.
+SCHEDULER = None
+PIPELINE_STATE = {
+    "last_started_at": None,
+    "last_success_at": None,
+    "last_error_at": None,
+    "last_error": None,
+    "last_duration_sec": None,
+    "last_telegram_ok": None,
+}
+
+
+def _now_utc():
+    return datetime.now(timezone.utc)
+
+
+def _iso(dt):
+    if not dt:
+        return None
+    if isinstance(dt, datetime):
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).isoformat()
+    return str(dt)
+
+
+def _coerce_datetime(value):
+    """Accept datetime or ISO string; return aware UTC datetime or None."""
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except Exception:
+            return None
+    else:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _send_scheduler_alert_to_telegram(title, detail=None):
+    """Best-effort Telegram alert that does not depend on yerli_engine formatting."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        app.logger.warning("Scheduler alert skipped: Telegram credentials missing")
+        return False
+    text = f"🚨 <b>TJK Bot Alert</b>\n{escape(str(title))}"
+    if detail:
+        safe_detail = escape(str(detail))[:1500]
+        text += f"\n\n<code>{safe_detail}</code>"
+    try:
+        import requests
+        resp = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": text[:4096], "parse_mode": "HTML"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            app.logger.warning(f"Scheduler alert HTTP {resp.status_code}: {resp.text[:200]}")
+            return False
+        return True
+    except Exception as alert_err:
+        app.logger.error(f"Scheduler alert failed: {alert_err}")
+        return False
+
 # ═══════════════════════════════════════════════════════════════
 # BACKGROUND SCHEDULER — günlük pipeline + retro (FIX: eskiden Dockerfile'da
 # main.py --schedule çalışıyordu ama railway.toml dashboard'u override ediyordu,
@@ -51,22 +123,55 @@ try:
     def _scheduled_pipeline():
         """PATCH_V7_AUTOSCHED_v1. V7 pipeline + Telegram send.
         Replaces legacy main.run_daily — which used a different (broken) save path."""
+        started = _now_utc()
+        PIPELINE_STATE.update({
+            "last_started_at": _iso(started),
+            "last_error": None,
+            "last_telegram_ok": None,
+        })
         app.logger.info("⏰ V7 scheduled pipeline başlatılıyor...")
         try:
             from yerli_engine import run_yerli_pipeline, send_telegram_simple
             result = run_yerli_pipeline()
             with _yerli_lock:
                 _yerli_cache['data'] = result
-                _yerli_cache['ts'] = datetime.now(timezone.utc).isoformat()
+                # Keep this as datetime. Older deploys wrote ISO string; endpoint is now
+                # backward-compatible, but new writes should be type-stable.
+                _yerli_cache['ts'] = _now_utc()
+            telegram_ok = False
             try:
                 send_telegram_simple(result)
+                telegram_ok = True
                 app.logger.info("⏰ V7 kupon Telegram'a gönderildi ✓")
             except Exception as _e_tg:
                 app.logger.error(f"⏰ V7 Telegram send failed: {_e_tg}")
+                _send_scheduler_alert_to_telegram(
+                    "Kupon üretildi ama Telegram gönderimi başarısız.",
+                    repr(_e_tg),
+                )
+            finished = _now_utc()
+            PIPELINE_STATE.update({
+                "last_success_at": _iso(finished),
+                "last_duration_sec": round((finished - started).total_seconds(), 2),
+                "last_telegram_ok": telegram_ok,
+            })
             app.logger.info("⏰ V7 scheduled pipeline tamamlandı ✓")
         except Exception as e:
+            finished = _now_utc()
+            PIPELINE_STATE.update({
+                "last_error_at": _iso(finished),
+                "last_error": repr(e),
+                "last_duration_sec": round((finished - started).total_seconds(), 2),
+                "last_telegram_ok": False,
+            })
             app.logger.error(f"⏰ V7 scheduled pipeline hatası: {e}")
-            import traceback; traceback.print_exc()
+            import traceback
+            tb = traceback.format_exc()
+            app.logger.error(tb)
+            _send_scheduler_alert_to_telegram(
+                "11:00 scheduled pipeline çöktü. Manuel kontrol gerekli.",
+                tb,
+            )
 
     def _scheduled_retro():
         """Legacy retro — left in place but no longer the primary recap."""
@@ -111,6 +216,7 @@ try:
 
     ist_tz = pytz.timezone('Europe/Istanbul')
     scheduler = BackgroundScheduler(timezone=ist_tz)
+    SCHEDULER = scheduler
     scheduler.add_job(_scheduled_pipeline, 'cron', hour=RUN_HOUR, minute=RUN_MINUTE,
                       id='daily_pipeline', replace_existing=True)
     # PATCH_FAZ1_STABILITY_v1: legacy retro disabled — V7 recap @ 22:00 replaces it.
@@ -163,7 +269,61 @@ def index():
 def health():
     return jsonify({"status":"ok","v":"5.1","scraper":SCRAPER_OK,"edge":EDGE_OK,
                     "yerli_engine":YERLI_ENGINE_OK,"scheduler":SCHEDULER_OK,
-                    "ts":datetime.now(timezone.utc).isoformat()})
+                    "ts":_now_utc().isoformat()})
+
+@app.route("/api/health/deep")
+def health_deep():
+    """Operational watchdog: scheduler, cache age, last run and job status."""
+    now = _now_utc()
+    cache_ts = _coerce_datetime(_yerli_cache.get('ts'))
+    cache_age_sec = round((now - cache_ts).total_seconds(), 2) if cache_ts else None
+    jobs = []
+    scheduler_running = False
+    try:
+        scheduler_running = bool(SCHEDULER and getattr(SCHEDULER, "running", False))
+        if SCHEDULER:
+            for job in SCHEDULER.get_jobs():
+                jobs.append({
+                    "id": job.id,
+                    "next_run_time": _iso(job.next_run_time),
+                    "trigger": str(job.trigger),
+                })
+    except Exception as e:
+        jobs.append({"error": repr(e)})
+
+    checks = {
+        "scraper": SCRAPER_OK,
+        "edge": EDGE_OK,
+        "yerli_engine": YERLI_ENGINE_OK,
+        "scheduler": SCHEDULER_OK and scheduler_running,
+        "cache_valid": bool(_yerli_cache.get('data')) and cache_ts is not None,
+        "last_pipeline_success": PIPELINE_STATE.get("last_success_at") is not None,
+        "last_pipeline_error": PIPELINE_STATE.get("last_error"),
+    }
+    status = "ok"
+    if not checks["scraper"] or not checks["yerli_engine"] or not checks["scheduler"]:
+        status = "degraded"
+    if checks["last_pipeline_error"] and not checks["last_pipeline_success"]:
+        status = "error"
+
+    return jsonify({
+        "status": status,
+        "ts": now.isoformat(),
+        "checks": checks,
+        "pipeline": PIPELINE_STATE,
+        "cache": {
+            "has_data": bool(_yerli_cache.get('data')),
+            "ts": _iso(cache_ts),
+            "age_sec": cache_age_sec,
+            "ttl_sec": _yerli_cache.get('ttl'),
+            "raw_ts_type": type(_yerli_cache.get('ts')).__name__,
+        },
+        "scheduler": {
+            "ok": SCHEDULER_OK,
+            "running": scheduler_running,
+            "jobs": jobs,
+        },
+    })
 
 @app.route("/api/races")
 def get_races():
@@ -202,12 +362,15 @@ def get_yerli_kupon():
         return jsonify({"ts":datetime.now(timezone.utc).isoformat(),
                         "source":"engine_off","hippodromes":[],"model_ok":False,
                         "error":"Yerli engine yuklenemedi"})
-    now = datetime.now(timezone.utc)
+    now = _now_utc()
     with _yerli_lock:
-        if (_yerli_cache['data'] and _yerli_cache['ts'] and
-                (now - _yerli_cache['ts']).total_seconds() < _yerli_cache['ttl']):
+        cache_ts = _coerce_datetime(_yerli_cache.get('ts'))
+        if (_yerli_cache.get('data') and cache_ts and
+                (now - cache_ts).total_seconds() < _yerli_cache['ttl']):
             app.logger.info("Yerli kupon: cache hit")
             return jsonify(_yerli_cache['data'])
+        elif _yerli_cache.get('data') and _yerli_cache.get('ts') and not cache_ts:
+            app.logger.warning(f"Yerli kupon: invalid cache ts ignored: {_yerli_cache.get('ts')!r}")
     try:
         app.logger.info("Yerli kupon: running pipeline...")
         result = run_yerli_pipeline()
@@ -228,11 +391,19 @@ def get_yerli_kupon():
         with _yerli_lock:
             _yerli_cache['data'] = result
             _yerli_cache['ts'] = now
+        PIPELINE_STATE.update({
+            "last_success_at": _iso(_now_utc()),
+            "last_error": None,
+        })
         return jsonify(result)
     except Exception as e:
+        PIPELINE_STATE.update({
+            "last_error_at": _iso(_now_utc()),
+            "last_error": repr(e),
+        })
         app.logger.error(f"Yerli kupon: {e}")
         app.logger.exception("Yerli kupon pipeline error")
-        return jsonify({"ts":datetime.now(timezone.utc).isoformat(),
+        return jsonify({"ts":_now_utc().isoformat(),
                         "source":"error","error":str(e),"hippodromes":[],"model_ok":False})
 
 @app.route("/api/yerli_kupon/refresh")

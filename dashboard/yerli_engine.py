@@ -4553,9 +4553,31 @@ def _get_telegram_messages(results, date_str):
 
         vh = r.get('value_horses', [])
         if vh:
-            lines.append("")
-            parts = [f"{escape(str(v['name']))} +{v['edge']:.0f}%" for v in vh[:2]]
-            lines.append("\U0001f525 " + " \u00b7 ".join(parts))
+            # PATCH_M1_STABILIZE_v1: value_horses can contain edge=None when AGF
+            # is missing/repaired. Never let Telegram formatting crash the daily job.
+            parts = []
+            for v in vh:
+                if len(parts) >= 2:
+                    break
+                if not isinstance(v, dict):
+                    continue
+                name = escape(str(v.get('name', '?')))
+                edge = v.get('edge')
+                try:
+                    edge = float(edge)
+                except (TypeError, ValueError):
+                    edge = None
+                if edge is None or not np.isfinite(edge):
+                    logger.warning(
+                        f"[telegram] value_horse edge missing: "
+                        f"{r.get('hippodrome','?')}#{r.get('altili_no','?')} {name}"
+                    )
+                    continue
+                sign = "+" if edge >= 0 else ""
+                parts.append(f"{name} {sign}{edge:.0f}%")
+            if parts:
+                lines.append("")
+                lines.append("\U0001f525 " + " \u00b7 ".join(parts))
 
         cons = r.get('consensus')
         if cons:
