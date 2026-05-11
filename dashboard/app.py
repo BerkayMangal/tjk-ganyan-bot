@@ -190,6 +190,29 @@ try:
                     "fatal": repr(_e_persist),
                 }
 
+            # PATCH_M2_DB_v1: also persist to Supabase (best-effort, parallel
+            # to JSONL).  If Postgres is unavailable, both writers return
+            # False; we capture the DB-side counters separately for status
+            # visibility but pipeline continues regardless.
+            db_kupon_counters = {"attempted": 0, "written": 0,
+                                 "skipped": 0, "errors": 0}
+            try:
+                from measurement_db import (
+                    record_kupons_from_pipeline_result as db_record_kupons
+                )
+                db_kupon_counters = db_record_kupons(
+                    result, run_id=run_id, trigger="scheduled",
+                    telegram_sent=telegram_ok,
+                )
+            except Exception as _e_db:
+                app.logger.warning(
+                    f"⏰ M2 DB kupon persistence failed (best-effort): {_e_db}"
+                )
+                db_kupon_counters = {
+                    "attempted": 0, "written": 0, "skipped": 0, "errors": 1,
+                    "fatal": repr(_e_db),
+                }
+
             # Collect summary fields for last_run_log
             try:
                 hippos = (result or {}).get("hippodromes", []) or []
@@ -233,6 +256,25 @@ try:
             except Exception as _e_lr:
                 app.logger.warning(f"⏰ M2 last_run_log (success) failed: {_e_lr}")
 
+            # PATCH_M2_DB_v1: also write pipeline_run to Supabase
+            try:
+                from measurement_db import record_pipeline_run as db_record_run
+                db_record_run(
+                    run_id=run_id,
+                    started_at=_iso(started),
+                    finished_at=_iso(finished),
+                    status="success",
+                    trigger="scheduled",
+                    telegram_sent=telegram_ok,
+                    kupon_count=db_kupon_counters.get("written", 0),
+                    hippodromes_processed=hippodromes_processed,
+                    warnings=warnings_collected,
+                    errors=[],
+                    error_traceback=None,
+                )
+            except Exception as _e_dbrun:
+                app.logger.warning(f"⏰ M2 DB pipeline_run (success) failed: {_e_dbrun}")
+
         except Exception as e:
             finished = _now_utc()
             import traceback
@@ -269,6 +311,25 @@ try:
                 )
             except Exception as _e_lr:
                 app.logger.warning(f"⏰ M2 last_run_log (error) failed: {_e_lr}")
+
+            # PATCH_M2_DB_v1: also write pipeline_run to Supabase (error path)
+            try:
+                from measurement_db import record_pipeline_run as db_record_run
+                db_record_run(
+                    run_id=run_id,
+                    started_at=_iso(started),
+                    finished_at=_iso(finished),
+                    status="error",
+                    trigger="scheduled",
+                    telegram_sent=False,
+                    kupon_count=0,
+                    hippodromes_processed=hippodromes_processed,
+                    warnings=warnings_collected,
+                    errors=[repr(e)],
+                    error_traceback=tb,
+                )
+            except Exception as _e_dbrun:
+                app.logger.warning(f"⏰ M2 DB pipeline_run (error) failed: {_e_dbrun}")
 
     def _scheduled_retro():
         """Legacy retro — left in place but no longer the primary recap."""
@@ -423,51 +484,82 @@ def health_deep():
     })
 
 
-# PATCH_M2_FOUNDATION_v1 — measurement infrastructure endpoints
+# PATCH_M2_FOUNDATION_v1 + PATCH_M2_DB_v1 — measurement infrastructure endpoints
 @app.route("/api/measure/status")
 def measure_status():
     """Canonical measurement health endpoint.
 
-    Returns the resolved TJK_DATA_DIR, whether it's writable, env detection,
-    git_sha, per-file stats (lines, size, mtime), and the last_run summary.
-    Operators should poll this after every deploy and once a day to verify
-    measurement_writable=True before assuming kuponlar are being persisted.
+    Reports BOTH backend statuses:
+      - JSONL filesystem backend (legacy, TJK_DATA_DIR)
+      - Supabase Postgres backend (preferred, TJK_MEASURE_DB_URL)
+
+    Operators should look at `db.db_writable` first.  The JSONL status is
+    retained for back-compat; once Supabase has 14+ days of data we can
+    delete the JSONL writer entirely.
     """
+    payload = {
+        "schema_version_meta": "m2.combined",
+        "ts": _now_utc().isoformat(),
+    }
+    # JSONL backend (legacy)
     try:
-        from measurement import build_status_payload
-        return jsonify(build_status_payload())
+        from measurement import build_status_payload as fs_status
+        payload["jsonl"] = fs_status()
     except Exception as e:
-        app.logger.exception("measure_status failed")
-        return jsonify({
-            "status": "error",
-            "error": repr(e),
-            "hint": "measurement module import failed; check deploy logs",
-        }), 500
+        payload["jsonl"] = {"error": repr(e)}
+
+    # Postgres backend (preferred)
+    try:
+        from measurement_db import build_status_payload as db_status
+        payload["db"] = db_status()
+    except Exception as e:
+        payload["db"] = {"error": repr(e)}
+
+    # Convenience top-level flags
+    payload["any_writable"] = bool(
+        (payload.get("jsonl") or {}).get("measurement_writable")
+        or (payload.get("db") or {}).get("db_writable")
+    )
+    return jsonify(payload)
 
 
 @app.route("/api/diag/last_run_log")
 def diag_last_run_log():
     """Compact summary of the last scheduled (or manual) pipeline invocation.
 
-    NOT the full Railway log — by design — just the JSON summary written by
-    `_scheduled_pipeline`.  Includes status (success/error), run_id, started/
-    finished timestamps, duration, telegram_sent, kupon_count, hippodromes
-    processed, warnings, errors, and a Python traceback if the run crashed.
+    Prefers the Postgres-backed pipeline_runs table (PATCH_M2_DB_v1) when
+    available.  Falls back to the JSONL last_run.json on disk (legacy).
     """
+    payload = {"source": None}
+    # Try DB first
+    try:
+        from measurement_db import read_last_pipeline_run
+        db_row = read_last_pipeline_run()
+        if db_row:
+            payload["source"] = "supabase_postgres"
+            payload.update(db_row)
+            return jsonify(payload)
+    except Exception as e:
+        payload["db_error"] = repr(e)
+
+    # Fallback to JSONL
     try:
         from measurement import read_last_run_log
-        payload = read_last_run_log()
-        if payload is None:
-            return jsonify({
-                "status": "no_run_recorded",
-                "hint": "no last_run.json yet — pipeline hasn't run since "
-                        "this measurement layer was deployed, or "
-                        "TJK_DATA_DIR is not writable",
-            })
-        return jsonify(payload)
+        fs_row = read_last_run_log()
+        if fs_row:
+            payload["source"] = "jsonl_disk"
+            payload.update(fs_row)
+            return jsonify(payload)
     except Exception as e:
-        app.logger.exception("last_run_log failed")
-        return jsonify({"status": "error", "error": repr(e)}), 500
+        payload["jsonl_error"] = repr(e)
+
+    return jsonify({
+        "source": None,
+        "status": "no_run_recorded",
+        "hint": "no pipeline run has been persisted yet — either "
+                "TJK_MEASURE_DB_URL is unset/invalid AND no Volume is mounted, "
+                "or no scheduled pipeline has run since deploy",
+    })
 
 
 @app.route("/api/races")
