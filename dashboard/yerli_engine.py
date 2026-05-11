@@ -2139,14 +2139,32 @@ def _format_v7_for_telegram(base_msg, all_results):
 
 
 def _save_live_test_snapshot(result_dict):
-    """Append today's canonical kupon to data/live_tests/YYYY-MM-DD.json.
-    Idempotent; never raises (fire-and-forget)."""
+    """Append today's canonical kupon to <data_root>/live_tests/YYYY-MM-DD.json.
+    Idempotent; never raises (fire-and-forget).
+
+    PATCH_M2_FOUNDATION_v1: data root now honors TJK_DATA_DIR / Railway volume.
+    Behavior unchanged except for the resolved path.  Snapshot schema, filename
+    pattern, and recap consumer code remain identical.
+    """
     try:
         import json
-        base = os.path.join(
-            os.path.abspath(os.path.join(os.path.dirname(__file__), '..')),
-            'data', 'live_tests'
-        )
+        # PATCH_M2_FOUNDATION_v1: prefer measurement resolver (TJK_DATA_DIR →
+        # RAILWAY_VOLUME_MOUNT_PATH → ./data).  Fall back to the legacy
+        # <repo>/data path if the resolver is unavailable or unwritable, so
+        # we never regress relative to the pre-M2 behavior.
+        base = None
+        try:
+            from measurement import resolve_data_dir
+            cfg = resolve_data_dir()
+            if cfg.get("writable"):
+                base = os.path.join(cfg["path"], "live_tests")
+        except Exception:
+            base = None
+        if not base:
+            base = os.path.join(
+                os.path.abspath(os.path.join(os.path.dirname(__file__), '..')),
+                'data', 'live_tests'
+            )
         os.makedirs(base, exist_ok=True)
         date_str = date.today().strftime('%Y-%m-%d')
         path = os.path.join(base, f'{date_str}.json')
@@ -5120,8 +5138,26 @@ def _v7_strict_single_audit(result, mode="advisory"):
 # ============================================================================
 
 def _data_dir_v7(name):
-    """PATCH_V7_PHASE2_RECAP_v1. Resolve <repo>/data/<n> and ensure it exists."""
-    base = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", name))
+    """PATCH_V7_PHASE2_RECAP_v1 (+ PATCH_M2_FOUNDATION_v1).
+
+    Resolve <data_root>/<name> and ensure it exists.  Behavior unchanged
+    relative to V7 recap consumers — only the data root changes when
+    TJK_DATA_DIR / RAILWAY_VOLUME_MOUNT_PATH is set.  When neither is
+    configured (local dev or unmounted volume), we fall back to the
+    historical <repo>/data path so recap continues to work.
+    """
+    base = None
+    try:
+        from measurement import resolve_data_dir
+        cfg = resolve_data_dir()
+        if cfg.get("writable"):
+            base = os.path.join(cfg["path"], name)
+    except Exception:
+        base = None
+    if not base:
+        base = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "data", name)
+        )
     try:
         os.makedirs(base, exist_ok=True)
     except Exception:

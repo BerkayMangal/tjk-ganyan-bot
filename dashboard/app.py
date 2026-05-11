@@ -121,15 +121,36 @@ try:
     import pytz
 
     def _scheduled_pipeline():
-        """PATCH_V7_AUTOSCHED_v1. V7 pipeline + Telegram send.
-        Replaces legacy main.run_daily — which used a different (broken) save path."""
+        """PATCH_V7_AUTOSCHED_v1 + PATCH_M2_FOUNDATION_v1.
+
+        V7 pipeline + Telegram send.  Measurement layer is best-effort: if
+        the kupon writer or last_run_log writer fails, this function still
+        completes successfully.  All measurement failures surface in
+        /api/measure/status and /api/diag/last_run_log.
+        """
         started = _now_utc()
+        # PATCH_M2_FOUNDATION_v1: generate per-run identifier up-front so
+        # both success and error paths can attach it to last_run_log.
+        try:
+            from measurement import make_run_id
+            run_id = make_run_id(trigger="scheduled")
+        except Exception:
+            # Measurement module not importable — degrade silently.
+            run_id = f"run_unknown_{int(started.timestamp())}"
+
         PIPELINE_STATE.update({
             "last_started_at": _iso(started),
+            "last_run_id": run_id,
             "last_error": None,
             "last_telegram_ok": None,
         })
-        app.logger.info("⏰ V7 scheduled pipeline başlatılıyor...")
+        app.logger.info(f"⏰ V7 scheduled pipeline başlatılıyor... run_id={run_id}")
+        # Track these so the error path can also write a meaningful last_run_log
+        hippodromes_processed: list = []
+        warnings_collected: list = []
+        kupon_persist_counters = {"attempted": 0, "written": 0, "skipped": 0, "errors": 0}
+        telegram_alert_sent = False
+
         try:
             from yerli_engine import run_yerli_pipeline, send_telegram_simple
             result = run_yerli_pipeline()
@@ -138,6 +159,8 @@ try:
                 # Keep this as datetime. Older deploys wrote ISO string; endpoint is now
                 # backward-compatible, but new writes should be type-stable.
                 _yerli_cache['ts'] = _now_utc()
+
+            # Telegram send
             telegram_ok = False
             try:
                 send_telegram_simple(result)
@@ -149,15 +172,71 @@ try:
                     "Kupon üretildi ama Telegram gönderimi başarısız.",
                     repr(_e_tg),
                 )
+                telegram_alert_sent = True
+
+            # PATCH_M2_FOUNDATION_v1: persist kuponlar (best-effort).
+            try:
+                from measurement import record_kupons_from_pipeline_result
+                kupon_persist_counters = record_kupons_from_pipeline_result(
+                    result, run_id=run_id, trigger="scheduled",
+                    telegram_sent=telegram_ok,
+                )
+            except Exception as _e_persist:
+                app.logger.warning(
+                    f"⏰ M2 kupon persistence failed (best-effort): {_e_persist}"
+                )
+                kupon_persist_counters = {
+                    "attempted": 0, "written": 0, "skipped": 0, "errors": 1,
+                    "fatal": repr(_e_persist),
+                }
+
+            # Collect summary fields for last_run_log
+            try:
+                hippos = (result or {}).get("hippodromes", []) or []
+                hippodromes_processed = sorted({
+                    str(h.get("hippodrome") or "?")
+                    for h in hippos if isinstance(h, dict)
+                })
+                # Engine-emitted warnings live in data_quality.notes (per pipeline)
+                dq = (result or {}).get("data_quality") or {}
+                warnings_collected = list(dq.get("notes") or [])
+            except Exception:
+                pass
+
             finished = _now_utc()
             PIPELINE_STATE.update({
                 "last_success_at": _iso(finished),
                 "last_duration_sec": round((finished - started).total_seconds(), 2),
                 "last_telegram_ok": telegram_ok,
             })
-            app.logger.info("⏰ V7 scheduled pipeline tamamlandı ✓")
+            app.logger.info(
+                f"⏰ V7 scheduled pipeline tamamlandı ✓ "
+                f"kupon_persist={kupon_persist_counters}"
+            )
+
+            # PATCH_M2_FOUNDATION_v1: write last_run_log (success path)
+            try:
+                from measurement import write_last_run_log
+                write_last_run_log(
+                    run_id=run_id,
+                    started_at=_iso(started),
+                    finished_at=_iso(finished),
+                    status="success",
+                    trigger="scheduled",
+                    telegram_sent=telegram_ok,
+                    kupon_count=kupon_persist_counters.get("written", 0),
+                    hippodromes_processed=hippodromes_processed,
+                    warnings=warnings_collected,
+                    errors=[],
+                    error_traceback=None,
+                )
+            except Exception as _e_lr:
+                app.logger.warning(f"⏰ M2 last_run_log (success) failed: {_e_lr}")
+
         except Exception as e:
             finished = _now_utc()
+            import traceback
+            tb = traceback.format_exc()
             PIPELINE_STATE.update({
                 "last_error_at": _iso(finished),
                 "last_error": repr(e),
@@ -165,13 +244,31 @@ try:
                 "last_telegram_ok": False,
             })
             app.logger.error(f"⏰ V7 scheduled pipeline hatası: {e}")
-            import traceback
-            tb = traceback.format_exc()
             app.logger.error(tb)
             _send_scheduler_alert_to_telegram(
                 "11:00 scheduled pipeline çöktü. Manuel kontrol gerekli.",
                 tb,
             )
+            telegram_alert_sent = True
+
+            # PATCH_M2_FOUNDATION_v1: write last_run_log (error path)
+            try:
+                from measurement import write_last_run_log
+                write_last_run_log(
+                    run_id=run_id,
+                    started_at=_iso(started),
+                    finished_at=_iso(finished),
+                    status="error",
+                    trigger="scheduled",
+                    telegram_sent=False,
+                    kupon_count=0,
+                    hippodromes_processed=hippodromes_processed,
+                    warnings=warnings_collected,
+                    errors=[repr(e)],
+                    error_traceback=tb,
+                )
+            except Exception as _e_lr:
+                app.logger.warning(f"⏰ M2 last_run_log (error) failed: {_e_lr}")
 
     def _scheduled_retro():
         """Legacy retro — left in place but no longer the primary recap."""
@@ -324,6 +421,54 @@ def health_deep():
             "jobs": jobs,
         },
     })
+
+
+# PATCH_M2_FOUNDATION_v1 — measurement infrastructure endpoints
+@app.route("/api/measure/status")
+def measure_status():
+    """Canonical measurement health endpoint.
+
+    Returns the resolved TJK_DATA_DIR, whether it's writable, env detection,
+    git_sha, per-file stats (lines, size, mtime), and the last_run summary.
+    Operators should poll this after every deploy and once a day to verify
+    measurement_writable=True before assuming kuponlar are being persisted.
+    """
+    try:
+        from measurement import build_status_payload
+        return jsonify(build_status_payload())
+    except Exception as e:
+        app.logger.exception("measure_status failed")
+        return jsonify({
+            "status": "error",
+            "error": repr(e),
+            "hint": "measurement module import failed; check deploy logs",
+        }), 500
+
+
+@app.route("/api/diag/last_run_log")
+def diag_last_run_log():
+    """Compact summary of the last scheduled (or manual) pipeline invocation.
+
+    NOT the full Railway log — by design — just the JSON summary written by
+    `_scheduled_pipeline`.  Includes status (success/error), run_id, started/
+    finished timestamps, duration, telegram_sent, kupon_count, hippodromes
+    processed, warnings, errors, and a Python traceback if the run crashed.
+    """
+    try:
+        from measurement import read_last_run_log
+        payload = read_last_run_log()
+        if payload is None:
+            return jsonify({
+                "status": "no_run_recorded",
+                "hint": "no last_run.json yet — pipeline hasn't run since "
+                        "this measurement layer was deployed, or "
+                        "TJK_DATA_DIR is not writable",
+            })
+        return jsonify(payload)
+    except Exception as e:
+        app.logger.exception("last_run_log failed")
+        return jsonify({"status": "error", "error": repr(e)}), 500
+
 
 @app.route("/api/races")
 def get_races():
