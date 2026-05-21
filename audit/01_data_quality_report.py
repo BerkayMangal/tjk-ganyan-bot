@@ -200,6 +200,11 @@ def render_feature_section(rep: FeatureFillReport) -> str:
     out += "\n"
 
     out += _h(3, "3.1 Kategori map")
+    out += (
+        "_Legend: **✅ = no default** (eksikse NaN/drop, görünür arıza). "
+        "**⚠ = default masks missingness** (eksikse sessiz bir sabitle doldurulur — "
+        "model bunu gerçek sinyal sanır)._\n\n"
+    )
     out += "| Grup | Sayı | Tam-dolu | Default not |\n|---|---:|:---:|---|\n"
     for g in FEATURE_GROUPS:
         mark = "✅" if g.guaranteed_filled else "⚠"
@@ -308,6 +313,13 @@ def render_gaps_section(
         "'fallback', 'agf_only' gibi tag YOK. Phase 1: `v7_meta.model_path` alanı."
     )
 
+    gaps.append(
+        "**`v7_meta.breed` kupon kaydında YOK.** Ensemble'ın hangi breed modelini "
+        "(arab / english / default) kullandığı görünmüyor — breed-split'in çalışıp "
+        "çalışmadığı kayıtlardan doğrulanamıyor. Phase 1: `v7_meta.breed` alanı "
+        "(agf_tier / model_path / feature_fill ile aynı granüler-meta kategorisi)."
+    )
+
     if not feat.runtime_fill_data_available:
         gaps.append(
             "**Per-feature doluluk yok.** Pipeline 96-D matrix doluluğunu yazmıyor; "
@@ -330,6 +342,15 @@ def render_gaps_section(
         "**AGF upstream tek nokta.** Hem pipeline-level 3 tier hem scraper-level 3 "
         "retry aynı `agftablosu.com`'a gidiyor. agftablosu.com çökerse 'AGF down → "
         "predictions skipped' mesajı yok. Phase 1+: outage-aware status writer."
+    )
+
+    gaps.append(
+        "**Duplicate feature `f_X_weight_dist` ≡ `f_X_weight_distance`.** "
+        "`features.py:357-360` ikisini de aynı değere set ediyor (yorum: "
+        "\"Backward compat — model 96 kolon bekliyor\"). Typo değil, eski "
+        "model'in eğitim kolonlarını koruma amaçlı dead-weight. "
+        "**Runtime'da dokunma** — biri silinirse model crash eder. "
+        "Phase 1+ retrain'de 95-D'ye düşürülmeli."
     )
 
     for i, g in enumerate(gaps, 1):

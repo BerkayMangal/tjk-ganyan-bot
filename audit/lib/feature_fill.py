@@ -24,8 +24,13 @@ from typing import Any
 
 # ─────────── static category map (from model/features.py walk) ───────────
 # Group: list of feature names that belong to this group.
-# guaranteed_filled=True → no NaN/0 fallback observed in features.py
-# guaranteed_filled=False → has fillna/`or 0`/try-except path; default value noted
+#
+# guaranteed_filled=True  → no default fallback; if data is missing the row
+#                           drops out / NaN propagates (visible failure)
+# guaranteed_filled=False → has fillna / `or 0` / default constant path;
+#                           missingness is silently masked by a default value
+#                           (invisible failure — model gets garbage as if it
+#                           were real signal)
 
 @dataclass(frozen=True)
 class FeatureGroup:
@@ -43,8 +48,8 @@ FEATURE_GROUPS: tuple[FeatureGroup, ...] = (
             "f_agf_fav_margin", "f_race_odds_cv", "f_odds_entropy",
             "f_avg_winner_odds", "f_fav1v2_gap",
         ),
-        guaranteed_filled=True,
-        default_value_note="agf_pct missing → 0; downstream features absorb 0 cleanly",
+        guaranteed_filled=False,
+        default_value_note="agf_pct missing → 0; downstream features absorb 0 cleanly (masked)",
     ),
     FeatureGroup(
         name="race_level",
@@ -64,8 +69,8 @@ FEATURE_GROUPS: tuple[FeatureGroup, ...] = (
             "f_weight", "f_extra_weight", "f_gate", "f_handicap",
             "f_age", "f_gender_mare", "f_gender_gelding", "f_gender_stallion",
         ),
-        guaranteed_filled=True,
-        default_value_note="weight default=57, age default=4, gender one-hot",
+        guaranteed_filled=False,
+        default_value_note="weight default=57, age default=4 mask missingness; gender one-hot collapses unknown to (0,0,0)",
     ),
     FeatureGroup(
         name="form",
@@ -130,7 +135,11 @@ FEATURE_GROUPS: tuple[FeatureGroup, ...] = (
             "f_X_field_strength_agf", "f_X_maiden_field",
         ),
         guaranteed_filled=True,
-        default_value_note="parent feature product; if parent=0 → interaction=0",
+        default_value_note=(
+            "parent feature product; computational guarantee only — quality is "
+            "INHERITED from parents. If form is at default, every f_X_form_* "
+            "interaction is degraded; same for agf/jockey/pedigree/pace parents."
+        ),
     ),
 )
 
