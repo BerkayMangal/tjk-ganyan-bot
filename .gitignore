@@ -8,6 +8,9 @@ __pycache__/
 data/
 *.csv
 
+# Audit reports — generated locally, not tracked
+audit/reports/*.md
+
 # IDE
 .vscode/
 .idea/

@@ -23,11 +23,27 @@ README henüz `main.py --schedule`'dan bahsediyor → yanıltıcı, ileride gün
 Yeni dosya 500 satırı geçiyorsa modüle bölünmeli. Geçmeden önce sor.
 
 ## Veri kaynakları (hassasiyet sırasıyla)
-1. AGF (agftablosu.com) — sequential 6-race matching, 3-tier fallback chain
-2. TJK HTML (programme) — form/jokey/kilo/pedigree
+1. AGF (agftablosu.com) — sequential 6-race matching
+2. TJK HTML (programme) — form/jokey/kilo/pedigree, HTML → CSV CDN fallback
 3. TJK PDF (legacy fallback)
 4. HorseTurk (expert consensus, opsiyonel)
 5. Taydex (historical, training-time only — runtime'da yok)
+
+## AGF "3-tier fallback" — iddia vs gerçek
+README ve eski yorumlar "3-tier fallback chain" der. Doğru kelime DEĞİL. Aslında:
+
+**Pipeline-level (yerli_engine.py:2371-2398)** — IMPORT fallback, data outage'a karşı DEĞİL:
+- Tier 1: `from scraper.agf_scraper import ...`
+- Tier 2: `from agf_scraper_local import ...` (dashboard/ kopyası)
+- Tier 3: `_fetch_domestic_tracks()` → `fetch_domestic_races()` (dashboard scraper)
+
+**Scraper-level (agf_scraper.py:61-76)** — tek URL'e retry:
+- `https://www.agftablosu.com/agf-tablosu`
+- 3 attempt, 2s backoff arası, timeout=30s
+
+**Gerçek:** Üç pipeline tier'ı da aynı upstream'e (`agftablosu.com`) HTTP isteği atıyor.
+agftablosu.com çökerse hepsi çöker. Fallback sadece **kod hatalarına / module-not-found'a** koruma.
+"AGF down → predictions skipped" mesajı ÜRETİLMİYOR şu an. Phase 1+ için not.
 
 ## Çalıştırma
 - Lokal smoke test:    `python smoke_test_m2.py`
