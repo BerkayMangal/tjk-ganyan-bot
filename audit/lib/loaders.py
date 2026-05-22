@@ -25,6 +25,7 @@ SOURCE_DB = "supabase"
 SOURCE_JSONL = "jsonl"
 SOURCE_PREDICTIONS = "predictions_dir"
 SOURCE_CUM_STATS = "cumulative_stats"
+SOURCE_LIVE_TESTS = "live_tests"
 SOURCE_NONE = "no_data"
 
 
@@ -42,15 +43,28 @@ class SourceSummary:
 
 @dataclass
 class LoadedData:
-    """All raw records the rest of the audit pipeline operates on."""
+    """All raw records the rest of the audit pipeline operates on.
+
+    kupon_source records WHERE `kupons` came from:
+      "kupons"    — real recorded kupons (DB or JSONL writer)
+      "live_test" — fallback: normalized from live_tests/*.json snapshots
+                    (prediction snapshots, NOT recorded kupons — the writer
+                    never ran or produced 0 rows)
+      "none"      — nothing found
+    """
     kupons: list[dict[str, Any]] = field(default_factory=list)
     predictions: list[dict[str, Any]] = field(default_factory=list)
     cumulative_stats: dict[str, Any] | None = None
+    live_test_altilis: list[dict[str, Any]] = field(default_factory=list)
+    kupon_source: str = "none"
     sources: list[SourceSummary] = field(default_factory=list)
 
     @property
     def has_any_data(self) -> bool:
-        return bool(self.kupons or self.predictions or self.cumulative_stats)
+        return bool(
+            self.kupons or self.predictions
+            or self.cumulative_stats or self.live_test_altilis
+        )
 
 
 # ─────────────────────────── path resolution ───────────────────────────
@@ -266,6 +280,116 @@ def load_cumulative_stats(data_root: Path | None) -> tuple[dict | None, SourceSu
     )
 
 
+# ─────────────── live_tests snapshots (prediction snapshots) ───────────────
+# These are written by yerli_engine._save_live_test_snapshot — the canonical
+# per-day pipeline output. NOTE: filename uses date.today(), but the snapshot's
+# inner `date` is target_date, so the two can disagree (a known drift).
+# We key the window filter off the FILENAME date and surface the inner date
+# in the normalized record for cross-checking.
+
+def _normalize_live_test_altili(alt: dict, snapshot: dict) -> dict:
+    """Map one snapshot altili into a kupon-shaped dict.
+
+    The goal is to feed tier_stats / calibration / model-coverage WITHOUT
+    changing those functions: they only read field NAMES, so we provide the
+    same names (model_used, data_quality_status, selections[].model_prob,
+    v7_meta.breed, ...). Breed lives in legs_summary[].breed in the snapshot,
+    so we hoist a combined tag up to v7_meta.breed.
+    """
+    legs = alt.get("legs_summary", []) or []
+    breeds = sorted({l.get("breed") for l in legs if l.get("breed")})
+    breed_tag = "+".join(breeds) if breeds else None
+
+    selections = []
+    for leg in legs:
+        horses = leg.get("all_horses_with_mp", []) or []
+        selections.append({
+            "leg": leg.get("ayak"),
+            "horses": [
+                {
+                    "number": h.get("number"),
+                    "name": h.get("name"),
+                    "model_prob": h.get("model_prob"),
+                    "agf_pct": h.get("agf_pct"),
+                    "value_edge": h.get("value_edge"),
+                }
+                for h in horses
+            ],
+        })
+
+    snap_dq = snapshot.get("data_quality") or {}
+    return {
+        "hippodrome": alt.get("hippodrome"),
+        "altili_no": alt.get("altili_no"),
+        "model_used": alt.get("model_used"),
+        "data_quality_status": alt.get("data_quality_status"),
+        "data_quality": {
+            "level": snap_dq.get("level"),
+            "notes": list(snap_dq.get("notes") or []),
+        },
+        "v7_meta": {"breed": breed_tag, **(alt.get("v7_meta") or {})},
+        "selections": selections,
+        "source": "live_test",
+        "trigger": "live_test_snapshot",
+        "date": snapshot.get("date"),
+    }
+
+
+def load_live_tests(
+    data_root: Path | None,
+    date_from: date,
+    date_to: date,
+) -> tuple[list[dict], SourceSummary]:
+    """Read data/live_tests/<filename-date>.json snapshots in the window."""
+    if data_root is None:
+        return [], SourceSummary(SOURCE_LIVE_TESTS, "missing", detail="no data root")
+
+    ldir = data_root / "live_tests"
+    if not ldir.exists():
+        return [], SourceSummary(SOURCE_LIVE_TESTS, "missing", detail=f"{ldir} not found")
+
+    files = sorted(ldir.glob("*.json"))
+    if not files:
+        return [], SourceSummary(SOURCE_LIVE_TESTS, "empty", detail=f"{ldir} has 0 files")
+
+    altilis: list[dict] = []
+    total_size = 0
+    seen_dates: list[str] = []
+    for fp in files:
+        stem = fp.stem
+        try:
+            d = date.fromisoformat(stem[:10])
+        except ValueError:
+            continue
+        if not (date_from <= d <= date_to):
+            continue
+        total_size += fp.stat().st_size
+        seen_dates.append(stem[:10])
+        try:
+            with fp.open("r", encoding="utf-8") as f:
+                snap = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+        for alt in snap.get("hippodromes", []) or []:
+            if isinstance(alt, dict):
+                altilis.append(_normalize_live_test_altili(alt, snap))
+
+    if not altilis:
+        return [], SourceSummary(
+            SOURCE_LIVE_TESTS, "empty",
+            detail=f"{ldir} has files but none in window",
+        )
+
+    return altilis, SourceSummary(
+        SOURCE_LIVE_TESTS, "ok",
+        record_count=len(altilis),
+        date_min=min(seen_dates),
+        date_max=max(seen_dates),
+        size_bytes=total_size,
+        detail=f"{ldir} ({_human_bytes(total_size)}, {len(seen_dates)} snapshot)",
+    )
+
+
 # ─────────────────────────── orchestrator ───────────────────────────
 
 def load_all(
@@ -276,7 +400,7 @@ def load_all(
     """Resolve all sources for the window [today - window_days + 1, today].
 
     prefer_source:
-      "auto" — DB first, fall back to JSONL
+      "auto" — DB first, fall back to JSONL, then live_tests snapshots
       "db"   — only DB
       "jsonl"— only JSONL
     """
@@ -285,12 +409,14 @@ def load_all(
 
     sources: list[SourceSummary] = []
     kupons: list[dict] = []
+    kupon_source = "none"
 
     if prefer_source in ("auto", "db"):
         db_rows, db_sum = load_db_kupons(date_from, date_to)
         sources.append(db_sum)
         if db_sum.status == "ok":
             kupons = db_rows
+            kupon_source = "kupons"
 
     if not kupons and prefer_source in ("auto", "jsonl"):
         root = resolve_data_root()
@@ -298,6 +424,7 @@ def load_all(
         sources.append(jl_sum)
         if jl_sum.status == "ok":
             kupons = jl_rows
+            kupon_source = "kupons"
 
     root = resolve_data_root()
     preds, pred_sum = load_predictions_dir(root, date_from, date_to)
@@ -306,9 +433,21 @@ def load_all(
     cum, cum_sum = load_cumulative_stats(root)
     sources.append(cum_sum)
 
+    lt_altilis, lt_sum = load_live_tests(root, date_from, date_to)
+    sources.append(lt_sum)
+
+    # Fallback: if no real kupons were recorded but we have live_test
+    # snapshots, use the normalized altilis so the downstream stat functions
+    # (tier_stats / calibration / model coverage) still have something to chew.
+    if not kupons and lt_altilis:
+        kupons = lt_altilis
+        kupon_source = "live_test"
+
     return LoadedData(
         kupons=kupons,
         predictions=preds,
         cumulative_stats=cum,
+        live_test_altilis=lt_altilis,
+        kupon_source=kupon_source,
         sources=sources,
     )

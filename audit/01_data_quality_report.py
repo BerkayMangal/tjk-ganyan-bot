@@ -99,12 +99,23 @@ def render_summary(data: LoadedData) -> str:
 
     n_k = len(data.kupons)
     n_p = len(data.predictions)
+    n_lt = len(data.live_test_altilis)
     cum = "var" if data.cumulative_stats else "yok"
     out += (
-        f"- Kupon kaydı: **{n_k}**\n"
+        f"- Veri kaynağı (kupon istatistiği): **{data.kupon_source}**\n"
+        f"- İşlenen kayıt: **{n_k}**\n"
+        f"- live_tests snapshot altılı: **{n_lt}**\n"
         f"- Predictions dosyası: **{n_p}**\n"
         f"- `cumulative_stats.json`: **{cum}**\n\n"
     )
+    if data.kupon_source == "live_test":
+        out += (
+            "> ⚠ **Gerçek kupon kaydı YOK.** Aşağıdaki istatistikler `live_tests/*.json` "
+            "tahmin snapshot'larından türetildi — bunlar `kupons.jsonl`/Supabase'e yazılmış "
+            "kupon kayıtları DEĞİL. Sebep: measurement writer 0 kupon yazıyor "
+            "(bkz. Section 6, writer key mismatch). Snapshot zengin (model_used, breed, "
+            "model_prob içeriyor) ama gerçek sonuç (`actual_outcome`) taşımıyor.\n\n"
+        )
     return out
 
 
@@ -127,17 +138,20 @@ def render_sources(sources: list[SourceSummary]) -> str:
     return out
 
 
-def render_tier_section(stats: TierStats) -> str:
+def render_tier_section(stats: TierStats, kupon_source: str = "kupons") -> str:
     out = _h(2, "2. AGF/TJK tier kullanımı")
     out += _h(3, "2.1 İddia vs gerçek")
     out += TIER_CLAIM_VS_REALITY + "\n"
 
-    out += _h(3, "2.2 Kayıtlı kupon dağılımı")
+    label = "Kayıtlı kupon dağılımı"
+    if kupon_source == "live_test":
+        label += " (live_test snapshot'tan — gerçek kupon kaydı değil)"
+    out += _h(3, f"2.2 {label}")
     if stats.total_kupons == 0:
         out += "Veri yok — kupon kaydı boş.\n\n"
         return out
 
-    out += f"Toplam kupon: **{stats.total_kupons}**\n\n"
+    out += f"Toplam altılı: **{stats.total_kupons}**\n\n"
 
     def _counter_table(title: str, counter) -> str:
         if not counter:
@@ -304,6 +318,25 @@ def render_gaps_section(
         )
 
     gaps.append(
+        "**🔴 measurement writer 0 kupon yazıyor — key mismatch.** "
+        "`measurement.py:857-859` `kupon_dar` / `kupon_genis` payload key'lerini arıyor, "
+        "ama `run_yerli_pipeline()` result'ı `dar` / `genis` / `v7_coupon` yazıyor. "
+        "Eşleşme yok → `record_kupons_from_pipeline_result` her zaman `attempted=0`. "
+        "Lokal koşumda doğrulandı: model_used=True, kupon dolu, ama `kupons.jsonl` boş. "
+        "Sonuç: JSONL/Supabase ölçüm katmanı **fiilen veri toplamıyor.** "
+        "Phase 1: writer key'lerini pipeline şemasıyla hizala (DAR→`dar`, GENIS→`genis`)."
+    )
+
+    gaps.append(
+        "**Snapshot dosya adı ile içerik tarihi uyuşmuyor.** "
+        "`_save_live_test_snapshot` (yerli_engine.py:2169) dosya adını `date.today()` ile, "
+        "iç `date` alanını `target_date` ile yazıyor. `target_date=2026-05-21` ile koşunca "
+        "snapshot `2026-05-22.json`'a düştü, içi `21.05.2026`. Ayrıca docstring 'Append/"
+        "Idempotent' diyor ama satır 2171 `open(path,'w')` — her koşumda overwrite. "
+        "Phase 1: dosya adını `target_date`'e bağla, docstring'i düzelt."
+    )
+
+    gaps.append(
         "**AGF tier görünürlüğü yok.** Pipeline hangi tier'ın (proper/local/dashboard) "
         "çalıştığını kupon kaydına yazmıyor. Phase 1: `v7_meta.agf_tier` alanı."
     )
@@ -378,7 +411,7 @@ def main(argv: list[str] | None = None) -> int:
         render_header(end_date, args.window, args.source)
         + render_summary(data)
         + render_sources(data.sources)
-        + render_tier_section(tier)
+        + render_tier_section(tier, data.kupon_source)
         + render_feature_section(feat)
         + render_model_section(data.kupons)
         + render_calibration_section(cal)
