@@ -8,8 +8,13 @@ __pycache__/
 data/
 *.csv
 
-# Audit reports — generated locally, not tracked
-audit/reports/*.md
+# Audit — üretilen tarihli raporlar (regenerable, tracked DEĞİL)
+audit/reports/data_quality_*.md
+audit/reports/prod_db_audit_*.md
+audit/reports/validator_shadow_2*.md
+# Shadow log (büyüyen veri)
+audit/reports/*.jsonl
+# Kalıcı belgeler (phase_0_summary, validator_api_notes, scope_out_notes) TRACKED kalır
 
 # IDE
 .vscode/
