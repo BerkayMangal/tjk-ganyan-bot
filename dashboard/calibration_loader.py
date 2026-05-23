@@ -89,3 +89,45 @@ def apply_flb_compensation(raw_value: Optional[float], agf_pct: Optional[float])
         return round(float(fc.compensate(float(raw_value), agf_pct)), 6)
     except Exception:
         return raw_value
+
+
+# ── Phase 5.6 — v9 9-layer + strateji router (SHADOW, env TJK_V8_STRATEGY_ROUTER) ──
+def get_v9_pipeline():
+    """v9 shadow runner döndürür: f(result) → shadow META. simulation importable değilse None.
+
+    PROD'da jockey/form YOK → L5/L6 neutral; dataset yoksa skill/surprise graceful-degrade
+    (FLB+router yine çalışır). Telegram'a GİTMEZ (bu tur UX kapsam dışı). Never-raises.
+    """
+    import os as _os
+    import sys as _sys
+    _repo = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    if _repo not in _sys.path:
+        _sys.path.insert(0, _repo)
+    try:
+        import simulation.v9.pipeline as _p  # noqa: F401
+    except Exception:
+        return None
+
+    def _run(result):
+        try:
+            from simulation.v9.pipeline import build_v9_race, run_pipeline
+            from simulation.v9.carryover_detector import detect_carryover_state
+            race = build_v9_race(result, None)   # enr=None → prod: jockey/form yok
+            cs = detect_carryover_state(result.get("date"))
+            out = run_pipeline(race, cs)
+            k, r = out["kupon"], out["routing"]
+            return {
+                "strategy": r["strategy"], "reason": r["reason"], "budget_band": r["budget_band"],
+                "kupon_preview": {
+                    "legs_selected": k.get("legs_selected"),
+                    "total_cost_proxy": k.get("total_cost"),
+                    "tickets": [{"name": t["name"], "combo": t["combo"], "cost": t["cost"]}
+                                for t in k.get("tickets", [])]},
+                "signals": (k.get("signal_summary") or [])[:6],
+                "carryover": cs,
+                "router_active": _os.getenv("TJK_V8_STRATEGY_ROUTER", "off") == "on",
+                "note": "SHADOW — Telegram'a gitmez; prod'da jockey/form yok→L5/L6 neutral",
+            }
+        except Exception as e:
+            return {"error": repr(e)[:150]}
+    return _run

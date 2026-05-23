@@ -2700,6 +2700,17 @@ def _process_proper_altili(agf_alt, program_data, target_date, model_ok):
     except Exception:
         pass
 
+    # PATCH_5_6_V9_SHADOW (env-flag TJK_V8_STRATEGY_ROUTER default off, META only).
+    # v9 9-layer + router YAN YANA çalışır → result['v9_shadow']. Telegram DOKUNULMAZ (bu tur);
+    # karar-swap gelecek UX turu. ENV off/on her durumda prod davranışı AYNI (sadece meta).
+    try:
+        from calibration_loader import get_v9_pipeline
+        _v9run = get_v9_pipeline()
+        if _v9run:
+            result['v9_shadow'] = _v9run(result)
+    except Exception as _e_v9:
+        result['v9_shadow'] = {"error": repr(_e_v9)[:120]}
+
     # Phase 1E.1: bet_diary prediction-time write (sadece KAYIT — kupon kararını ETKİLEMEZ).
     try:
         from bet_diary_writer import write_predictions_for_altili
