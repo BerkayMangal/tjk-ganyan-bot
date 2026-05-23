@@ -5,7 +5,7 @@ TEKRAR eder. Çözüm — yalnız ORTOGONAL katkılar çarpılır:
   v9_final_score = raw_score(agf) × L4_flb × L5_niche(jokey-skill) × L6_form
   L7_risk = 1.0  (bileşenleri L4/L5/L6'da zaten var → marjinal 0; bkz Phase 5.8 P9)
   L8_bias = 1.0  (FLB=L4, skill=L5 zaten uygulandı → sadece ETİKET)
-  L6 form: yalnız TEMİZ AVOID tarafı (kötü-form/favori→0); value-tarafı P7'de confound → nötr.
+  L6 form: ETİKET-ONLY (Phase 5.6.5 — hard-zero kapatıldı, backtest hit-rate −3). form_mult hep 1.0.
 Eşikler veri-türevli (skill base-rate/bound, P7 segment). model_prob=AGF-fallback (proxy).
 """
 from __future__ import annotations
@@ -84,14 +84,15 @@ def profile_for_horse(horse: dict, leg_surprise=None, layers=None) -> dict:
             niche_tags.append("skill- jokey")
             bias_flags.append("jockey_skill_low")
 
-    # L6 form (yalnız temiz AVOID; value-taraf confound → nötr)
+    # L6 form — ETİKET-ONLY (Phase 5.6.5: hard-zero KAPATILDI). Backtest (Phase 5.6 P8): L6 hard-
+    # AVOID hit-rate'i −3 düşürüyordu; kötü-form favori %19 kazanabiliyor → sıfırlamak garantili
+    # miss. Artık form_mult=1.0 her zaman; sadece UYARI etiketi (Berkay görür, sistem atı tutar).
     form_mult = 1.0
     ai = agf / 100.0
     if _on("L6") and form is not None and form >= POOR_FORM and ai >= FAV_AGF:
-        form_mult = 0.0
-        tags.append("AVOID: kötü-form + yüksek-AGF favori")
+        tags.append("⚠ kötü-form + yüksek-AGF favori (etiket-only — sistem kuponda tuttu)")
     elif form is not None and form <= GOOD_FORM and ai < LOW_AGF:
-        niche_tags.append("iyi-form/düşük-AGF (⚠ confound, bonus uygulanmadı)")
+        niche_tags.append("iyi-form/düşük-AGF (⚠ confound)")
 
     # L7/L8 — ortogonal-sıfır / etiket (çift-sayım yok)
     risk_mult = 1.0
