@@ -33,10 +33,14 @@ Hepsinin altında **kalibrasyon** (adım 3'ün ön koşulu) var → Phase 5.2 il
 
 ---
 
-## PHASE 5.2 — MODEL KALİBRASYONU 🔴 (H1, en kritik)
-- **Precondition**: n≥200 (model_prob, outcome) çifti. İki yol: forward bet_diary VEYA
-  **backfill (Phase 5.1.5 FAST POSSIBLE: agftahmin.com geçmiş AGF + retro sonuç)**. Kalibrasyon
-  ölçüm altyapısı (04 Section 2 Brier/log-loss + isotonic/Platt scaffold) Phase 5.1.5'te hazır.
+## PHASE 5.2 — MODEL KALİBRASYONU 🔴 (H1, en kritik) — ALTYAPI ✅ / FIT ⏸ OUTCOME-BLOCKED
+- ⚠ **Phase 5.2 turu bulgusu**: AGF backfill + cross-check (agftahmin=gerçek AGF, Pearson
+  0.9996) ✅ AMA **tarihsel outcome (won) ERİŞİLEMEZ** (agftablosu date-ignore, agftahmin yok,
+  TJK JS-render) → kalibrasyon FIT yapılamadı. Şu an label yok. Detay: `phase_5_2_*.md`.
+- **Precondition (revize)**: n≥200 (prob, **outcome**) çifti. OUTCOME = kritik yol. İki yol:
+  (A) forward bet_diary (migration apply + ~50-60 gün) — kesin; (B) TJK JS-render outcome
+  (AJAX/JSON endpoint VEYA Playwright) — hızlı olabilir, ÖNCE araştırılmalı.
+- Hazır: AGF backfill, dataset, isotonic/Platt scaffold, shadow loader (no-op).
 - **Scope**: isotonic regression (veya Platt) — raw_model_prob → calibrated_prob. Tüm
   downstream (V7, kupon.py, smart_genis) calibrated_prob üzerinden. Kalibratör model/
   artifact olarak `model/trained/` altına; runtime'da uygula.

@@ -118,10 +118,18 @@ agftablosu.com çökerse hepsi çöker. Fallback sadece **kod hatalarına / modu
     `simulation/calibrators/{isotonic,platt}.py` + `smoke_daily_calibration.py`.
   - **PROD**: `dashboard/user_warnings.py` + Telegram banner (PATCH_5_1_5_USER_WARNING,
     env `TJK_PHASE_5_2_WARNING` default ON, text-only). Phase 5.3'te kaldır.
-- **Phase 5.2 — MODEL KALİBRASYONU: NEXT** (H1, en kritik). Gate: bet_diary verisi
-  (migration apply + forward VEYA agftahmin backfill — artık FAST POSSIBLE). isotonic/Platt
-  scaffold hazır → calibrated_prob; tüm coverage/width buna geçer + PATCH_5_1_5_USER_WARNING
-  kaldır (5.3 ile). Plan: `docs/PHASE_5_2_TO_5_9_ROADMAP.md`.
+- **Phase 5.2 — MODEL KALİBRASYONU: ALTYAPI COMPLETE, FIT OUTCOME-BLOCKED** →
+  `audit/reports/phase_5_2_*.md`. Çıkan:
+  - AGF backfill (agftahmin, 30g/122 altılı, at-level) + **cross-check Pearson 0.9996**
+    (agftahmin = gerçek TJK AGF, kanıtlı). `simulation/backfill_*.py`, `build_calibration_dataset.py`.
+  - 🔴 **Tarihsel outcome (won) ERİŞİLEMEZ** (agftablosu date-ignore, agftahmin yok, TJK
+    JS-render) → **kalibrasyon FIT yapılamadı** (label yok). Sahte kalibratör üretilmedi.
+  - Model replay → FALLBACK (agf_implied; backfill AGF-only ~12/96 feature, OOD).
+  - **PROD shadow**: `dashboard/calibration_loader.py` + PATCH_5_2_CALIBRATION (yerli_engine
+    legs_summary'ye calibrated_prob, no-op fallback — active.pkl yok → None, davranış değişmedi).
+  - Kalibrasyon FIT + backtest = **forward** (bet_diary outcome) VEYA TJK-JS outcome çözümü.
+- **Phase 5.3 — TRIPLE→SINGLE: NEXT** ama H1 (kalibrasyon) hâlâ açık (outcome gate).
+  Önce outcome kaynağı (migration apply forward / TJK-JS). Plan: `docs/PHASE_5_2_TO_5_9_ROADMAP.md`.
 
 ## Production activation checklist (Berkay)
 1. **Migration apply**: `phase_1a5_migration_apply_playbook.md` (m3 + m4, ~5 dk).
