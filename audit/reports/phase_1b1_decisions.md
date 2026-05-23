@@ -40,3 +40,9 @@ Otonom yürütme. Kritik kararlar tek cümleyle.
   agftablosu requests'e döndü. tjk/horseturk SESSION'da kaldı (br fix hepsine fayda).
 - **SO-7 açıldı:** agf_scraper.py de cloudscraper kullanıyor, aynı 17KB riski olabilir.
   Berkay "dokunma" dediği için incelenmedi — Phase 1B/4 değerlendirir.
+
+## PART D — Migration Apply Playbook
+- m3 + m4 idempotent doğrulandı (tüm CREATE `IF NOT EXISTS`).
+- Playbook (phase_1a5_migration_apply_playbook.md): URL al → .env → psql connectivity
+  → m3+m4 apply → verification → rollback (DROP) → troubleshooting. ~5 dk, Berkay manuel.
+- Prod'a apply EDİLMEDİ (URL yok, Berkay yapacak). Apply sonrası dual-write otomatik aktif.
