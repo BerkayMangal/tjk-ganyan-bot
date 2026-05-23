@@ -2673,6 +2673,15 @@ def _process_proper_altili(agf_alt, program_data, target_date, model_ok):
         'source_consensus': source_consensus_meta,
         'model_used': model_ok and any(l.get('has_model') for l in legs)}, legs)
 
+    # PATCH_5_2_CALIBRATION (shadow, no decision impact). active.pkl yoksa no-op (None).
+    try:
+        from calibration_loader import apply_calibration
+        for _ls in result.get('legs_summary', []) or []:
+            for _h in _ls.get('all_horses_with_mp', []) or []:
+                _h['calibrated_prob'] = apply_calibration((_h.get('model_prob') or 0) / 100.0)
+    except Exception:
+        pass
+
     # Phase 1E.1: bet_diary prediction-time write (sadece KAYIT — kupon kararını ETKİLEMEZ).
     try:
         from bet_diary_writer import write_predictions_for_altili
