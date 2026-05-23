@@ -100,6 +100,15 @@ agftablosu.com çökerse hepsi çöker. Fallback sadece **kod hatalarına / modu
   Veri birikince çalışır (şu an boş → "no data").
 - **Phase 1B (kalan)** — confidence eşikleri kalibrasyonu: bet_diary'de n≥50 + 5+ gün
   birikince (migration apply sonrası) → Section 2/5 eşik tuning. Model birincil.
+- **Phase 5.0 — ALTILI LOGIC AUDIT: COMPLETE** (salt-okuma, kod değişmedi) →
+  `audit/reports/phase_5_*.md` (5 rapor) + `docs/PHASE_5_PLAN_ALTILI_REFACTOR.md`.
+  Kritik bulgular: ÜÇ paralel kupon sistemi (V5.1 kupon.py + V7 + genis_smart, hepsi
+  prod'da, kullanıcı 3 kupon görüyor); coverage/width KALİBRE-OLMAYAN model_prob'a dayalı
+  (H1, en yüksek leverage); ~30 magic number gerekçesiz; Layer3 historical prior boş;
+  V7 expand yapmıyor. 8 hipotez + backtest planı.
+- **Phase 5.1 — BACKTEST INFRASTRUCTURE: NEXT** → backfill fizibilite (geçmiş AGF erişimi)
+  + simülasyon motoru. Ön koşul: bet_diary verisi (migration apply) VEYA backfill.
+  Plan: `docs/PHASE_5_PLAN_ALTILI_REFACTOR.md`.
 
 ## Production activation checklist (Berkay)
 1. **Migration apply**: `phase_1a5_migration_apply_playbook.md` (m3 + m4, ~5 dk).
