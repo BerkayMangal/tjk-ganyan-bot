@@ -23,3 +23,13 @@
 - retro +14 satır (MAX 20 altında), import fallback'li (dashboard package / sys.path).
   Sadece KAYIT, retro raporu değişmedi.
 - Smoke: WIN +74.5, LOSS −10, total 64.5 (birebir). Hippo normalize + ayak eşleşmesi OK.
+
+## PART C — Bet Diary Report (1F)
+- **audit/04_bet_diary_report.py** (CLI --days/--hippodrome): 6 section — özet / bet
+  performansı / kalibrasyon foreshadow (model_prob bucket × gerçek win-rate) / edge
+  specialization (hippodrome, confidence_grade, model_vs_agf_agree) / CLV / disagreement.
+- **Boş veri graceful** → "No bet_diary records" + migration playbook referansı, exit 0.
+- read_bets JSONL'den (prod event_store/bet_diary tablosu Phase 1E.1+). gitignore'a
+  bet_diary_2*.md eklendi (üretilen tarihli rapor).
+- Mock smoke: tüm section render, exception yok. GERÇEK veri (migration+pipeline) gelene
+  kadar sayılar anlamsız — n≥50 + 5+ gün sonra Section 2/5 gerçek edge sinyali.

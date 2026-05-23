@@ -12,6 +12,7 @@ data/
 audit/reports/data_quality_*.md
 audit/reports/prod_db_audit_*.md
 audit/reports/validator_shadow_2*.md
+audit/reports/bet_diary_2*.md
 # Shadow log (büyüyen veri)
 audit/reports/*.jsonl
 # Kalıcı belgeler (phase_0_summary, validator_api_notes, scope_out_notes) TRACKED kalır
