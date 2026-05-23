@@ -2581,7 +2581,10 @@ def run_yerli_pipeline(target_date=None):
             base_msg = format_live_test_annotations(base_msg, all_results)
             base_msg = _inject_leg_tags_in_telegram(base_msg, all_results)
             base_msg = _format_smart_genis_for_telegram(base_msg, all_results)
-            base_msg = _format_v7_for_telegram(base_msg, all_results)  # PATCH_FAZ7E_V7_TELEGRAM_BLOCK_v1
+            # PATCH_5_3_RETIRE_V7 (env-flag TJK_KUPON_MODE; default v5_1_only → V7 Telegram'a
+            # gitmez, kod+snapshot shadow'da kalır. Rollback: TJK_KUPON_MODE=all)
+            if os.getenv("TJK_KUPON_MODE", "v5_1_only") == "all":
+                base_msg = _format_v7_for_telegram(base_msg, all_results)  # PATCH_FAZ7E_V7_TELEGRAM_BLOCK_v1
         except Exception as _e_ann:
             logger.warning(f"[smart] telegram annotation failed: {_e_ann}")
         banner_lines = [LIVE_TEST_DISCLAIMER,
@@ -4488,7 +4491,8 @@ def _get_telegram_messages(results, date_str):
         # PATCH_V7_TOP3_TRANSPARENCY_v1
         legs_summary_v7 = r.get("legs_summary") or []
         gs_legs_v7 = (r.get("genis_smart") or {}).get("legs") or []
-        has_v7 = bool(legs_summary_v7) and any(
+        # PATCH_5_3_RETIRE_V7 (env-flag): v5_1_only modda V7 ANALİZ bloğu gizlenir (tek kupon)
+        has_v7 = (os.getenv("TJK_KUPON_MODE", "v5_1_only") == "all") and bool(legs_summary_v7) and any(
             isinstance(L, dict) and L.get("top3_v7") for L in legs_summary_v7
         )
         dar = r.get('dar')
