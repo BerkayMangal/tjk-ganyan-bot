@@ -136,8 +136,22 @@ agftablosu.com çökerse hepsi çöker. Fallback sadece **kod hatalarına / modu
   - 🟢 **AGF backtest** (`backtest_agf.py`): **DAR altılı 0/122 (%0)** → genişlik zorunlu;
     favori top-1 %23.9, top-3 %59; orta-favori (AGF .3-.6) OVERBET (FLB). Phase 5.3 girdisi.
   - **Model kalibrasyonu** (active.pkl): forward bekliyor (bet_diary model_prob+outcome).
-- **Phase 5.3 — TRIPLE→SINGLE: AÇIK** (outcome gate kalktı). Kanıt hazır: DAR %0 → tek-at
-  ölü, genişlik+coverage-optimal seç. Plan: `docs/PHASE_5_2_TO_5_9_ROADMAP.md`.
+- **Phase 5.3 — TRIPLE→SINGLE: COMPLETE** → `audit/reports/phase_5_3_*.md`. KARAR:
+  **KEEP V5.1_dar** (interim tek-kupon) / RETIRE V7 / DEFER smart_genis→v8. Güven ORTA.
+  - 🟢 smart_genis replay ÇÖZÜLDÜ (state-wrapper PASS): `snapshot_builder.py` (AGF→prod-snapshot,
+    model_prob fallback/calibrated) + smart_genis dar-injection bridge. 3 strateji replay edilebilir.
+  - 🟢 **DAR %0 = tek-favori idealizasyonu** (P(6/6)=1.87e-4, matematiksel beklenen, BUG DEĞİL).
+    Gerçek V5.1_dar %4.92. Simulator doğrulandı (manual 0/5 mismatch).
+  - Backtest (n=122, 3×2+baseline): genişlik↔hit↔cost mekanik. V7 en pahalı (~4500TL, cost/hit
+    ~40k EN KÖTÜ), V5.1 en ekonomik (~1000TL). ⚠ payout PROXY + model_prob fallback → mutlak
+    ROI yorumlanamaz; karar **cost+faithfulness**'e dayalı.
+  - 🟢 **FLB DOĞRULANDI** (n=8073): favori ≥30% AĞIR overbet (50%+ corr ×0.51), longshot 0-5%
+    underbet (×2.01). Phase 5.5 corr tablosu + `agf_outcome_calibrator.pkl` hazır.
+  - PART F: banner V5.1_DAR tek-kupon'a güncellendi (text-only, davranış değişmedi). Emeklilik
+    planı kod-ref'li (PATCH_5_3_RETIRE_V7/_SMARTGENIS @yerli_engine 2583-2584), EXEC Phase 5.3.5.
+- **Phase 5.3.5 — RETIREMENT EXEC + v8 DESIGN: NEXT** → flag-guarded (TJK_SINGLE_KUPON) tek-kupon
+  (v7/smart_genis shadow'da kalır) + v8 design (V5.1 + FLB-value 5.5 + smart_genis classification).
+  Berkay onayı gerek. Plan: `docs/PHASE_5_2_TO_5_9_ROADMAP.md` + `phase_5_3_decision.md` (E.5).
 
 ## Production activation checklist (Berkay)
 1. **Migration apply**: `phase_1a5_migration_apply_playbook.md` (m3 + m4, ~5 dk).
