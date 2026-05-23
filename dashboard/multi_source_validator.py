@@ -24,6 +24,20 @@ from typing import List, Dict, Tuple, Optional
 
 logger = logging.getLogger(__name__)
 
+# Phase 1A.5: cloudscraper (Cloudflare challenge direnci, agf_scraper ile tutarlı).
+# NOT: IP-based block'u ÇÖZMEZ (bkz. phase_1a5_agf_investigation.md) — Railway
+# datacenter IP'si bloklu; o Phase 4 residential-proxy işi. cloudscraper yoksa
+# düz requests'e düşer (eski davranış korunur).
+try:
+    import cloudscraper
+    SESSION = cloudscraper.create_scraper(
+        browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False}
+    )
+    _SESSION_KIND = "cloudscraper"
+except ImportError:
+    SESSION = requests.Session()
+    _SESSION_KIND = "requests"
+
 STRONG_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                    "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -66,10 +80,14 @@ def _normalize_hippo(name: str) -> str:
 def fetch_source_agftablosu() -> Dict:
     """Return {status, altilis: [(hippo, alt_no, time, n_legs)], raw_count}."""
     out = {"name": "agftablosu", "status": "FAIL",
-           "altilis": [], "error": None, "raw_count": 0}
+           "altilis": [], "error": None, "raw_count": 0, "latency_ms": 0}
+    import time as _t
+    _t0 = _t.time()
     try:
-        resp = requests.get("https://www.agftablosu.com/agf-tablosu",
-                             headers=STRONG_HEADERS, timeout=15)
+        resp = SESSION.get("https://www.agftablosu.com/agf-tablosu",
+                           headers=STRONG_HEADERS, timeout=15)
+        out["latency_ms"] = int((_t.time() - _t0) * 1000)
+        out["status_code"] = resp.status_code
         if resp.status_code != 200:
             out["error"] = f"HTTP {resp.status_code}"
             return out
@@ -130,7 +148,7 @@ def fetch_source_tjk_official() -> Dict:
            "altilis": [], "error": None, "raw_count": 0}
     try:
         # Main daily program page
-        resp = requests.get(
+        resp = SESSION.get(
             "https://www.tjk.org/TR/YarisSever/Info/Page/GunlukYarisProgrami",
             headers=STRONG_HEADERS, timeout=15
         )
@@ -214,7 +232,7 @@ def fetch_source_horseturk() -> Dict:
                        "adana", "elazig", "diyarbakir", "sanliurfa"]:
             try:
                 url = f"https://www.horseturk.com/at-yarisi-tahminleri-{hippo}-{day}-{month}-{year}/"
-                r = requests.get(url, headers=STRONG_HEADERS, timeout=10)
+                r = SESSION.get(url, headers=STRONG_HEADERS, timeout=10)
                 if r.status_code != 200:
                     continue
 
@@ -282,6 +300,22 @@ def validate_sources() -> Dict:
         "tjk_official": fetch_source_tjk_official(),
         "horseturk": fetch_source_horseturk(),
     }
+
+    # Phase 1A.5: AGF fetch sağlığını event_store'a logla (URL yoksa no-op).
+    # Prod'da agftablosu erişim trendini (403 vs 200) zamanla izlemek için.
+    try:
+        from event_store import write_event
+        _agf = sources["agftablosu"]
+        write_event("agf_fetch", {
+            "success": _agf.get("status") == "OK",
+            "status_code": _agf.get("status_code"),
+            "error": _agf.get("error"),
+            "method_used": _SESSION_KIND,
+            "latency_ms": _agf.get("latency_ms"),
+            "n_altilis": _agf.get("raw_count", 0),
+        })
+    except Exception:
+        pass
 
     # Build index: (hippo, altili_no) -> [source_name, ...]
     key_to_sources = {}
