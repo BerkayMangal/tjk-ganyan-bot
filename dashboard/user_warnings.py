@@ -1,9 +1,9 @@
-"""Phase 5.2/5.3 kullanıcı koruma bildirimi.
+"""Phase 5.2/5.3.5 kullanıcı koruma bildirimi.
 
-Telegram mesajına geçici bir banner ekler. Phase 5.3 KARARI verildi (V5.1_DAR baz sistem).
-TAM kaldırma Phase 5.4/5.5 (FLB/Benter prod'a alınınca): `PATCH_5_1_5_USER_WARNING` marker'ını
-grep'le, import + çağrıyı kaldır, bu dosyayı sil. Phase 5.3.5'te flag-guarded tek-kupon ile
-banner sadeleşir.
+Telegram mesajına geçici bir banner ekler. Phase 5.3.5'te retirement EXEC edildi → kullanıcı
+artık TEK kupon (V5.1) görüyor (TJK_KUPON_MODE=v5_1_only). Banner artık 3-kupon UYARISI değil,
+sade kalibrasyon-dönemi BİLGİSİ. TAM kaldırma: FLB/Benter prod'a alınınca (Phase 5.5 aktivasyon
+/ 5.4) → `PATCH_5_1_5_USER_WARNING` grep'le, import+çağrı kaldır, bu dosyayı sil.
 
 NOT: CLAUDE.md "yeni PATCH_* marker ekleme" der; bu marker bilinçli bir İSTİSNA
 (geçici-kaldırılacak kodu işaretlemek için, Berkay'ın Phase 5.1.5 talimatı).
@@ -12,11 +12,9 @@ import os
 
 PATCH_5_1_5_USER_WARNING = "phase_5_2_calibration_period_banner"
 
-WARNING_BANNER = """⚠️ TEK KUPON GEÇİŞİ (Phase 5.3 kararı)
-Backtest tamamlandı: V5.1_DAR baz sistem (en ekonomik ~1000TL, en güvenilir).
-V7 ve smart_genis emekliye ayrılıyor (referans — yakında kaldırılacak).
-👉 V5.1_DAR oynayın; diğer kuponları dikkate almayın.
-Detaylı plan: docs/PHASE_5_2_TO_5_9_ROADMAP.md (Phase 5.3)"""
+WARNING_BANNER = """ℹ️ V5.1 TEK KUPON (kalibrasyon dönemi)
+Sistem artık tek kupon üretiyor (V5.1). V7/smart_genis sadeleştirme için kaldırıldı.
+Model kalibrasyonu sürüyor; FLB düzeltici shadow'da test ediliyor (henüz aktif değil)."""
 
 
 def get_banner() -> str:
