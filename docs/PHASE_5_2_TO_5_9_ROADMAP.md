@@ -105,6 +105,12 @@ Hepsinin altında **kalibrasyon** (adım 3'ün ön koşulu) var → Phase 5.2 il
 - **Aktivasyon**: 4 hafta shadow gözlem + haftalık kalibrasyon → L4+L5 öncelikli, Berkay onayı.
 - **Ref**: Benter (1994, caveat'lı), Crist (A/B/C), Kelly (1956); Shannon entropy (surprise).
 
+## PHASE 5.6.5 — HYBRID CANLI 🟢 COMPLETE (PROD davranışı DEĞİŞTİ)
+- v9 router CANLI Telegram (shadow→live). PATCH_5_6_5_HYBRID_LIVE + V5.1 fallback. L6 etiket-only.
+  Favori-yıkma tetiği AĞIR FAVORİ (agf≥%40, prod-available). Akşam retro + sinyal-log. Detay: `phase_5_6_5_*.md`.
+- ⚠ Canlı: prod'da jokey/form yok → L5/L6 nötr (v9=L4+surprise+router). V9>V5.1 kanıtsız (Berkay onaylı erken).
+- **Phase 5.6.1** (4 hafta sonra): sinyal-log ile L4/L5/L6 re-fit + jokey/form threading + L6 yeniden değerlendir.
+
 ## PHASE 5.7 — LATE MONEY SAMPLING + CLV
 - **Precondition**: 5.3 (tek sistem); pipeline'a T-30/T-15/T-5/T-1 AGF fetch eklenebilir.
 - **Scope**: AGF 4 zamanda örnekle; steam move detect (AGF% delta eşiği); pre-race close

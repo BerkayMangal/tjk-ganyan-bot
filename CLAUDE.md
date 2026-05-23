@@ -154,6 +154,21 @@ agftablosu.com çökerse hepsi çöker. Fallback sadece **kod hatalarına / modu
   PATCH_5_3_RETIRE_V7 (coupon @2584 + V7 ANALİZ @4491), PATCH_5_3_DEFER_SMARTGENIS (@2583).
   build+snapshot shadow'da KALIR (v8 girdisi). Banner sade bilgi notuna güncellendi. Smoke 7/7:
   kullanıcı mesajı **15820→2421 char** (tek V5.1 kupon). **Berkay: rollback `TJK_KUPON_MODE=all`.**
+- **Phase 5.6.5 — HYBRID CANLI: COMPLETE / PROD DAVRANIŞI DEĞİŞTİ** → `audit/reports/phase_5_6_5_*.md`.
+  v9 strateji router artık **CANLI Telegram'da** (shadow değil). PATCH_5_6_5_HYBRID_LIVE.
+  - **yerli_engine** mesaj inşası: `telegram_formatter_v9.format_day_message` (V9) → base_msg;
+    **hata atarsa sessiz V5.1 fallback** (anti-regression sigorta, log'da görünür). Telegram'a
+    Tam Sistem / Favori Yıkma / Kangal / Pas mesajları. Akşam: run_daily_recap'e v9 retro +
+    `log_v9_signals` (guarded). Banner "Phase 5.6.5 HYBRID CANLI".
+  - **L6 form-AVOID → ETİKET-ONLY** (form_mult=1.0; backtest hit-rate −3 idi → restore 8.2%).
+  - **KRİTİK**: L6 softening eski favori-yıkma tetiğini (v9-top3-dışı) öldürdü → yeni tetik
+    **AĞIR FAVORİ (agf≥%40, FLB-overbet, PROD-available)**. Prod-path dağılım: FavoriYıkma 78 /
+    TamSistem 18 / Pas 25 / Kangal 1 (devir-3: Kangal 17). FavoriYıkma dominant = TR favori-overbet edge.
+  - ⚠ **CANLI KISIT**: prod'da jokey/form YOK → **L5/L6 nötr** → canlı v9 = L4(FLB)+L2(surprise)+
+    router. Skill etiketleri görünmez (threading=5.6.1). V9>V5.1 KANITSIZ (n=122, payout=PROXY) —
+    Berkay'ın bilinçli erken-aktivasyon tercihi. **`v9_signal_validation_log.jsonl`** birikiyor (5.6.1 girdisi).
+  - **Berkay**: yarın Telegram'da v9 router kuponu + akşam retro; oyun logu `log_play.py`;
+    pazartesi `weekly_calibration_report.py`; devir `TJK_CARRYOVER_DAY=2|3`. Sistem bot DEĞİL.
 - **Phase 5.6 — 9-LAYER + 3 STRATEJİ ROUTER + KALİBRASYON DÖNGÜSÜ: COMPLETE / shadow gözlem** →
   `audit/reports/phase_5_6_*.md`, `simulation/v9/`. **Sistem bot DEĞİL — Berkay karar verici**
   (drawdown/Kelly safeguard YOK, bütçe=öneri). Prod davranışı DEĞİŞMEZ (env-flag default off).
