@@ -2682,6 +2682,18 @@ def _process_proper_altili(agf_alt, program_data, target_date, model_ok):
     except Exception:
         pass
 
+    # PATCH_5_5_FLB_COMPENSATION (shadow meta, no decision impact here — karar build_kupon'da,
+    # env TJK_FLB_ACTIVE. Bu blok sadece gözlem: flb_multiplier + compensated model_prob).
+    try:
+        from calibration_loader import flb_multiplier, apply_flb_compensation
+        for _ls in result.get('legs_summary', []) or []:
+            for _h in _ls.get('all_horses_with_mp', []) or []:
+                _agf = _h.get('agf_pct') or 0
+                _h['flb_multiplier'] = flb_multiplier(_agf)
+                _h['flb_compensated_mp'] = apply_flb_compensation(_h.get('model_prob'), _agf)
+    except Exception:
+        pass
+
     # Phase 1E.1: bet_diary prediction-time write (sadece KAYIT — kupon kararını ETKİLEMEZ).
     try:
         from bet_diary_writer import write_predictions_for_altili
