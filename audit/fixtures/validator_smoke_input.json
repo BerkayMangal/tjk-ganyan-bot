@@ -1,0 +1,18 @@
+{
+  "_comment": "Phase 1A smoke fixture — validate_sources() çıktısı şekli. Bugünün gerçek senaryosu: AGF HTTP 403 (FAIL), tjk_official + horseturk OK. Ankara/İzmir live_tests/2026-05-22.json snapshot'ındaki altılılarla hizalı.",
+  "sources": {
+    "agftablosu":   {"name": "agftablosu",   "status": "FAIL", "error": "HTTP 403", "altilis": [], "raw_count": 0},
+    "tjk_official": {"name": "tjk_official", "status": "OK",   "error": null,        "altilis": [], "raw_count": 3},
+    "horseturk":    {"name": "horseturk",    "status": "OK",   "error": null,        "altilis": [], "raw_count": 2}
+  },
+  "consensus_altilis": [
+    {"hippodrome": "ankara", "altili_no": 1, "confirmed_by": ["tjk_official", "horseturk"], "times_reported": []},
+    {"hippodrome": "izmir",  "altili_no": 1, "confirmed_by": ["tjk_official", "horseturk"], "times_reported": []}
+  ],
+  "single_source_altilis": [
+    {"hippodrome": "izmir", "altili_no": 2, "confirmed_by": ["tjk_official"], "times_reported": []}
+  ],
+  "conflicts": [],
+  "alive_source_count": 2,
+  "confidence": "MEDIUM"
+}
