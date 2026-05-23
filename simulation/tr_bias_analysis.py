@@ -75,6 +75,7 @@ def _build_enriched():
             enriched.append({**h, "date": date, "hip": _norm(hip),
                              "age": feat.get("age"), "weight": feat.get("weight"),
                              "jockey": feat.get("jockey"), "name": feat.get("name"),
+                             "S": feat.get("S"), "sire": feat.get("sire"),
                              "distance": best.get("distance")})
     return enriched
 

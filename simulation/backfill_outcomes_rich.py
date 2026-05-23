@@ -58,11 +58,16 @@ def _parse_rich(link):
             mt = _AT_NO.search(cells[2])
             if not mt:
                 continue
+            # Orijin (Baba-Anne) = cell[4]; baba/sire = "-" öncesi (breeding-connection proxy)
+            sire = None
+            if len(cells) > 4 and cells[4]:
+                sire = re.split(r"\s*[-/]\s*", cells[4])[0].strip() or None
             finishers.append({
                 "at_no": int(mt.group(1)),
                 "S": _num(cells[1]),                       # finish position
                 "name": re.sub(r"\(\d+\).*", "", cells[2]).strip(),
                 "age": _num(cells[3]) if len(cells) > 3 else None,
+                "sire": sire,                              # baba (PART 6 connection proxy)
                 "weight": _weight(cells[5]) if len(cells) > 5 else None,
                 "jockey": cells[6] if len(cells) > 6 else None,
             })
