@@ -9,14 +9,18 @@ Telegram + Railway dashboard. Bonus: Ganyan Value Bot (model > piyasa) ayrı ala
 İki paralel pipeline VAR ama prod'da SADECE `dashboard/yerli_engine.py` çalışıyor.
 - `main.py`, `engine/kupon.py`, `engine/commentary.py` → LEGACY, prod'da koşmuyor
 - `dashboard/yerli_engine.py` (5656 satır) → ASIL prod motor, scheduler buradan
-- `dashboard/source_consensus.py` → Phase 1A SHADOW validator wrapper (read-only,
-  kupon kararını etkilemez; dual-write: JSONL + event_store)
+- `dashboard/source_consensus.py` → SHADOW (read-only). Phase 1B.1'de
+  `expert_consensus.build_consensus` (at-level, result['consensus']) tabanlı.
+  consensus_top_pick dolu. dual-write: JSONL + event_store. Kupon kararını etkilemez.
+- `dashboard/bet_diary.py` → Phase 1E.0 bet günlüğü (CLV/EV/Kelly math + persistence).
+  Pipeline entegrasyonu Phase 1E.1. dual-write JSONL + event_store('bet_decision')
 - `dashboard/event_store.py` → Phase 1A.5 persistent storage (Supabase `pipeline_events`,
   writer-bug'tan bağımsız; URL yoksa graceful no-op)
-- `dashboard/migrations/m3_pipeline_events.sql` → pipeline_events additive migration
-  (MANUEL APPLY gerekli — Berkay TJK_MEASURE_DB_URL set edip uygulayınca aktif olur)
-- AGF resilience: `multi_source_validator` + `agf_scraper` cloudscraper'lı (fallback
-  requests). NOT: prod 403 IP-based block, cloudscraper çözmez → Phase 4 proxy (SO-5)
+- `dashboard/migrations/{m3_pipeline_events,m4_bet_diary}.sql` → additive migration'lar
+  (MANUEL APPLY — bkz. phase_1a5_migration_apply_playbook.md; URL set + psql -f)
+- AGF: agftablosu için DÜZ requests kullan (cloudscraper bu sayfada 17KB eksik içerik,
+  brotli decode sorunu — SO-6). prod 403 ayrı: IP-based block → Phase 4 proxy (SO-5).
+  `agf_scraper.py` hâlâ cloudscraper (SO-7, dokunulmadı)
 - `Dockerfile` ve `railway.toml` ikisi de `cd dashboard && gunicorn app:app` çalıştırıyor
 
 README henüz `main.py --schedule`'dan bahsediyor → yanıltıcı, ileride güncellenecek.
@@ -77,14 +81,21 @@ agftablosu.com çökerse hepsi çöker. Fallback sadece **kod hatalarına / modu
     (SO-5, Phase 4 proxy)
   - Bulgu: at-level consensus ZATEN var (`expert_consensus.build_consensus`), Phase 1A
     yanlış modülü (multi_source_validator) shadow'lamış. Detay: `phase_1b_plan_revised.md`
-- **Phase 1B (REVISED)** — `audit/reports/phase_1b_plan_revised.md`. SENARYO A:
-  shadow'u expert_consensus consensus field'ına bağla (consensus_top_pick artık var),
-  confidence = all_agree/super_banko/consensus_count. Model birincil kalır.
+- **Phase 1B.1 — SHADOW REWIRE: COMPLETE** → shadow artık `expert_consensus`
+  at-level consensus tüketiyor (multi_source_validator değil). consensus_top_pick DOLU.
+  SO-6 fixed (agf fetch requests + brotli kaldırıldı, raw_count=2). yerli_engine
+  shadow consensus sonrasına taşındı (read-only). `phase_1b1_*` raporları.
+- **Phase 1E.0 — BET DIARY SCAFFOLDING: COMPLETE** → `bet_diary.py` (CLV/EV/Kelly +
+  persistence) + `m4_bet_diary.sql`. CLV finansal-doğru log(odds_pred/odds_close).
+  Pipeline entegrasyonu Phase 1E.1.
+- **Phase 1B (kalan)** — confidence eşikleri kalibrasyonu: ~7-10 gün shadow accumulate
+  (event_store apply sonrası) → eşik tuning. `phase_1b_plan_revised.md`. Model birincil.
 - **Phase 1C (pending)** — low-confidence race flag/skip
 - **Phase 1D (pending)** — calibration dataset generation
+- **Phase 1E.1 (pending)** — bet_diary pipeline entegrasyonu (gerçek prediction kaydı)
 - **Phase 2 (pending)** — kalibrasyon (Brier/ECE/reliability)
 - **Phase 3 (pending)** — UI/Telegram format birleştirme + **writer bug fix** (P0)
-- **Phase 4 (pending)** — foreign arb canlandırma (5 yabancı kaynak gri)
+- **Phase 4 (pending)** — foreign arb canlandırma (5 yabancı kaynak gri) + AGF proxy (SO-5)
 
 Audit dizini: `audit/01_data_quality_report.py`, `audit/02_prod_db_audit.py`,
 `audit/03_validator_shadow_report.py`. Kalıcı belgeler tracked, tarihli raporlar
