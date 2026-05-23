@@ -5651,6 +5651,14 @@ def send_telegram_simple(results_dict):
     if not messages:
         return
 
+    try:  # PATCH_5_1_5_USER_WARNING — Phase 5.3'te kaldır (env: TJK_PHASE_5_2_WARNING)
+        from user_warnings import get_banner as _gb
+        _w = _gb()
+        if _w:
+            messages[0] = _w + messages[0]
+    except Exception:
+        pass
+
     token = os.environ.get('TELEGRAM_BOT_TOKEN', '')
     chat_id = os.environ.get('TELEGRAM_CHAT_ID', '')
     if not token or not chat_id:
