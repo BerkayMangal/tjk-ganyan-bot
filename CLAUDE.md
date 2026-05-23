@@ -106,9 +106,14 @@ agftablosu.com çökerse hepsi çöker. Fallback sadece **kod hatalarına / modu
   prod'da, kullanıcı 3 kupon görüyor); coverage/width KALİBRE-OLMAYAN model_prob'a dayalı
   (H1, en yüksek leverage); ~30 magic number gerekçesiz; Layer3 historical prior boş;
   V7 expand yapmıyor. 8 hipotez + backtest planı.
-- **Phase 5.1 — BACKTEST INFRASTRUCTURE: NEXT** → backfill fizibilite (geçmiş AGF erişimi)
-  + simülasyon motoru. Ön koşul: bet_diary verisi (migration apply) VEYA backfill.
-  Plan: `docs/PHASE_5_PLAN_ALTILI_REFACTOR.md`.
+- **Phase 5.1 — MEASUREMENT LAYER: COMPLETE** (read-only, kod değişmedi) →
+  `audit/reports/phase_5_1_*.md` + `simulation/`. Backfill = **SLOW track** (geçmiş AGF
+  erişilemez → forward-only). Simulation engine + 3 strateji adaptörü hazır (replay smoke:
+  3 sistem ~5x combo farkı, V7 en geniş, smart_genis canlı-state bağımlı). VALUE_THRESHOLD
+  + bet_diary smoke PENDING (migration apply bekliyor).
+- **Phase 5.2 — MODEL KALİBRASYONU: NEXT** (H1, en kritik). Gate: bet_diary verisi
+  (migration apply + ~50-60 gün forward VEYA backfill alternatifi). isotonic/Platt →
+  calibrated_prob; tüm coverage/width buna geçer. Plan: `docs/PHASE_5_2_TO_5_9_ROADMAP.md`.
 
 ## Production activation checklist (Berkay)
 1. **Migration apply**: `phase_1a5_migration_apply_playbook.md` (m3 + m4, ~5 dk).
