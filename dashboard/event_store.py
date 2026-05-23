@@ -28,6 +28,7 @@ VALID_EVENT_TYPES = {
     "retro_result",
     "agf_fetch",
     "pipeline_run",
+    "bet_decision",
 }
 
 

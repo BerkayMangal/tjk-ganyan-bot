@@ -18,3 +18,15 @@ Otonom yürütme. Kritik kararlar tek cümleyle.
   (source_confidence = all_agree·1 + super_banko·0.66 normalize).
 - **Ölü kod temizliği:** multi_source_validator cache makinesi (set/reset_validator_cache,
   _get_validation, _norm_hippo) kaldırıldı — artık kullanılmıyor.
+
+## PART B — Bet Diary Scaffolding (Phase 1E.0)
+- **CLV formülü DÜZELTİLDİ:** Plan `log(odds_close/odds_pred)` + "negatif" + "pozitif=onay"
+  tutarsızdı. Finansal-doğru `log(odds_pred/odds_close)` uygulandı: 4.0→3.5 = +0.134
+  (yüksek odds yakaladık = piyasa onayı). Test bunu doğruluyor.
+- **Kapsam:** sadece dataclass + math + persistence + migration. Pipeline entegrasyonu
+  ve bet_diary TABLOSUNA doğrudan yazım YOK → Phase 1E.1. Şimdilik JSONL + event_store
+  (pipeline_events, event_type=bet_decision) dual-write.
+- **bet_diary.py 184 satır** (250 sınırı altında, bölmeye gerek kalmadı).
+- **P&L odds'tan hesaplanıyor** (payout'a bağımsız): win → stake·(odds−1), loss → −stake.
+- **event_store'a 'bet_decision' event type eklendi.**
+- Unit testler pytest'siz (assert + exit 0) — requirements'a ekleme yapılmadı.
