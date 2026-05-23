@@ -118,18 +118,26 @@ agftablosu.com çökerse hepsi çöker. Fallback sadece **kod hatalarına / modu
     `simulation/calibrators/{isotonic,platt}.py` + `smoke_daily_calibration.py`.
   - **PROD**: `dashboard/user_warnings.py` + Telegram banner (PATCH_5_1_5_USER_WARNING,
     env `TJK_PHASE_5_2_WARNING` default ON, text-only). Phase 5.3'te kaldır.
-- **Phase 5.2 — MODEL KALİBRASYONU: ALTYAPI COMPLETE, FIT OUTCOME-BLOCKED** →
+- **Phase 5.2 — MODEL KALİBRASYONU: AGF KALİBRASYONU FIT ✅ / MODEL KALİBRASYONU forward** →
   `audit/reports/phase_5_2_*.md`. Çıkan:
   - AGF backfill (agftahmin, 30g/122 altılı, at-level) + **cross-check Pearson 0.9996**
     (agftahmin = gerçek TJK AGF, kanıtlı). `simulation/backfill_*.py`, `build_calibration_dataset.py`.
-  - 🔴 **Tarihsel outcome (won) ERİŞİLEMEZ** (agftablosu date-ignore, agftahmin yok, TJK
-    JS-render) → **kalibrasyon FIT yapılamadı** (label yok). Sahte kalibratör üretilmedi.
   - Model replay → FALLBACK (agf_implied; backfill AGF-only ~12/96 feature, OOD).
   - **PROD shadow**: `dashboard/calibration_loader.py` + PATCH_5_2_CALIBRATION (yerli_engine
     legs_summary'ye calibrated_prob, no-op fallback — active.pkl yok → None, davranış değişmedi).
-  - Kalibrasyon FIT + backtest = **forward** (bet_diary outcome) VEYA TJK-JS outcome çözümü.
-- **Phase 5.3 — TRIPLE→SINGLE: NEXT** ama H1 (kalibrasyon) hâlâ açık (outcome gate).
-  Önce outcome kaynağı (migration apply forward / TJK-JS). Plan: `docs/PHASE_5_2_TO_5_9_ROADMAP.md`.
+- **Phase 5.2.5 — OUTCOME HUNT + KALİBRASYON FIT: COMPLETE** → `audit/reports/phase_5_2_5_*.md`.
+  - 🟢 **OUTCOME ÇÖZÜLDÜ**: TJK Sehir sonuç sayfası statik HTML (page-driven Era — elle Era
+    404). `simulation/backfill_outcomes.py` (S=1 kazanan + at_no seti). 30/30 gün.
+  - 🟢 **Join %100**: at-seti Jaccard (varsayım yok) → 8073/8073 satır, 732/732 ayak. won_flag dolu.
+  - 🟢 **İlk GERÇEK kalibratör fit**: `fit_calibrator.py` walk-forward, isotonic best,
+    Brier 0.0797→0.0778, **ECE 0.029→0.017 (-%40)**. ⚠ Bu **AGF_implied→outcome** (PIYASA/FLB
+    kalibrasyonu) — model_prob tarihsel yok → **active.pkl BİLEREK yazılmadı** (sahte üretmedik).
+    `simulation/calibrators/fitted/agf_outcome_calibrator.pkl` = Phase 5.4/5.5 girdisi.
+  - 🟢 **AGF backtest** (`backtest_agf.py`): **DAR altılı 0/122 (%0)** → genişlik zorunlu;
+    favori top-1 %23.9, top-3 %59; orta-favori (AGF .3-.6) OVERBET (FLB). Phase 5.3 girdisi.
+  - **Model kalibrasyonu** (active.pkl): forward bekliyor (bet_diary model_prob+outcome).
+- **Phase 5.3 — TRIPLE→SINGLE: AÇIK** (outcome gate kalktı). Kanıt hazır: DAR %0 → tek-at
+  ölü, genişlik+coverage-optimal seç. Plan: `docs/PHASE_5_2_TO_5_9_ROADMAP.md`.
 
 ## Production activation checklist (Berkay)
 1. **Migration apply**: `phase_1a5_migration_apply_playbook.md` (m3 + m4, ~5 dk).

@@ -33,14 +33,15 @@ Hepsinin altında **kalibrasyon** (adım 3'ün ön koşulu) var → Phase 5.2 il
 
 ---
 
-## PHASE 5.2 — MODEL KALİBRASYONU 🔴 (H1, en kritik) — ALTYAPI ✅ / FIT ⏸ OUTCOME-BLOCKED
-- ⚠ **Phase 5.2 turu bulgusu**: AGF backfill + cross-check (agftahmin=gerçek AGF, Pearson
-  0.9996) ✅ AMA **tarihsel outcome (won) ERİŞİLEMEZ** (agftablosu date-ignore, agftahmin yok,
-  TJK JS-render) → kalibrasyon FIT yapılamadı. Şu an label yok. Detay: `phase_5_2_*.md`.
-- **Precondition (revize)**: n≥200 (prob, **outcome**) çifti. OUTCOME = kritik yol. İki yol:
-  (A) forward bet_diary (migration apply + ~50-60 gün) — kesin; (B) TJK JS-render outcome
-  (AJAX/JSON endpoint VEYA Playwright) — hızlı olabilir, ÖNCE araştırılmalı.
-- Hazır: AGF backfill, dataset, isotonic/Platt scaffold, shadow loader (no-op).
+## PHASE 5.2 — MODEL KALİBRASYONU 🟢 AGF KALİBRASYONU FIT / MODEL KALİBRASYONU forward
+- ✅ **Phase 5.2.5 turu**: OUTCOME ÇÖZÜLDÜ (TJK Sehir statik HTML, page-driven Era). Join %100
+  (at-seti Jaccard, 8073 satır). **İlk gerçek kalibratör fit** (AGF_implied→outcome, isotonic,
+  Brier 0.0797→0.0778, ECE -%40). Detay: `phase_5_2_5_*.md`.
+- ⚠ **Model vs piyasa ayrımı**: fit edilen kalibratör AGF→outcome (PIYASA/FLB) — model_prob
+  tarihsel yok (replay OOD). `active.pkl` (model kalibratörü) BİLEREK yazılmadı (sahte üretilmedi).
+  `agf_outcome_calibrator.pkl` → Phase 5.4/5.5 doğrudan kullanır.
+- **Model kalibrasyonu kalan iş**: forward bet_diary (model_prob+outcome, ~50-60 gün) → active.pkl.
+- Hazır: AGF backfill, outcome backfill, dataset_complete, isotonic/Platt fit, shadow loader (no-op).
 - **Scope**: isotonic regression (veya Platt) — raw_model_prob → calibrated_prob. Tüm
   downstream (V7, kupon.py, smart_genis) calibrated_prob üzerinden. Kalibratör model/
   artifact olarak `model/trained/` altına; runtime'da uygula.
