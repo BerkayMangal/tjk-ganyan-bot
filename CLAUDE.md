@@ -9,6 +9,8 @@ Telegram + Railway dashboard. Bonus: Ganyan Value Bot (model > piyasa) ayrı ala
 İki paralel pipeline VAR ama prod'da SADECE `dashboard/yerli_engine.py` çalışıyor.
 - `main.py`, `engine/kupon.py`, `engine/commentary.py` → LEGACY, prod'da koşmuyor
 - `dashboard/yerli_engine.py` (5656 satır) → ASIL prod motor, scheduler buradan
+- `dashboard/source_consensus.py` → Phase 1A SHADOW validator wrapper (read-only,
+  kupon kararını etkilemez; multi_source_validator'ı sarar, JSONL log'a yazar)
 - `Dockerfile` ve `railway.toml` ikisi de `cd dashboard && gunicorn app:app` çalıştırıyor
 
 README henüz `main.py --schedule`'dan bahsediyor → yanıltıcı, ileride güncellenecek.
@@ -55,9 +57,24 @@ agftablosu.com çökerse hepsi çöker. Fallback sadece **kod hatalarına / modu
 - TJK_MEASURE_DB_URL (Supabase, opsiyonel)
 - TJK_DATA_DIR (JSONL backend, opsiyonel)
 
-## Şu an Phase 0'dayız: DATA AUDIT
-Tek hedef: hangi veri kaynağı ne kadar güvenilir, model gerçekte hangi feature'larla
-karar veriyor, kalibrasyon var mı yok mu. Kod düzenleme YOK, ölçüm var.
+## Phase status
+- **Phase 0 — DATA AUDIT: KAPALI** → `audit/reports/phase_0_summary.md`
+  4 alan ölçüldü; 2 P0 bug (writer key mismatch, AGF tek-nokta) + bağlanmamış
+  multi_source_validator bulundu.
+- **Phase 1A — SHADOW validator integration: LIVE** → `audit/reports/validator_shadow_log.jsonl`
+  Validator pipeline'da read-only gözlemliyor, karar vermiyor. Rapor:
+  `python audit/03_validator_shadow_report.py [--days N]`
+- **Phase 1B (pending)** — confidence-based source selection (ön koşul: at-level
+  consensus, scope_out SO-1)
+- **Phase 1C (pending)** — low-confidence race flag/skip
+- **Phase 1D (pending)** — calibration dataset generation
+- **Phase 2 (pending)** — kalibrasyon (Brier/ECE/reliability)
+- **Phase 3 (pending)** — UI/Telegram format birleştirme + **writer bug fix** (P0)
+- **Phase 4 (pending)** — foreign arb canlandırma (5 yabancı kaynak gri)
+
+Audit dizini: `audit/01_data_quality_report.py`, `audit/02_prod_db_audit.py`,
+`audit/03_validator_shadow_report.py`. Kalıcı belgeler tracked, tarihli raporlar
++ shadow log gitignore'lu.
 
 ## Çalışma stili
 - Önce plan, sonra kod. Plan onayı olmadan dosya yazma.
