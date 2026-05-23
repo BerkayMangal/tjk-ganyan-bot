@@ -154,6 +154,14 @@ agftablosu.com çökerse hepsi çöker. Fallback sadece **kod hatalarına / modu
   PATCH_5_3_RETIRE_V7 (coupon @2584 + V7 ANALİZ @4491), PATCH_5_3_DEFER_SMARTGENIS (@2583).
   build+snapshot shadow'da KALIR (v8 girdisi). Banner sade bilgi notuna güncellendi. Smoke 7/7:
   kullanıcı mesajı **15820→2421 char** (tek V5.1 kupon). **Berkay: rollback `TJK_KUPON_MODE=all`.**
+- **Phase 5.7.0/5.7.5 — GÜN SONU AUDIT + 2 KRİTİK HOTFIX + KILL-SWITCH** → `audit/reports/phase_5_7_*`.
+  - 🔴→🟢 **5.7.0**: complete.csv gitignored→prod'da YOK; v9 loader'ları guard'sız open()→crash→
+    "hesap hatası" sel (V5.1 fallback tetiklenmezdi). Fix: graceful degrade + defense raise.
+  - 🔴→🟢 **5.7.5 (KRİTİK)**: `send_telegram_simple` (app.py'nin çağırdığı GERÇEK gönderici)
+    `_get_telegram_messages` (V5.1) gönderiyordu, `result['telegram_msg']`'i (v9) DEĞİL → 5.6.5
+    v9 mesajı Telegram'a HİÇ GİTMİYORDU. Fix: `format_messages_list` + send_telegram_simple v9 gönderir.
+  - 🟢 **KILL-SWITCH**: `TJK_V9_LIVE` (default "1"; "0"→anında V5.1). Banner'a eklendi. Smoke 10/10.
+  - Tüm smoke + tomorrow-sim PASS. **Sistem PROD-READY** (V5.1 fallback + kill-switch + graceful degrade).
 - **Phase 5.6.5 — HYBRID CANLI: COMPLETE / PROD DAVRANIŞI DEĞİŞTİ** → `audit/reports/phase_5_6_5_*.md`.
   v9 strateji router artık **CANLI Telegram'da** (shadow değil). PATCH_5_6_5_HYBRID_LIVE.
   - **yerli_engine** mesaj inşası: `telegram_formatter_v9.format_day_message` (V9) → base_msg;
