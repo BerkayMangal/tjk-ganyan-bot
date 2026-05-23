@@ -1,0 +1,90 @@
+"""Phase 1E.1/1E.2 — Pipeline ↔ bet_diary köprüsü.
+
+write_predictions_for_altili: her altılının top-3/ayak model pick'ini BetRecord'a
+  çevirip bet_diary'ye yazar (prediction-time). (Phase 1E.1)
+update_outcomes_for_date: retro sonuçlarıyla outcome günceller. (Phase 1E.2)
+
+Coupling: `bet_diary`'yi import eder; yerli_engine / retro'yu ETMEZ (loose).
+Never-raises: hata pipeline'ı/retro'yu bloklamaz, sayaç/errors döner.
+"""
+from __future__ import annotations
+
+import logging
+from typing import Any, Optional
+
+import bet_diary as bd
+
+logger = logging.getLogger(__name__)
+
+BANKROLL = 1000.0  # half-Kelly stake birimi (varsayım; recommended_bet_size hesabı)
+
+
+def _compute_confidence_grade(consensus_all_agree: bool, value_detected: bool,
+                              model_agrees_agf: bool) -> str:
+    score = int(bool(consensus_all_agree)) + int(bool(value_detected)) + int(bool(model_agrees_agf))
+    return {3: "strong", 2: "moderate", 1: "limited", 0: "insufficient"}[score]
+
+
+def write_predictions_for_altili(
+    altili_result: dict,
+    agf_alt: Any = None,
+    consensus_result: Optional[dict] = None,
+    target_date: Any = None,
+) -> dict:
+    """Top-3/ayak model pick → BetRecord. Returns {records_written, value_bets, errors}."""
+    out = {"records_written": 0, "value_bets": 0, "errors": []}
+    try:
+        legs = altili_result.get("legs_summary") or []
+        hippo = altili_result.get("hippodrome")
+        altili_no = altili_result.get("altili_no")
+        per_leg = (consensus_result or {}).get("per_leg_consensus") or []
+        value_set = {(v.get("leg"), v.get("number"))
+                     for v in (altili_result.get("value_horses") or [])}
+
+        for leg in legs:
+            ayak = leg.get("ayak")
+            horses = sorted(leg.get("all_horses_with_mp") or [],
+                            key=lambda h: -(h.get("model_prob") or 0))
+            cons_leg = next((c for c in per_leg if c.get("ayak") == ayak), {})
+            cons_all_agree = bool(cons_leg.get("all_agree"))
+            mp_pick, agf_pick = cons_leg.get("model"), cons_leg.get("agf")
+            model_agrees_agf = (mp_pick is not None and mp_pick == agf_pick)
+
+            for rank, hr in enumerate(horses[:3], 1):
+                try:
+                    num = hr.get("number")
+                    model_prob = (hr.get("model_prob") or 0.0) / 100.0   # yüzde → 0-1
+                    agf_pct = hr.get("agf_pct")
+                    odds = bd.odds_from_agf(agf_pct)
+                    ev = bd.compute_ev(model_prob, odds) if odds else None
+                    kelly = bd.compute_kelly(model_prob, odds) if odds else None
+                    rec_size = round(0.5 * kelly * BANKROLL, 2) if kelly else None
+                    did_we_bet = (ayak, num) in value_set
+                    rec = bd.BetRecord(
+                        hippodrome=hippo, race_number=ayak, horse_number=num,
+                        model_prob=model_prob, altili_no=altili_no,
+                        horse_name=hr.get("name"),
+                        agf_pct_at_prediction=agf_pct, odds_at_prediction=odds,
+                        ev_at_prediction=ev, kelly_fraction=kelly,
+                        recommended_bet_size=rec_size, did_we_bet=did_we_bet,
+                        bet_rationale={
+                            "value_detected": did_we_bet,
+                            "consensus_banko": cons_all_agree,
+                            "model_top_pick": rank == 1,
+                            "model_vs_agf_agree": model_agrees_agf,
+                            "value_edge": hr.get("value_edge"),
+                            "model_rank": rank,
+                        },
+                        confidence_grade=_compute_confidence_grade(
+                            cons_all_agree, did_we_bet, model_agrees_agf),
+                        consensus_snapshot=cons_leg or None,
+                    )
+                    if bd.write_bet_decision(rec):
+                        out["records_written"] += 1
+                        if did_we_bet:
+                            out["value_bets"] += 1
+                except Exception as e:
+                    out["errors"].append(f"{ayak}/{hr.get('number')}: {repr(e)[:60]}")
+    except Exception as e:
+        out["errors"].append(f"fatal: {repr(e)[:80]}")
+    return out

@@ -2663,7 +2663,7 @@ def _process_proper_altili(agf_alt, program_data, target_date, model_ok):
         source_consensus_meta = {"validator_degraded": True,
                                  "degraded_reason": f"shadow_failed:{repr(_e_sc)[:80]}"}
 
-    return _inject_selection_integrity_audit({
+    result = _inject_selection_integrity_audit({
         'hippodrome': hippo, 'altili_no': altili_no, 'time': time_str,
         'dar': _ticket_to_json(dar), 'genis': _ticket_to_json(genis),
         'rating': {'rating': rating['rating'], 'stars': rating['stars'], 'verdict': rating['verdict'],
@@ -2672,6 +2672,17 @@ def _process_proper_altili(agf_alt, program_data, target_date, model_ok):
         'legs_summary': _build_legs_summary(legs),
         'source_consensus': source_consensus_meta,
         'model_used': model_ok and any(l.get('has_model') for l in legs)}, legs)
+
+    # Phase 1E.1: bet_diary prediction-time write (sadece KAYIT — kupon kararını ETKİLEMEZ).
+    try:
+        from bet_diary_writer import write_predictions_for_altili
+        _bd = write_predictions_for_altili(result, agf_alt, source_consensus_meta, target_date)
+        if _bd.get("records_written"):
+            logger.info(f"  Bet diary: {_bd['records_written']} kayıt, {_bd['value_bets']} value bet")
+    except Exception as _e_bd:
+        logger.warning(f"  Bet diary write failed: {_e_bd}")
+
+    return result
 
 
 def _fetch_domestic_tracks():
