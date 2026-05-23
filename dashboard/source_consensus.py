@@ -160,12 +160,45 @@ def run_shadow_validation(
         )
 
 
+def _parse_altili_id(altili_id: str) -> tuple[Optional[str], Optional[str], Optional[int]]:
+    """'{date}_{hippo}_{altili_no}' → (date, hippo, altili_no). Best-effort."""
+    parts = (altili_id or "").split("_")
+    if len(parts) >= 3:
+        try:
+            alt = int(parts[-1])
+        except (TypeError, ValueError):
+            alt = None
+        return parts[0], "_".join(parts[1:-1]), alt
+    return None, None, None
+
+
 def log_shadow_result(altili_id: str, validator_output: ValidatorOutput) -> None:
-    """Append one shadow observation to the JSONL log. Fire-and-forget."""
+    """Record one shadow observation. Dual-write, fire-and-forget.
+
+    1) JSONL (local dev / always-on) — SHADOW_LOG_PATH
+    2) event_store → Supabase pipeline_events (prod persistence; writer-bug-free).
+    Each sink is isolated: one failing never blocks the other or the pipeline.
+    """
+    rec = {"altili_id": altili_id, **validator_output.to_dict()}
+
+    # Sink 1: JSONL (lokal dev için her zaman)
     try:
         os.makedirs(os.path.dirname(SHADOW_LOG_PATH), exist_ok=True)
-        rec = {"altili_id": altili_id, **validator_output.to_dict()}
         with open(SHADOW_LOG_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
     except Exception:
         pass  # shadow log must NEVER break the pipeline
+
+    # Sink 2: event_store (prod kalıcılık — URL yoksa no-op)
+    try:
+        from event_store import write_event
+        ev_date, ev_hippo, ev_alt = _parse_altili_id(altili_id)
+        write_event(
+            "shadow_validation",
+            payload=rec,
+            event_date=ev_date,
+            hippodrome=ev_hippo,
+            altili_no=ev_alt,
+        )
+    except Exception:
+        pass  # event_store opsiyonel; JSONL zaten yazıldı
