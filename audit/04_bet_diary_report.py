@@ -81,28 +81,54 @@ def _sec_bet_perf(rows):
 
 
 def _sec_calibration(rows):
-    out = "## 2. Kalibrasyon foreshadow (tüm tracked, sonuçlanmış)\n"
-    res = _resolved(rows)
-    if not res:
-        out += "_Sonuçlanmış kayıt yok._\n\n"
+    """Section 2 — kalibrasyon diagnostiği (reliability + Brier + log-loss).
+
+    Phase 5.2 (model kalibrasyonu) bu ölçümle tetiklenir: calibration_gap büyükse
+    isotonic/Platt gerekir. n<50 → INSUFFICIENT_DATA (forward collection bekle).
+    """
+    import math
+    out = "## 2. Kalibrasyon diagnostiği (model_prob vs gerçek sonuç)\n"
+    res = [r for r in _resolved(rows) if r.get("model_prob") is not None]
+    n_total = len(res)
+    if n_total == 0:
+        out += "_Sonuçlanmış + model_prob'lu kayıt yok._\n\n"
         return out
-    buckets = defaultdict(lambda: [0, 0])  # bucket_idx -> [n, wins]
+    if n_total < MIN_N:
+        out += (f"⏸ **INSUFFICIENT_DATA** — n={n_total} < {MIN_N}. Reliability/Brier/log-loss "
+                f"için forward collection bekleniyor (bet_diary). Bucket sayıları yön gösterir:\n\n")
+
+    buckets = defaultdict(lambda: [0, 0])  # idx -> [n, wins]
     for r in res:
-        mp = r.get("model_prob")
-        if mp is None:
-            continue
-        b = min(9, int(mp * 10))
+        b = min(9, int((r["model_prob"] or 0) * 10))
         buckets[b][0] += 1
         buckets[b][1] += int(bool(r.get("did_we_win")))
-    out += "| model_prob | n | gerçek win-rate | not |\n|---|---:|---:|---|\n"
+
+    out += "| model_prob | n | expected | actual win-rate | gap | not |\n|---|---:|---:|---:|---:|---|\n"
     for b in range(10):
         n, w = buckets[b]
         if n == 0:
             continue
         lo, hi = b * 10, (b + 1) * 10
-        note = "⚠ n<50" if n < MIN_N else ""
-        out += f"| %{lo}-{hi} | {n} | {_pct(w, n):.0f}% | {note} |\n"
-    out += "\n_İdeal: %X-Y bucket'ında gerçek win-rate ~%((X+Y)/2). Sapma over/under-confidence._\n\n"
+        expected = (lo + hi) / 2.0
+        actual = _pct(w, n)
+        gap = expected - actual
+        note = "⚠ n<50" if n < MIN_N else ("over-conf" if gap > 10 else ("under-conf" if gap < -10 else "ok"))
+        out += f"| %{lo}-{hi} | {n} | %{expected:.0f} | %{actual:.0f} | {gap:+.0f} | {note} |\n"
+    out += "\n"
+
+    # Brier + log-loss (n≥50)
+    if n_total >= MIN_N:
+        brier = sum((r["model_prob"] - int(bool(r.get("did_we_win")))) ** 2 for r in res) / n_total
+        eps = 1e-15
+        ll = -sum(
+            (lambda p, y: y * math.log(max(eps, p)) + (1 - y) * math.log(max(eps, 1 - p)))(
+                min(1 - eps, max(eps, r["model_prob"])), int(bool(r.get("did_we_win"))))
+            for r in res
+        ) / n_total
+        out += f"- **Brier score**: {brier:.4f} (düşük=iyi; 0.25=rastgele baseline)\n"
+        out += f"- **Log-loss**: {ll:.4f}\n"
+        out += f"- n={n_total} → Phase 5.2 kalibratör (isotonic/Platt) bu metrikleri before/after kıyaslar.\n\n"
+    out += "_İdeal: %X-Y bucket'ında actual ~%((X+Y)/2). gap>0 over-confident, gap<0 under-confident._\n\n"
     return out
 
 
