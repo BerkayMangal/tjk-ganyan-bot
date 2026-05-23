@@ -50,15 +50,27 @@ Hepsinin altında **kalibrasyon** (adım 3'ün ön koşulu) var → Phase 5.2 il
 - **Ref**: Niculescu-Mizil & Caruana (2005) calibration; Platt (1999).
 - **Kritik kural**: 5.3+ buna bağlı. Kalibrasyon yoksa tüm coverage/width çöp-girdi.
 
-## PHASE 5.3 — ÜÇTEN BİRE (triple-kupon eradikasyon)
-- **Precondition**: 5.2 calibration + 5.1 simulation engine.
-- **Scope**: V5.1 vs V7 vs smart_genis backtest (kalibre prob ile). ROI/hit/drawdown/Sharpe.
-  Kazananı tut VEYA üçünün en iyisini sentezleyen **v8**. Telegram tek kupon.
-- **Deliverable**: kazanan strateji seçimi raporu + v8 (gerekirse) + emeklilik planı.
-  **+ PATCH_5_1_5_USER_WARNING kaldır** (banner artık gereksiz — tek kupon; checklist:
-  phase_5_1_5_user_warning_deployment.md).
-- **KPI**: ROI farkı, drawdown farkı, Sharpe. (audit bulgusu: 3 paralel = combo ~5x fark)
-- **Ref**: simulation engine (Phase 5.1).
+## PHASE 5.3 — ÜÇTEN BİRE 🟢 COMPLETE → KEEP V5.1_dar / RETIRE V7 / DEFER smart_genis
+- **Sonuç**: backtest (n=122, 3 strat × 2 prob + baseline). KARAR: **V5.1_dar interim tek-kupon**
+  (en düşük maliyet ~1000TL, backtest-faithfulness EN YÜKSEK, robust). V7 emekli (4x maliyet,
+  cost/hit en kötü ~40k). smart_genis defer→v8 (gerçek model_prob'a bağlı). Detay: `phase_5_3_*.md`.
+- **Kritik caveat**: model_prob=AGF-fallback (value-edge yok) + payout PROXY (gerçek dividend
+  yok) → mutlak ROI yorumlanamaz. Karar cost+faithfulness'e dayalı, güven ORTA. DAR %0 = tek-
+  favori idealizasyonu (matematiksel beklenen, bug değil); gerçek V5.1_dar %4.92.
+- **smart_genis ÇÖZÜLDÜ**: state-wrapper PASS (replay edilebilir, snapshot_builder + dar-injection).
+- **FLB DOĞRULANDI** (PART D, Phase 5.5 girdisi): favori ≥30% AĞIR overbet (50%+ corr ×0.51),
+  longshot 0-5% underbet (×2.01). `agf_outcome_calibrator.pkl` + corr tablosu hazır.
+- **Emeklilik**: plan hazır (PATCH_5_3_RETIRE_V7/_SMARTGENIS, kod-ref'li), EXEC Phase 5.3.5'te.
+  PATCH_5_1_5_USER_WARNING: PART F'te tek-kupon'a güncellendi (tam kaldırma 5.4/5.5'te).
+
+## PHASE 5.3.5 — RETIREMENT EXEC + v8 DESIGN (NEXT)
+- **Precondition**: 5.3 karar (✅) + Berkay onayı.
+- **Scope**: (a) PATCH_5_3_RETIRE_V7/_SMARTGENIS guard'ları **env-flag** (TJK_SINGLE_KUPON)
+  arkasında uygula → Telegram TEK kupon (V5.1_dar); v7/smart_genis shadow'da hesaplanmaya devam.
+  (b) v8 design: V5.1 coverage iskeleti + FLB-value (5.5) + smart_genis classification-width
+  (forward model_prob gate'li). (c) tek-kupon smoke + banner güncelle.
+- **Deliverable**: flag-guarded retirement + v8 design dokümanı. KOD: guard+flag, builder dokunulmaz.
+- **KPI**: Telegram kupon sayısı 3→1; davranış flag-off'ta korunur.
 
 ## PHASE 5.4 — BENTER KOMBİNASYONU
 - **Precondition**: 5.2 calibration.
