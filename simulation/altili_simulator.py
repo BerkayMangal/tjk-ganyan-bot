@@ -55,8 +55,14 @@ def simulate_altili(
     actual_results: list,       # [ayak1_winner, ..., ayak6_winner] gerçek kazanan at no
     strategy_fn: Callable[[dict], dict],  # result → {name, legs_selected, cost, combo}
     unit_price: float = 1.25,
+    prob_field: str = "model_prob",  # "model_prob" | "calibrated_prob" (forward: kalibre vs raw)
 ) -> dict:
-    """Tek altılı simülasyonu. Returns hit/partial/payout/roi."""
+    """Tek altılı simülasyonu. Returns hit/partial/payout/roi.
+
+    prob_field: adaptöre hangi olasılık alanını kullanacağını bildirir (race_data._prob_field).
+    Forward kullanım — tarihsel model_prob yok (Phase 5.2), şu an adaptörler model_prob default.
+    """
+    race_data = {**race_data, "_prob_field": prob_field}
     try:
         kupon = strategy_fn(race_data)
     except Exception as e:
@@ -95,6 +101,8 @@ def simulate_altili(
 
 
 def compare_strategies(race_data: dict, actual_results: list,
-                       strategy_fns: list, unit_price: float = 1.25) -> list:
+                       strategy_fns: list, unit_price: float = 1.25,
+                       prob_field: str = "model_prob") -> list:
     """Aynı altılıda birden fazla stratejiyi yan yana koştur."""
-    return [simulate_altili(race_data, actual_results, fn, unit_price) for fn in strategy_fns]
+    return [simulate_altili(race_data, actual_results, fn, unit_price, prob_field)
+            for fn in strategy_fns]
