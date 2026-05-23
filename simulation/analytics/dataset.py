@@ -18,10 +18,10 @@ if _REPO not in sys.path:
 
 from simulation.tr_bias_analysis import _build_enriched  # noqa: E402
 
-# Bölge grupları (Berkay hipotezi A; kontrol B/C). normed isimler.
-REGION_A = {"elazığ", "şanlıurfa", "diyarbakır"}          # küçük pool, hipotez
-REGION_B = {"i̇stanbul", "istanbul", "bursa", "ankara"}    # büyük, denetim sıkı
-REGION_C = {"adana", "i̇zmir", "izmir", "kocaeli"}         # orta
+# Bölge grupları (Berkay hipotezi A; kontrol B/C). _norm FOLD'lu (İıÇçĞğÖöŞşÜü→iiccggoossuu).
+REGION_A = {"elazig", "sanliurfa", "diyarbakir"}   # küçük pool, hipotez
+REGION_B = {"istanbul", "bursa", "ankara"}         # büyük, denetim sıkı
+REGION_C = {"adana", "izmir", "kocaeli"}           # orta
 
 
 def build():
