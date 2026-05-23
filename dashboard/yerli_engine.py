@@ -2580,7 +2580,10 @@ def run_yerli_pipeline(target_date=None):
         try:
             base_msg = format_live_test_annotations(base_msg, all_results)
             base_msg = _inject_leg_tags_in_telegram(base_msg, all_results)
-            base_msg = _format_smart_genis_for_telegram(base_msg, all_results)
+            # PATCH_5_3_DEFER_SMARTGENIS (env-flag TJK_KUPON_MODE; default v5_1_only → smart_genis
+            # Telegram'a gitmez, kod V8 design için kalır. Rollback: TJK_KUPON_MODE=all)
+            if os.getenv("TJK_KUPON_MODE", "v5_1_only") == "all":
+                base_msg = _format_smart_genis_for_telegram(base_msg, all_results)
             # PATCH_5_3_RETIRE_V7 (env-flag TJK_KUPON_MODE; default v5_1_only → V7 Telegram'a
             # gitmez, kod+snapshot shadow'da kalır. Rollback: TJK_KUPON_MODE=all)
             if os.getenv("TJK_KUPON_MODE", "v5_1_only") == "all":
