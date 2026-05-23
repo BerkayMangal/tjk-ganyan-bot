@@ -44,7 +44,7 @@ STRONG_HEADERS = {
                    "Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.8",
-    "Accept-Encoding": "gzip, deflate, br",
+    "Accept-Encoding": "gzip, deflate",
     "Connection": "keep-alive",
     "Upgrade-Insecure-Requests": "1",
 }
@@ -84,8 +84,10 @@ def fetch_source_agftablosu() -> Dict:
     import time as _t
     _t0 = _t.time()
     try:
-        resp = SESSION.get("https://www.agftablosu.com/agf-tablosu",
-                           headers=STRONG_HEADERS, timeout=15)
+        # SO-6 fix: agftablosu'da cloudscraper EKSİK içerik veriyor (~17KB, h3 yok);
+        # düz requests TAM içerik veriyor (~343KB). Bu sayfada requests > cloudscraper.
+        resp = requests.get("https://www.agftablosu.com/agf-tablosu",
+                            headers=STRONG_HEADERS, timeout=15)
         out["latency_ms"] = int((_t.time() - _t0) * 1000)
         out["status_code"] = resp.status_code
         if resp.status_code != 200:
@@ -310,7 +312,7 @@ def validate_sources() -> Dict:
             "success": _agf.get("status") == "OK",
             "status_code": _agf.get("status_code"),
             "error": _agf.get("error"),
-            "method_used": _SESSION_KIND,
+            "method_used": "requests",  # SO-6: agftablosu requests (cloudscraper eksik içerik)
             "latency_ms": _agf.get("latency_ms"),
             "n_altilis": _agf.get("raw_count", 0),
         })

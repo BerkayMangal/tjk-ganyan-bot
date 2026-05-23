@@ -34,9 +34,15 @@ agftablosu.com Railway datacenter IP'sini blokluyor (prod 403), lokal IP'yi değ
 ÇÖZMEZ. Kalıcı çözüm: residential/rotating proxy. Phase 4'te (foreign arb) zaten
 proxy altyapısı gerekecek — AGF prod erişimi oraya bağlanmalı. Scope dışı (büyük iş).
 
-## SO-6 — Validator AGF parse raw_count=0 (fetch OK ama parse boş)
-multi_source_validator.fetch_source_agftablosu fetch'i 200 alıyor (cloudscraper sonrası)
-ama h3-tabanlı altılı parse'ı bugünün sayfasından 0 altılı çıkardı (Ankara/İzmir
-başlıkta olmasına rağmen). Sayfa yapısı değişmiş olabilir. Parse sorunu, fetch değil.
-Validator'ın AGF kolu pratikte "boş" → shadow'da agftablosu hep eksik görünür.
-Phase 1B öncesi parse güncellenmeli (C kısmında değerlendirildi).
+## SO-6 — ✅ ÇÖZÜLDÜ (Phase 1B.1 PART C)
+Kök neden parse DEĞİLdi: (1) cloudscraper agftablosu'da 17KB eksik içerik (h3 yok),
+(2) Accept-Encoding `br` + brotli paketi yok → requests bozuk gövde. Fix: agftablosu
+fetch'i düz requests + `br` kaldırıldı → raw_count=2. Detay: phase_1b1_so6_investigation.md.
+
+## SO-7 — agf_scraper.py de cloudscraper kullanıyor (aynı 17KB riski olabilir)
+`scraper/agf_scraper.py` SESSION'ı cloudscraper (line 42). multi_source_validator'da
+cloudscraper agftablosu'dan 17KB (eksik) verdi → agf_scraper de aynı eksik içeriği
+alıyor OLABİLİR. Snapshot'ta AGF % vardı (bir noktada çalışmış) ama prod'da AGF sık
+"dashboard tier"a düşüyordu — belki agf_scraper'ın cloudscraper'ı da kısmen bozuk.
+Berkay "agf_scraper'a dokunma" dedi → bu turda incelenmedi. Phase 1B/4: agf_scraper'ı
+da requests'e (veya cloudscraper-fallback-requests) almayı değerlendir. Düşük-orta öncelik.

@@ -30,3 +30,13 @@ Otonom yürütme. Kritik kararlar tek cümleyle.
 - **P&L odds'tan hesaplanıyor** (payout'a bağımsız): win → stake·(odds−1), loss → −stake.
 - **event_store'a 'bet_decision' event type eklendi.**
 - Unit testler pytest'siz (assert + exit 0) — requirements'a ekleme yapılmadı.
+
+## PART C — SO-6 Fix
+- **Parse DEĞİL, fetch sorunuydu** (2 kök neden): cloudscraper agftablosu'da 17KB eksik
+  içerik + Accept-Encoding `br` (brotli paketi yok → requests çözemiyor).
+- **Fix (2 satır):** agftablosu fetch `SESSION.get`→`requests.get`; STRONG_HEADERS
+  `Accept-Encoding` br kaldırıldı. Sonuç: raw_count=2 (Ankara #1/#2). SO-6 KAPANDI.
+- **B.2 sapması düzeltildi:** cloudscraper kararı agftablosu için geçersizdi (eksik içerik);
+  agftablosu requests'e döndü. tjk/horseturk SESSION'da kaldı (br fix hepsine fayda).
+- **SO-7 açıldı:** agf_scraper.py de cloudscraper kullanıyor, aynı 17KB riski olabilir.
+  Berkay "dokunma" dediği için incelenmedi — Phase 1B/4 değerlendirir.
