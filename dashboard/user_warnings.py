@@ -14,7 +14,7 @@ PATCH_5_1_5_USER_WARNING = "phase_5_2_calibration_period_banner"
 
 WARNING_BANNER = """ℹ️ Phase 5.6.5 HYBRID CANLI — 3 strateji router aktif
 Tam Sistem / Favori Yıkma / Kangal / Pas önerileri + akşam retro. V5.1 fallback'te.
-Sinyal kalibrasyonu sürüyor (FLB+surprise canlı; jokey/form L5/L6 nötr). Bot DEĞİL — karar sende."""
+Beğenmezsen: Railway env TJK_V9_LIVE=0 → anında V5.1. Bot DEĞİL — karar sende."""
 
 
 def get_banner() -> str:
