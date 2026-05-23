@@ -92,15 +92,18 @@ Hepsinin altında **kalibrasyon** (adım 3'ün ön koşulu) var → Phase 5.2 il
 - **Aktivasyon**: forward (bet_diary model_prob+outcome) → prod-rejimi backtest → d>0.2 ise
   TJK_FLB_ACTIVE=1. Rollback: env=0 / pkl sil.
 
-## PHASE 5.6 — MULTI-TICKET STRATEGY (MKS) + KELLY [NEXT büyük adım]
-- **Precondition**: 5.3 (tek sistem ✅) + 5.4 (combined prob) + **risk_filter ✅ (Phase 5.8 P9)**
-  + FLB compensator ✅ (5.5). v8 design burada (V5.1 coverage + FLB-value + risk_filter + smart_genis).
-- **Scope**: Main/Coverage/Spread ticket generator (Crist A/B/C horse). DAR+GENİŞ yerine
-  portföy. Kelly sizing (bet_diary half-Kelly, Phase 1E.0) kupon stake'ine bağlanır
-  (quarter-Kelly, max %2 bankroll, drawdown safeguard).
-- **Deliverable**: ticket portfolio generator + Kelly stake bağlama.
-- **KPI**: portfolio ROI vs single-ticket; bankroll variance/drawdown.
-- **Ref**: **Crist** (A/B/C horse), pari-mutuel konsolasyon; Kelly (1956).
+## PHASE 5.6 — 9-LAYER + 3 STRATEJİ ROUTER + KALİBRASYON 🟢 COMPLETE / shadow gözlem
+- **Yapıldı** (`simulation/v9/`, env-flag off, prod değişmez): 9-layer profil (L1 carryover-manuel,
+  L2 surprise, L3 Benter-style[collinear caveat], L4-L8 aggregator, çift-sayım önlendi), strateji
+  router (Kangal>FavoriYıkma>TamSistem>Pas), 3 builder, PATCH_5_6_V9_SHADOW, backtest+ablation,
+  haftalık kalibrasyon + log_play CLI. Detay: `phase_5_6_*.md`.
+- **Sistem bot DEĞİL**: drawdown/Kelly safeguard YOK, bütçe bandı=öneri. Berkay karar verici.
+- **Backtest** (n=122, payout=PROXY): V9≈V5.1 (CI dev). Ablation: L4+L5 marjinal+ (coverage
+  4.1%→8.2%), L6 form-AVOID hit-rate'i düşürüyor→yumuşat. Strateji ROI'ları tek-hit → güvenilmez.
+- **Kelly/MKS portföy**: bu turda 3-strateji router + Main/Coverage/Spread builder kuruldu.
+  Kelly stake bağlama + gerçek-dividend ROI = forward (bet_diary) sonrası.
+- **Aktivasyon**: 4 hafta shadow gözlem + haftalık kalibrasyon → L4+L5 öncelikli, Berkay onayı.
+- **Ref**: Benter (1994, caveat'lı), Crist (A/B/C), Kelly (1956); Shannon entropy (surprise).
 
 ## PHASE 5.7 — LATE MONEY SAMPLING + CLV
 - **Precondition**: 5.3 (tek sistem); pipeline'a T-30/T-15/T-5/T-1 AGF fetch eklenebilir.

@@ -154,6 +154,23 @@ agftablosu.com çökerse hepsi çöker. Fallback sadece **kod hatalarına / modu
   PATCH_5_3_RETIRE_V7 (coupon @2584 + V7 ANALİZ @4491), PATCH_5_3_DEFER_SMARTGENIS (@2583).
   build+snapshot shadow'da KALIR (v8 girdisi). Banner sade bilgi notuna güncellendi. Smoke 7/7:
   kullanıcı mesajı **15820→2421 char** (tek V5.1 kupon). **Berkay: rollback `TJK_KUPON_MODE=all`.**
+- **Phase 5.6 — 9-LAYER + 3 STRATEJİ ROUTER + KALİBRASYON DÖNGÜSÜ: COMPLETE / shadow gözlem** →
+  `audit/reports/phase_5_6_*.md`, `simulation/v9/`. **Sistem bot DEĞİL — Berkay karar verici**
+  (drawdown/Kelly safeguard YOK, bütçe=öneri). Prod davranışı DEĞİŞMEZ (env-flag default off).
+  - **9-layer** (`simulation/v9/`): L1 carryover (manuel env `TJK_CARRYOVER_DAY`, oto-tespit
+    viyabil değil), L2 surprise (entropy→fav-loss isotonic), L3 Benter (⚠ collinearity corr=1.0,
+    proxy=AGF → "Benter-style", gerçek değil), L4-L8 aggregator. **ÇİFT-SAYIM ÖNLENDİ**:
+    v9_final=raw×L4_flb×L5_niche×L6_form; L7/L8=1.0 (favori-overbet/skill zaten L4/L5'te). İki skor:
+    v9_final (prob/coverage) + value_score (edge/favori-yıkma).
+  - **Router** (Kangal>Favori Yıkma>Tam Sistem>Pas, veri-türevli eşik: med_gap=0.0572, fy=AGF≥%30
+    & v9-top3-dışı, Kangal=n_fy≥4): normal gün TamSistem 35%/FavoriYıkma 43%/Kangal 5%/Pas 17%;
+    devir-2 Kangal→23 (L1 override). 3 builder (Main/Coverage/Spread, favori-dışla, Ana/Yıkıcı).
+  - **PATCH_5_6_V9_SHADOW** (env `TJK_V8_STRATEGY_ROUTER` off): `result['v9_shadow']` META;
+    Telegram DOKUNULMAZ (karar-swap UX turu). graceful (prod jockey/form yok→L5/L6 neutral). Smoke 8/8.
+  - **Backtest** (n=122, payout=PROXY): V9≈V5.1 ayırt edilemez (CI dev). **Ablation**: raw 4.1%→
+    L4 5.7%→**L4+L5 8.2%**→+L6 5.7% (**L4+L5 marjinal+, L6 form-AVOID hit-rate'i DÜŞÜRÜYOR**→yumuşat).
+  - **Kalibrasyon döngüsü**: `weekly_calibration_report.py` (sinyal-doğrulama: FLB/skill tag yönü
+    DOĞRU) + `audit/cli/log_play.py` (Berkay feedback). **Berkay: pazartesi haftalık rapor + oyun logu.**
 - **Phase 5.8 — PUBLIC BIAS + ANOMALY: COMPLETE** (prod'a SIFIR dokunuş, internal) →
   `audit/reports/phase_5_8_*.md`, `simulation/analytics/`. ⚠ anomaly=İSTATİSTİKSEL (fixing değil), internal.
   - **Niş edge** (P4): jokey-skill edge **walk-forward GERÇEK** (skillHI gap +0.015 OOS; in-sample
