@@ -12,8 +12,11 @@ Telegram + Railway dashboard. Bonus: Ganyan Value Bot (model > piyasa) ayrı ala
 - `dashboard/source_consensus.py` → SHADOW (read-only). Phase 1B.1'de
   `expert_consensus.build_consensus` (at-level, result['consensus']) tabanlı.
   consensus_top_pick dolu. dual-write: JSONL + event_store. Kupon kararını etkilemez.
-- `dashboard/bet_diary.py` → Phase 1E.0 bet günlüğü (CLV/EV/Kelly math + persistence).
-  Pipeline entegrasyonu Phase 1E.1. dual-write JSONL + event_store('bet_decision')
+- `dashboard/bet_diary.py` → bet günlüğü (CLV/EV/Kelly math + persistence).
+  dual-write JSONL + event_store('bet_decision')
+- `dashboard/bet_diary_writer.py` → pipeline ↔ bet_diary köprüsü (Phase 1E.1/1E.2).
+  write_predictions_for_altili (yerli_engine, top-3/ayak) + update_outcomes_for_date
+  (retro, sonuç+P&L). Loose coupling, never-raises, sadece KAYIT (davranış değişmez)
 - `dashboard/event_store.py` → Phase 1A.5 persistent storage (Supabase `pipeline_events`,
   writer-bug'tan bağımsız; URL yoksa graceful no-op)
 - `dashboard/migrations/{m3_pipeline_events,m4_bet_diary}.sql` → additive migration'lar
@@ -87,9 +90,24 @@ agftablosu.com çökerse hepsi çöker. Fallback sadece **kod hatalarına / modu
   shadow consensus sonrasına taşındı (read-only). `phase_1b1_*` raporları.
 - **Phase 1E.0 — BET DIARY SCAFFOLDING: COMPLETE** → `bet_diary.py` (CLV/EV/Kelly +
   persistence) + `m4_bet_diary.sql`. CLV finansal-doğru log(odds_pred/odds_close).
-  Pipeline entegrasyonu Phase 1E.1.
-- **Phase 1B (kalan)** — confidence eşikleri kalibrasyonu: ~7-10 gün shadow accumulate
-  (event_store apply sonrası) → eşik tuning. `phase_1b_plan_revised.md`. Model birincil.
+- **Phase 1E.1 — PREDICTION WRITE: COMPLETE** → her altılı top-3/ayak → BetRecord
+  (`bet_diary_writer.write_predictions_for_altili`, yerli_engine'de). did_we_bet=value_horses.
+- **Phase 1E.2 — OUTCOME UPDATE: COMPLETE** → retro sonuçları → did_we_win + P&L
+  (`update_outcomes_for_date`, retro.py'de). race_number=ayak eşleşmesi.
+- **Phase 1E.3 — TRUE CLV: DEFERRED** → pre-race AGF fetch gerek; AGF 403 nedeniyle
+  Phase 4 proxy'e bağımlı. `phase_1e3_clv_capture_plan.md`. Şu an clv=None.
+- **Phase 1F — BET DIARY REPORT: COMPLETE** → `audit/04_bet_diary_report.py` (6 section).
+  Veri birikince çalışır (şu an boş → "no data").
+- **Phase 1B (kalan)** — confidence eşikleri kalibrasyonu: bet_diary'de n≥50 + 5+ gün
+  birikince (migration apply sonrası) → Section 2/5 eşik tuning. Model birincil.
+
+## Production activation checklist (Berkay)
+1. **Migration apply**: `phase_1a5_migration_apply_playbook.md` (m3 + m4, ~5 dk).
+2. **Sonraki deploy**: pipeline otomatik bet_diary'ye yazar (her tahmin → write,
+   her retro → outcome). Kod hazır, ek değişiklik gerekmez.
+3. **~1 hafta sonra**: `python audit/04_bet_diary_report.py` → gerçek edge raporu.
+4. **Phase 1B**: n≥50 birikince confidence threshold kalibrasyonu.
+NOT: AGF prod 403 (SO-5) → prediction/retro AGF'si prod'da kırılgan; lokal IP çalışıyor.
 - **Phase 1C (pending)** — low-confidence race flag/skip
 - **Phase 1D (pending)** — calibration dataset generation
 - **Phase 1E.1 (pending)** — bet_diary pipeline entegrasyonu (gerçek prediction kaydı)
