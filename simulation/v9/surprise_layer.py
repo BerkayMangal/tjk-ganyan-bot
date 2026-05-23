@@ -32,6 +32,9 @@ def _fit():
     global _iso, _base_rate
     if _iso is not None:
         return _iso
+    if not os.path.exists(DATASET):   # PROD guard (5.7.0): dataset yok → base_rate fallback, crash YOK
+        _iso = False
+        return _iso
     legs = defaultdict(list)
     for r in csv.DictReader(open(DATASET, encoding="utf-8")):
         wf = (r.get("won_flag") or "").strip()

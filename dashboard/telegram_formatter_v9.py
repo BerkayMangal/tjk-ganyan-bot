@@ -154,16 +154,23 @@ def format_day_message(all_results, date_str) -> str:
     from simulation.v9.carryover_detector import detect_carryover_state
     cs = detect_carryover_state(date_str)
     blocks = []
+    n_ok = 0          # gerçek kupon üretilen altılı sayısı
+    n_total = 0
     for r in all_results or []:
         if r.get("error"):
             continue
+        n_total += 1
         hippo = r.get("hippodrome", "?"); no = r.get("altili_no", 1); t = r.get("time", "")
         try:
             rr = dict(r); rr.setdefault("date", date_str)
             out = run_pipeline(build_v9_race(rr, None), cs)
             blocks.append(format_message(out, hippo, no, t))
+            n_ok += 1
         except Exception as e:
             blocks.append(f"🏇 {hippo} #{no}\n⚠ v9 hesap hatası (atlandı): {repr(e)[:50]}")
     if not blocks:
         raise RuntimeError("v9: hiç blok üretilemedi")
+    # DEFENSE-IN-DEPTH (Phase 5.7.0): hiç gerçek kupon yoksa (hepsi hata) → raise → V5.1 fallback
+    if n_total > 0 and n_ok == 0:
+        raise RuntimeError(f"v9: {n_total} altılının HEPSİ hata verdi → V5.1 fallback")
     return ("\n\n" + ("━" * 18) + "\n\n").join(blocks)

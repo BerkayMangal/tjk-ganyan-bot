@@ -42,6 +42,10 @@ def _load_rich():
 
 
 def _build_enriched():
+    # PROD guard (Phase 5.7.0 hotfix): complete.csv gitignored → prod'da YOK. Yoksa boş dön
+    # (v9 graceful degrade: L5 skill / risk_filter nötr). Crash YOK.
+    if not os.path.exists(DATASET):
+        return []
     rich = _load_rich()
     rows = list(csv.DictReader(open(DATASET, encoding="utf-8")))
     # ayak grupları
