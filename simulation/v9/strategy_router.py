@@ -2,17 +2,17 @@
 
 Eşikler VERİ-TÜREVLİ (122-altılı kalibrasyon, phase_5_6_strategy_router_design.md):
 - MED_GAP=0.0572 (top1-top2 v9_final gap medyanı) — Tam Sistem "belirgin ayak"
-- KANGAL_FY=4 (favori-yıkma ayak sayısı 95. pct → nadir/özel) — Kangal eşiği
-- favori eşiği %30 (Phase 5.5: favori-overbet ≥30 başlar)
-NOT: "risk-clean" şartı KALDIRILDI — çok-favori-yıkma yüksek-AGF favori = yüksek FLB-risk →
-risk-clean ∩ fy≥3 ≈ boş (çelişkili). Kangal nadir'liği fy≥4 (95.pct) + carryover ile sağlanır.
-Bütçe bantları = ÖNERİ (sistem durdurmaz; Berkay karar verici). payout=PROXY.
+- KANGAL_FY=4 (favori-yıkma ayak sayısı → nadir/özel) — Kangal eşiği
+- HEAVY_FAV_PCT=40 (Phase 5.5: ≥40 favori AĞIR overbet, corr~0.55; PROD-available FLB sinyali)
+NOT (Phase 5.6.5): favori-yıkma artık "favori v9-top3 dışı" DEĞİL (o L6-hard-zero'ya bağlıydı,
+softening sonrası öldü + prod'da L5/L6 yok). Yeni: AĞIR favori (agf≥40) = FLB-overbet fade hedefi.
+Tamamen L4(FLB)+agf ile çalışır → PROD'da (jokey/form yokken) da tetiklenir. Bütçe=öneri. payout=PROXY.
 """
 from __future__ import annotations
 
 MED_GAP = 0.0572
 KANGAL_FY = 4
-FAV_AGF_PCT = 30.0
+HEAVY_FAV_PCT = 40.0
 _rf = None
 
 
@@ -31,13 +31,15 @@ def _leg_signals(agg_leg, race_leg):
     if len(profs) >= 2:
         sig["gap"] = profs[0]["v9_final_score"] - profs[1]["v9_final_score"]
     agf_sorted = sorted(profs, key=lambda p: -p["agf_pct"])
-    if agf_sorted and agf_sorted[0]["agf_pct"] >= FAV_AGF_PCT:
+    if agf_sorted and agf_sorted[0]["agf_pct"] >= HEAVY_FAV_PCT:   # AĞIR favori = FLB-overbet fade hedefi
         fav = agf_sorted[0]
         sig["fav_number"] = fav["number"]
-        top3 = [p["number"] for p in profs[:3]]
-        if fav["number"] not in top3:               # sistem favoriyi top-3 dışına itti
-            sig["is_fy"] = True
-            sig["fy_alt_numbers"] = [p["number"] for p in profs[:5]]  # v9 value top-5
+        sig["fav_agf"] = fav["agf_pct"]
+        sig["is_fy"] = True
+        # value alternatifleri: favori DIŞI, value_score (FLB-edge) en yüksek 5
+        alts = sorted([p for p in profs if p["number"] != fav["number"]],
+                      key=lambda p: -p.get("value_score", 0))
+        sig["fy_alt_numbers"] = [p["number"] for p in alts[:5]]
     rf = _risk()
     risks = [rf.risk_score(h.get("agf_pct"), h.get("jockey"), h.get("form_score"))[0]
              for h in (race_leg.get("horses") or [])]
