@@ -10,7 +10,13 @@ Telegram + Railway dashboard. Bonus: Ganyan Value Bot (model > piyasa) ayrı ala
 - `main.py`, `engine/kupon.py`, `engine/commentary.py` → LEGACY, prod'da koşmuyor
 - `dashboard/yerli_engine.py` (5656 satır) → ASIL prod motor, scheduler buradan
 - `dashboard/source_consensus.py` → Phase 1A SHADOW validator wrapper (read-only,
-  kupon kararını etkilemez; multi_source_validator'ı sarar, JSONL log'a yazar)
+  kupon kararını etkilemez; dual-write: JSONL + event_store)
+- `dashboard/event_store.py` → Phase 1A.5 persistent storage (Supabase `pipeline_events`,
+  writer-bug'tan bağımsız; URL yoksa graceful no-op)
+- `dashboard/migrations/m3_pipeline_events.sql` → pipeline_events additive migration
+  (MANUEL APPLY gerekli — Berkay TJK_MEASURE_DB_URL set edip uygulayınca aktif olur)
+- AGF resilience: `multi_source_validator` + `agf_scraper` cloudscraper'lı (fallback
+  requests). NOT: prod 403 IP-based block, cloudscraper çözmez → Phase 4 proxy (SO-5)
 - `Dockerfile` ve `railway.toml` ikisi de `cd dashboard && gunicorn app:app` çalıştırıyor
 
 README henüz `main.py --schedule`'dan bahsediyor → yanıltıcı, ileride güncellenecek.
@@ -64,8 +70,16 @@ agftablosu.com çökerse hepsi çöker. Fallback sadece **kod hatalarına / modu
 - **Phase 1A — SHADOW validator integration: LIVE** → `audit/reports/validator_shadow_log.jsonl`
   Validator pipeline'da read-only gözlemliyor, karar vermiyor. Rapor:
   `python audit/03_validator_shadow_report.py [--days N]`
-- **Phase 1B (pending)** — confidence-based source selection (ön koşul: at-level
-  consensus, scope_out SO-1)
+- **Phase 1A.5 — STORAGE + AGF HARDENING + CAPABILITY: COMPLETE**
+  - Persistent storage: `event_store.py` + `migrations/m3_pipeline_events.sql`
+    (MANUEL APPLY bekliyor — writer-bug + ephemeral /data bypass)
+  - AGF: multi_source_validator cloudscraper'a yükseltildi; 403 kök neden IP-block
+    (SO-5, Phase 4 proxy)
+  - Bulgu: at-level consensus ZATEN var (`expert_consensus.build_consensus`), Phase 1A
+    yanlış modülü (multi_source_validator) shadow'lamış. Detay: `phase_1b_plan_revised.md`
+- **Phase 1B (REVISED)** — `audit/reports/phase_1b_plan_revised.md`. SENARYO A:
+  shadow'u expert_consensus consensus field'ına bağla (consensus_top_pick artık var),
+  confidence = all_agree/super_banko/consensus_count. Model birincil kalır.
 - **Phase 1C (pending)** — low-confidence race flag/skip
 - **Phase 1D (pending)** — calibration dataset generation
 - **Phase 2 (pending)** — kalibrasyon (Brier/ECE/reliability)
