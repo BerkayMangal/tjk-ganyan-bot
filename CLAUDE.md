@@ -152,6 +152,19 @@ agftablosu.com çökerse hepsi çöker. Fallback sadece **kod hatalarına / modu
 - **Phase 5.3.5 — RETIREMENT EXEC + v8 DESIGN: NEXT** → flag-guarded (TJK_SINGLE_KUPON) tek-kupon
   (v7/smart_genis shadow'da kalır) + v8 design (V5.1 + FLB-value 5.5 + smart_genis classification).
   Berkay onayı gerek. Plan: `docs/PHASE_5_2_TO_5_9_ROADMAP.md` + `phase_5_3_decision.md` (E.5).
+- **Phase 5.5 — FLB COMPENSATION: COMPLETE / aktivasyon SHADOW** → `audit/reports/phase_5_5_*.md`.
+  - `simulation/calibrators/flb_compensator.py` + `flb_compensator.pkl`: multiplier(agf)=
+    clamp(winrate_calib(agf)/agf, [0.507,2.01]). CV→isotonic. Magic number YOK (clamp veri-türevli).
+  - **PATCH_5_5_FLB_COMPENSATION** (shadow, env `TJK_FLB_ACTIVE` default OFF): build_kupon
+    `_maybe_flb_reweight` (comp_score=score×mult, ON'da re-sort) + yerli_engine all_horses meta
+    (flb_multiplier/flb_compensated_mp). OFF → prod AYNEN. Smoke 7/7.
+  - Backtest (n=122): comp 9 hit vs raw 6, cost/hit 15883<20171. Paired: Wilcoxon p=0.0001 ✓,
+    Cohen's d=0.180 (<0.2), payout PROXY + fallback rejimi → **KISMI PASS → SHADOW** (aktive değil).
+  - 🟢 **TR public-bias** (zengin enrichment 8073 satır age/jockey/distance): **H2 jokey skill
+    UNDERBET** (p=0.000, en güçlü — Phase 5.8 value); H4 yaşlı + H6 sprint favorileri overbet;
+    H3 recency confound (actionable değil). `backfill_outcomes_rich.py`, `tr_bias_analysis.py`.
+  - Berkay: AKSİYON YOK (shadow OFF). Forward (bet_diary model_prob+outcome) → prod-rejimi
+    backtest → aktivasyon yeniden değerlendir. Rollback: env=0.
 
 ## Production activation checklist (Berkay)
 1. **Migration apply**: `phase_1a5_migration_apply_playbook.md` (m3 + m4, ~5 dk).

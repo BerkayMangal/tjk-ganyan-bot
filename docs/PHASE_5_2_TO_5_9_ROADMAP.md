@@ -80,13 +80,18 @@ Hepsinin altında **kalibrasyon** (adım 3'ün ön koşulu) var → Phase 5.2 il
 - **KPI**: backtest ROI w1=1,w2=0 (model-only) vs optimal (w1,w2).
 - **Ref**: **Benter (1994)** — fundamental+public logit, $1B HK syndicate.
 
-## PHASE 5.5 — FLB KOMPANSASYONU
-- **Precondition**: 5.2 calibration.
-- **Scope**: longshot win-rate eğrisi (AGF% bin × gerçek win-rate); favori-longshot bias
-  ceza fonksiyonu → value_score düzeltmesi (longshot'ları cezalandır, favori value'yu artır).
-- **Deliverable**: FLB ceza fonksiyonu + value_score entegrasyonu (shadow önce).
-- **KPI**: longshot pick subset ROI before/after; favori subset ROI.
-- **Ref**: **Griffith (1949)** — FLB keşfi, tüm pari-mutuel pazarlarda persist.
+## PHASE 5.5 — FLB KOMPANSASYONU 🟢 COMPLETE / aktivasyon SHADOW
+- **Sonuç**: `flb_compensator.py` (multiplier=clamp(winrate_calib(agf)/agf, [0.507,2.01]),
+  CV→isotonic, magic number YOK). PATCH_5_5_FLB_COMPENSATION shadow (build_kupon, env
+  TJK_FLB_ACTIVE OFF default). Detay: `audit/reports/phase_5_5_*.md`.
+- **Backtest** (n=122): comp 9 hit vs raw 6, cost/hit 15883<20171. Wilcoxon p=0.0001 ✓ ama
+  Cohen's d=0.180<0.2 + payout PROXY + fallback rejimi (score≈agf, prod=model_prob değil) →
+  **KISMI PASS → SHADOW** (aktivasyon forward validation bekler).
+- **TR public-bias** (zengin 8073 satır): **H2 jokey-skill UNDERBET** (p=0.000, Phase 5.8 value);
+  H4 yaşlı + H6 sprint favorileri overbet; H3 recency confound. Reverse-FLB (Busche-Hall 1988).
+- **Ref**: Griffith (1949), Snowberg-Wolfers (2010), Busche-Hall (1988), Benter (1994).
+- **Aktivasyon**: forward (bet_diary model_prob+outcome) → prod-rejimi backtest → d>0.2 ise
+  TJK_FLB_ACTIVE=1. Rollback: env=0 / pkl sil.
 
 ## PHASE 5.6 — MULTI-TICKET STRATEGY (MKS) + KELLY
 - **Precondition**: 5.3 (tek sistem) + 5.4 (combined prob).
@@ -108,9 +113,13 @@ Hepsinin altında **kalibrasyon** (adım 3'ün ön koşulu) var → Phase 5.2 il
 
 ## PHASE 5.8 — PUBLIC BIAS ANALYZER
 - **Precondition**: bet_diary ≥60 gün (n≥200).
+- 🌱 **Phase 5.5 PART E tohum bulgular** (`phase_5_5_tr_public_bias_analysis.md`): **H2 jokey-skill
+  UNDERBET** (top-10 jokey gap +0.023, p=0.000 — EN GÜÇLÜ, value sinyali, hipotezin tersi);
+  H4 yaşlı-favori + H6 sprint-favori daha overbet (segment-spesifik FLB cezası); H3 recency
+  CONFOUND (de-confound şart). Başlangıç noktası bunlar.
 - **Scope**: aylık iş — hangi alt-kategorilerde (hipodrom/breed/race_class/jokey)
-  disagree=true + win=true + ROI>0. Model ağırlığını o niş'lere yönlendir. TR-spesifik
-  hipotezler: popüler jokey overbet, localism (ev sahibi hipodrom), favori-overbet.
+  disagree=true + win=true + ROI>0. Model ağırlığını o niş'lere yönlendir. TR-spesifik:
+  jokey-skill bonusu (H2) + yaşlı/sprint favori cezası (H4/H6) — FLB favori-cezasıyla BİRLEŞTİR.
 - **Deliverable**: aylık bias raporu + niş-specialization önerisi.
 - **KPI**: niş kategori ROI vs aggregate ROI.
 - **Ref**: **Iwen et al (2024)** entropy-based bracket pools; public bias literatürü.
