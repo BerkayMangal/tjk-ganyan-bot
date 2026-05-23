@@ -2590,6 +2590,15 @@ def run_yerli_pipeline(target_date=None):
                 base_msg = _format_v7_for_telegram(base_msg, all_results)  # PATCH_FAZ7E_V7_TELEGRAM_BLOCK_v1
         except Exception as _e_ann:
             logger.warning(f"[smart] telegram annotation failed: {_e_ann}")
+        # PATCH_5_6_5_HYBRID_LIVE — v9 strateji router CANLI. base_msg yukarıda V5.1 olarak kuruldu
+        # (fallback sigortası); v9 BAŞARILIYSA onu kullan, HATA atarsa sessizce V5.1'de kal (log).
+        try:
+            from telegram_formatter_v9 import format_day_message
+            _v9msg = format_day_message(all_results, date_str)
+            if _v9msg and _v9msg.strip():
+                base_msg = _v9msg
+        except Exception as _e_v9live:
+            logger.warning(f"[v9] HYBRID_LIVE → V5.1 fallback: {repr(_e_v9live)[:120]}")
         banner_lines = [LIVE_TEST_DISCLAIMER,
                         f"📊 Veri kalitesi: {dq_level} (skor {dq_score})"]
         if dq_level in ("WARNING", "BAD"):
@@ -5668,6 +5677,31 @@ def run_daily_recap(target_date_str=None, send_telegram=False):
 
         tg_body = _format_telegram_recap_v7(target_date_str, per_altili, totals)
         recap["telegram_body"] = tg_body
+
+        # PATCH_5_6_5_HYBRID_LIVE — v9 akşam retro + sinyal-validation log (guarded, recap'i bozmaz)
+        try:
+            from simulation.v9.pipeline import build_v9_race, run_pipeline
+            from retro_formatter_v9 import format_retro_message, log_v9_signals
+            _v9retro = []
+            for alt in (snap.get("hippodromes") or []):
+                o = official_idx.get((_normalize_hippo_v7(alt.get("hippodrome")), alt.get("altili_no")))
+                if not o:
+                    continue
+                _wmap = {w.get("leg_number"): w.get("horse_number") for w in (o.get("winners") or [])}
+                winners = [_wmap.get(i) for i in range(1, 7)]
+                if None in winners:
+                    continue
+                _rr = dict(alt); _rr.setdefault("date", target_date_str)
+                _out = run_pipeline(build_v9_race(_rr, None))
+                log_v9_signals(_out, winners, target_date_str, alt.get("hippodrome"))
+                _v9retro.append(format_retro_message(
+                    alt.get("hippodrome"), alt.get("time", ""), _out["routing"]["strategy"],
+                    winners, _out["kupon"].get("legs_selected") or [], _out["aggregated"]["legs"]))
+            if _v9retro:
+                tg_body = tg_body + "\n\n" + "\n\n".join(_v9retro)
+                recap["telegram_body"] = tg_body
+        except Exception as _e_v9retro:
+            logger.warning(f"[v9] retro hook skip: {repr(_e_v9retro)[:120]}")
 
         sent = False
         if send_telegram:

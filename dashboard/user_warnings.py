@@ -12,9 +12,9 @@ import os
 
 PATCH_5_1_5_USER_WARNING = "phase_5_2_calibration_period_banner"
 
-WARNING_BANNER = """ℹ️ V5.1 TEK KUPON (kalibrasyon dönemi)
-Sistem artık tek kupon üretiyor (V5.1). V7/smart_genis sadeleştirme için kaldırıldı.
-Model kalibrasyonu sürüyor; FLB düzeltici shadow'da test ediliyor (henüz aktif değil)."""
+WARNING_BANNER = """ℹ️ Phase 5.6.5 HYBRID CANLI — 3 strateji router aktif
+Tam Sistem / Favori Yıkma / Kangal / Pas önerileri + akşam retro. V5.1 fallback'te.
+Sinyal kalibrasyonu sürüyor (FLB+surprise canlı; jokey/form L5/L6 nötr). Bot DEĞİL — karar sende."""
 
 
 def get_banner() -> str:
