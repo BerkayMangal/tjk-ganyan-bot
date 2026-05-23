@@ -1,15 +1,16 @@
-"""Phase 5.1.5 — Geçmiş AGF backfill (agftahmin.com).
+"""Phase 5.1.5/5.2 — Geçmiş AGF backfill (agftahmin.com).
 
-agftahmin.com/agf-tablosu/{YYYY-MM-DD} geçmiş AGF arşivi tutuyor (Phase 5.1.5 keşfi).
-agftablosu.com geçmiş vermiyordu; agftahmin veriyor → backtest FAST track açılır.
+agftahmin.com/agf-tablosu/{YYYY-MM-DD} geçmiş AGF arşivi. Gün-bazlı tek istek tüm
+hipodromları verir (verimli: 90 gün = 90 istek). Tablo formatı: "N. AYAK" başlık +
+"{at_no} (%{agf_pct})" satırları (agftablosu ile aynı). At İSMİ yok → at_no ile join.
 
-NOT: agftahmin "AGF Tahmin" başlığı kullanıyor — bunun gerçek piyasa AGF'i mi yoksa
-sitenin kendi tahmini mi olduğu DOĞRULANMALI (agftablosu.com ile aynı-gün cross-check).
-Veri kalitesi (AGF% toplam ~100/ayak) burada ölçülür. Bu bir SKELETON — tam at-eşleştirme
-Phase 5.2'de. Read-only; prod'a bağlı değil. simulation/ altında (backtest aracı).
+Read-only, prod'a bağlı değil. politeness 1.2s/req. simulation/ altında (backtest aracı).
+NOT: agftahmin AGF'si = TJK piyasa AGF'si mi → Phase 5.2 cross-check (PART B) doğrular.
 """
 from __future__ import annotations
 
+import json
+import os
 import re
 import time
 from typing import Optional
@@ -21,69 +22,90 @@ BASE = "https://www.agftahmin.com"
 HDR = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0",
        "Accept-Encoding": "gzip, deflate"}
 TR_HIPPO = ("ankara", "istanbul", "i̇stanbul", "izmir", "i̇zmir", "bursa",
-            "adana", "kocaeli", "antalya", "sanliurfa", "elaz", "diyarb")
-POLITE_SEC = 1.5
+            "adana", "kocaeli", "antalya", "sanliurfa", "şanlıurfa", "elaz", "diyarb")
+POLITE_SEC = 1.2
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CACHE_DIR = os.path.join(_REPO, "data", "backfill", "agftahmin")
 
-# h3 başlık: "2026-05-16  - 13:30 Ankara AGF Tahmin 1. Altılı"
 _HEAD_RE = re.compile(r"(\d{4}-\d{2}-\d{2}).*?(\d{1,2}:\d{2})\s+(.+?)\s+AGF\s+Tahmin\s+(\d+)",
                       re.IGNORECASE)
-# at AGF: "3 (%42.50)" benzeri
-_AGF_RE = re.compile(r"%\s?(\d{1,2}[.,]\d{1,2})")
+_AYAK_RE = re.compile(r"(\d)\.\s*AYAK", re.IGNORECASE)
+_AT_RE = re.compile(r"(\d+)\s*\(%\s?(\d{1,2}[.,]\d{1,2})\)")
 
 
-def fetch_agf_for_date(date_str: str, only_tr: bool = True, timeout: int = 15) -> dict:
-    """date_str = 'YYYY-MM-DD'. Returns {date, altilis:[{hippodrome, altili_no, time,
-    agf_pcts:[float]}], source, ok}. Skeleton parse (altılı + AGF% listesi)."""
-    out = {"date": date_str, "source": "agftahmin.com", "altilis": [], "ok": False, "error": None}
-    try:
-        r = requests.get(f"{BASE}/agf-tablosu/{date_str}", headers=HDR, timeout=timeout)
-        if r.status_code != 200:
+def _norm_tr(h: str) -> bool:
+    return any(t in (h or "").lower() for t in TR_HIPPO)
+
+
+def fetch_agf_for_date(date_str: str, only_tr: bool = True, timeout: int = 20,
+                       retries: int = 3) -> dict:
+    """date_str='YYYY-MM-DD'. Returns {date, source, ok, altilis:[{hippodrome,
+    altili_no, time, legs:{ayak:[{at_no, agf_pct}]}}]}. At-level (at_no + AGF%)."""
+    out = {"date": date_str, "source": "agftahmin.com", "ok": False, "error": None, "altilis": []}
+    html = None
+    for attempt in range(retries):
+        try:
+            r = requests.get(f"{BASE}/agf-tablosu/{date_str}", headers=HDR, timeout=timeout)
+            if r.status_code == 200:
+                html = r.text
+                break
             out["error"] = f"HTTP {r.status_code}"
-            return out
-        soup = BeautifulSoup(r.text, "html.parser")
-        for h in soup.find_all("h3"):
-            txt = h.get_text(strip=True)
-            m = _HEAD_RE.search(txt)
-            if not m:
-                continue
-            hd, tm, hippo, alt_no = m.group(1), m.group(2), m.group(3).strip(), int(m.group(4))
-            if hd != date_str:
-                continue  # başka tarih (footer/arşiv linki)
-            if only_tr and not any(t in hippo.lower() for t in TR_HIPPO):
-                continue
-            # h3'ten sonraki blokta AGF%'leri topla (skeleton — sonraki h3'e kadar)
-            agf_pcts = []
-            sib = h.find_next_sibling()
-            steps = 0
-            while sib and steps < 30:
-                if getattr(sib, "name", None) == "h3":
-                    break
-                agf_pcts += [float(x.replace(",", ".")) for x in _AGF_RE.findall(str(sib))]
-                sib = sib.find_next_sibling()
-                steps += 1
-            out["altilis"].append({
-                "hippodrome": hippo, "altili_no": alt_no, "time": tm,
-                "agf_pcts": agf_pcts, "n_agf": len(agf_pcts),
-            })
-        out["ok"] = bool(out["altilis"])
-    except Exception as e:
-        out["error"] = repr(e)[:120]
+        except Exception as e:
+            out["error"] = repr(e)[:100]
+        time.sleep(1.5 * (attempt + 1))  # exponential backoff
+    if not html:
+        return out
+
+    soup = BeautifulSoup(html, "html.parser")
+    cur = None
+    # h3 (altılı başlığı) ve table (ayak) sırayla gez
+    for el in soup.find_all(["h3", "table"]):
+        if el.name == "h3":
+            m = _HEAD_RE.search(el.get_text(strip=True))
+            if m and m.group(1) == date_str and (not only_tr or _norm_tr(m.group(3))):
+                cur = {"hippodrome": m.group(3).strip(), "altili_no": int(m.group(4)),
+                       "time": m.group(2), "legs": {}}
+                out["altilis"].append(cur)
+            else:
+                cur = None
+        elif el.name == "table" and cur is not None:
+            ayak = None
+            for tr in el.find_all("tr"):
+                txt = tr.get_text(" ", strip=True)
+                ma = _AYAK_RE.search(txt)
+                if ma:
+                    ayak = int(ma.group(1))
+                    cur["legs"].setdefault(ayak, [])
+                    continue
+                mt = _AT_RE.search(txt)
+                if mt and ayak is not None:
+                    cur["legs"][ayak].append(
+                        {"at_no": int(mt.group(1)), "agf_pct": float(mt.group(2).replace(",", "."))})
+    out["ok"] = bool(out["altilis"])
     return out
 
 
+def save_day(day: dict) -> Optional[str]:
+    if not day.get("ok"):
+        return None
+    d = day["date"]
+    os.makedirs(os.path.join(CACHE_DIR, d), exist_ok=True)
+    path = os.path.join(CACHE_DIR, d, "agf.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(day, f, ensure_ascii=False, indent=1)
+    return path
+
+
+def is_cached(date_str: str) -> bool:
+    return os.path.exists(os.path.join(CACHE_DIR, date_str, "agf.json"))
+
+
 def quality_check(day: dict) -> dict:
-    """AGF% toplamı/ayak ~100 mü? (kaba veri kalitesi). agf_pcts ayak-ayrımsız toplandı →
-    altılı başına toplam ≈ 600 (6 ayak × ~100) beklenir."""
+    """Ayak başına AGF% toplamı ~100 mü (piyasa normalizasyonu)."""
     notes = []
     for alt in day.get("altilis", []):
-        total = sum(alt.get("agf_pcts", []))
+        per_leg = {ay: round(sum(h["agf_pct"] for h in hs), 1) for ay, hs in alt["legs"].items()}
+        ok = all(80 <= v <= 120 for v in per_leg.values()) if per_leg else False
         notes.append({"hippodrome": alt["hippodrome"], "altili_no": alt["altili_no"],
-                      "n_agf": alt["n_agf"], "agf_sum": round(total, 1),
-                      "approx_6x100": 480 <= total <= 720})
+                      "n_legs": len(alt["legs"]), "per_leg_agf_sum": per_leg, "legs_ok": ok})
     return {"date": day.get("date"), "altili_count": len(day.get("altilis", [])), "per_altili": notes}
-
-
-if __name__ == "__main__":
-    import json
-    d = fetch_agf_for_date("2026-05-16")
-    print(json.dumps(quality_check(d), ensure_ascii=False, indent=2))
