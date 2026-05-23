@@ -49,9 +49,13 @@ def _flb_mult(agf_pct):
         return 1.0
 
 
-def profile_for_horse(horse: dict, leg_surprise=None) -> dict:
-    """horse: {number, agf_pct, score, jockey?, form_score?}. → v9 profile dict."""
+def profile_for_horse(horse: dict, leg_surprise=None, layers=None) -> dict:
+    """horse: {number, agf_pct, score, jockey?, form_score?}. → v9 profile dict.
+
+    layers: None=tümü; aksi halde aktif layer seti (ablation), ör. {"L4","L5"}. Pasif layer mult=1.
+    """
     _ensure()
+    _on = (lambda L: layers is None or L in layers)
     agf = horse.get("agf_pct") or 0.0
     raw = horse.get("score")
     if raw is None:
@@ -62,7 +66,7 @@ def profile_for_horse(horse: dict, leg_surprise=None) -> dict:
     tags, bias_flags, niche_tags = [], [], []
 
     # L4 FLB (raw→kalibre)
-    flb = _flb_mult(agf)
+    flb = _flb_mult(agf) if _on("L4") else 1.0
     if flb > 1.05:
         tags.append("FLB+ (underbet — value)")
     elif flb < 0.95:
@@ -70,7 +74,7 @@ def profile_for_horse(horse: dict, leg_surprise=None) -> dict:
 
     # L5 niche (jokey-skill, ortogonal, OOS-validated, shrink yok ama bound'lu)
     niche = 1.0
-    sr = _skill_map.get(jockey) if jockey else None
+    sr = _skill_map.get(jockey) if (jockey and _on("L5")) else None
     if sr is not None and _base_rate:
         niche = min(_niche_hi, max(_niche_lo, 1 + sr / _base_rate))
         if niche > 1.03:
@@ -83,7 +87,7 @@ def profile_for_horse(horse: dict, leg_surprise=None) -> dict:
     # L6 form (yalnız temiz AVOID; value-taraf confound → nötr)
     form_mult = 1.0
     ai = agf / 100.0
-    if form is not None and form >= POOR_FORM and ai >= FAV_AGF:
+    if _on("L6") and form is not None and form >= POOR_FORM and ai >= FAV_AGF:
         form_mult = 0.0
         tags.append("AVOID: kötü-form + yüksek-AGF favori")
     elif form is not None and form <= GOOD_FORM and ai < LOW_AGF:
@@ -114,14 +118,15 @@ def profile_for_horse(horse: dict, leg_surprise=None) -> dict:
     }
 
 
-def aggregate_race(race: dict, carryover_state=None) -> dict:
-    """race.legs[*].horses → her ata profile ekler; leg'e surprise_prob; özel-gün etiketi."""
+def aggregate_race(race: dict, carryover_state=None, layers=None) -> dict:
+    """race.legs[*].horses → her ata profile ekler; leg'e surprise_prob; özel-gün etiketi.
+    layers: None=tümü; ablation için aktif layer seti."""
     from simulation.v9.surprise_layer import surprise_for_leg
     out_legs = []
     for leg in race.get("legs", []) or []:
         horses = leg.get("horses") or []
         sp = surprise_for_leg([h.get("agf_pct", 0) for h in horses])
-        profs = [profile_for_horse(h, sp) for h in horses]
+        profs = [profile_for_horse(h, sp, layers) for h in horses]
         profs.sort(key=lambda p: -p["v9_final_score"])
         out_legs.append({"ayak": leg.get("ayak"), "surprise_prob": sp, "profiles": profs})
     return {"date": race.get("date"), "hippodrome": race.get("hippodrome"),
