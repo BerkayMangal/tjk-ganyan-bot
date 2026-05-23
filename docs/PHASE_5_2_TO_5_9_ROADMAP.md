@@ -63,14 +63,13 @@ Hepsinin altında **kalibrasyon** (adım 3'ün ön koşulu) var → Phase 5.2 il
 - **Emeklilik**: plan hazır (PATCH_5_3_RETIRE_V7/_SMARTGENIS, kod-ref'li), EXEC Phase 5.3.5'te.
   PATCH_5_1_5_USER_WARNING: PART F'te tek-kupon'a güncellendi (tam kaldırma 5.4/5.5'te).
 
-## PHASE 5.3.5 — RETIREMENT EXEC + v8 DESIGN (NEXT)
-- **Precondition**: 5.3 karar (✅) + Berkay onayı.
-- **Scope**: (a) PATCH_5_3_RETIRE_V7/_SMARTGENIS guard'ları **env-flag** (TJK_SINGLE_KUPON)
-  arkasında uygula → Telegram TEK kupon (V5.1_dar); v7/smart_genis shadow'da hesaplanmaya devam.
-  (b) v8 design: V5.1 coverage iskeleti + FLB-value (5.5) + smart_genis classification-width
-  (forward model_prob gate'li). (c) tek-kupon smoke + banner güncelle.
-- **Deliverable**: flag-guarded retirement + v8 design dokümanı. KOD: guard+flag, builder dokunulmaz.
-- **KPI**: Telegram kupon sayısı 3→1; davranış flag-off'ta korunur.
+## PHASE 5.3.5 — RETIREMENT EXEC 🟢 COMPLETE
+- V7+smart_genis Telegram'dan ÇIKTI. env `TJK_KUPON_MODE` (default `v5_1_only`, rollback=`all`).
+  PATCH_5_3_RETIRE_V7 (@2584 coupon + @4491 V7 ANALİZ), PATCH_5_3_DEFER_SMARTGENIS (@2583).
+  build+snapshot shadow'da kalır (v8 girdisi). Banner sadeleşti. Smoke 7/7: mesaj 15820→2421 char.
+- **Berkay aksiyon**: rollback gerekirse Railway `TJK_KUPON_MODE=all`. Detay: `phase_5_3_5_*.md`.
+- v8 design (V5.1 + FLB-value 5.5 + smart_genis classification): Phase 5.6 MKS'de ele alınacak
+  (risk_filter + FLB + niş edge ile birlikte). Forward model_prob gate'li.
 
 ## PHASE 5.4 — BENTER KOMBİNASYONU
 - **Precondition**: 5.2 calibration.
@@ -93,8 +92,9 @@ Hepsinin altında **kalibrasyon** (adım 3'ün ön koşulu) var → Phase 5.2 il
 - **Aktivasyon**: forward (bet_diary model_prob+outcome) → prod-rejimi backtest → d>0.2 ise
   TJK_FLB_ACTIVE=1. Rollback: env=0 / pkl sil.
 
-## PHASE 5.6 — MULTI-TICKET STRATEGY (MKS) + KELLY
-- **Precondition**: 5.3 (tek sistem) + 5.4 (combined prob).
+## PHASE 5.6 — MULTI-TICKET STRATEGY (MKS) + KELLY [NEXT büyük adım]
+- **Precondition**: 5.3 (tek sistem ✅) + 5.4 (combined prob) + **risk_filter ✅ (Phase 5.8 P9)**
+  + FLB compensator ✅ (5.5). v8 design burada (V5.1 coverage + FLB-value + risk_filter + smart_genis).
 - **Scope**: Main/Coverage/Spread ticket generator (Crist A/B/C horse). DAR+GENİŞ yerine
   portföy. Kelly sizing (bet_diary half-Kelly, Phase 1E.0) kupon stake'ine bağlanır
   (quarter-Kelly, max %2 bankroll, drawdown safeguard).
@@ -111,12 +111,15 @@ Hepsinin altında **kalibrasyon** (adım 3'ün ön koşulu) var → Phase 5.2 il
 - **Ref**: **Gramm & McKinney (2009)** — geç para = informed signal.
 - **NOT**: AGF prod 403 (SO-5) → pre-race fetch prod'da proxy gerektirir (Phase 4/5.9).
 
-## PHASE 5.8 — PUBLIC BIAS ANALYZER
-- **Precondition**: bet_diary ≥60 gün (n≥200).
-- 🌱 **Phase 5.5 PART E tohum bulgular** (`phase_5_5_tr_public_bias_analysis.md`): **H2 jokey-skill
-  UNDERBET** (top-10 jokey gap +0.023, p=0.000 — EN GÜÇLÜ, value sinyali, hipotezin tersi);
-  H4 yaşlı-favori + H6 sprint-favori daha overbet (segment-spesifik FLB cezası); H3 recency
-  CONFOUND (de-confound şart). Başlangıç noktası bunlar.
+## PHASE 5.8 — PUBLIC BIAS ANALYZER 🟢 COMPLETE (early — Phase 5.6 öncesi) → `phase_5_8_*.md`
+- **Yapıldı** (prod'a sıfır dokunuş, internal): niş edge matrix (P4), jockey×venue anomaly (P5),
+  connection/sire (P6), form-AGF (P7), regional deep-dive (P8), risk_filter (P9).
+- **Bulgular**: jokey-skill edge walk-forward GERÇEK (skillHI gap +0.015 OOS). **Anomaly robust
+  sinyal YOK** (jockey×venue 0/224 Bonferroni; sire noise; **Berkay regional hipotezi
+  DOĞRULANMADI** — A favori-overbet'te kötü değil, MW p=0.87). Form-AGF: kötü-form/favori AVOID
+  sinyali (temiz); iyi-form/düşük-AGF confound. risk_filter (P9) → Phase 5.6 girdisi.
+- ⚠ ETİK: anomaly = İSTATİSTİKSEL, fixing değil, INTERNAL (Telegram/public/TJK'ya gitmez).
+- 🌱 Eski tohum (Phase 5.5 PART E): H2 jokey-skill UNDERBET, H4 yaşlı / H6 sprint favori overbet.
 - **Scope**: aylık iş — hangi alt-kategorilerde (hipodrom/breed/race_class/jokey)
   disagree=true + win=true + ROI>0. Model ağırlığını o niş'lere yönlendir. TR-spesifik:
   jokey-skill bonusu (H2) + yaşlı/sprint favori cezası (H4/H6) — FLB favori-cezasıyla BİRLEŞTİR.

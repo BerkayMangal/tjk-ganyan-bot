@@ -149,9 +149,22 @@ agftablosu.com çökerse hepsi çöker. Fallback sadece **kod hatalarına / modu
     underbet (×2.01). Phase 5.5 corr tablosu + `agf_outcome_calibrator.pkl` hazır.
   - PART F: banner V5.1_DAR tek-kupon'a güncellendi (text-only, davranış değişmedi). Emeklilik
     planı kod-ref'li (PATCH_5_3_RETIRE_V7/_SMARTGENIS @yerli_engine 2583-2584), EXEC Phase 5.3.5.
-- **Phase 5.3.5 — RETIREMENT EXEC + v8 DESIGN: NEXT** → flag-guarded (TJK_SINGLE_KUPON) tek-kupon
-  (v7/smart_genis shadow'da kalır) + v8 design (V5.1 + FLB-value 5.5 + smart_genis classification).
-  Berkay onayı gerek. Plan: `docs/PHASE_5_2_TO_5_9_ROADMAP.md` + `phase_5_3_decision.md` (E.5).
+- **Phase 5.3.5 — RETIREMENT EXEC: COMPLETE** → `audit/reports/phase_5_3_5_*.md`. V7+smart_genis
+  Telegram'dan ÇIKTI (env `TJK_KUPON_MODE` default `v5_1_only`; rollback=`all`). 2 prod patch:
+  PATCH_5_3_RETIRE_V7 (coupon @2584 + V7 ANALİZ @4491), PATCH_5_3_DEFER_SMARTGENIS (@2583).
+  build+snapshot shadow'da KALIR (v8 girdisi). Banner sade bilgi notuna güncellendi. Smoke 7/7:
+  kullanıcı mesajı **15820→2421 char** (tek V5.1 kupon). **Berkay: rollback `TJK_KUPON_MODE=all`.**
+- **Phase 5.8 — PUBLIC BIAS + ANOMALY: COMPLETE** (prod'a SIFIR dokunuş, internal) →
+  `audit/reports/phase_5_8_*.md`, `simulation/analytics/`. ⚠ anomaly=İSTATİSTİKSEL (fixing değil), internal.
+  - **Niş edge** (P4): jokey-skill edge **walk-forward GERÇEK** (skillHI gap +0.015 OOS; in-sample
+    +0.065 ~4x circularity). AGF hipodrom/mesafe-kalibre (kaba niş yok).
+  - **Anomaly (P5/P6/P8): robust sinyal YOK** — jockey×venue 0/224 Bonferroni; sire(=connection
+    proxy; trainer/owner YOK) 1/126 noise; **Berkay regional hipotezi DOĞRULANMADI** (A favori-
+    overbet'te kötü değil, MW p=0.87; KW p=0.0016 ama yön ≠ hipotez; küçük-venue gürültüsü).
+  - **Form-AGF (P7)**: kötü-form/favori market AŞIRI overbet (win %2.2 vs priced %29.7) → actionable
+    AVOID; iyi-form/düşük-AGF +0.20 ama H3-confound (tradeable değil).
+  - **risk_filter** (P9, V5.1'e BAĞLI DEĞİL, Phase 5.6 girdisi): PRIMARY=FLB favori-overbet
+    (validated); modülatör=düşük-skill jokey+kötü-form favori; anomaly katmanları=0 (kanıt yok).
 - **Phase 5.5 — FLB COMPENSATION: COMPLETE / aktivasyon SHADOW** → `audit/reports/phase_5_5_*.md`.
   - `simulation/calibrators/flb_compensator.py` + `flb_compensator.pkl`: multiplier(agf)=
     clamp(winrate_calib(agf)/agf, [0.507,2.01]). CV→isotonic. Magic number YOK (clamp veri-türevli).
