@@ -11,3 +11,15 @@
 - **Yüksek EV riski**: model AGF'den çok ayrışınca EV patlıyor (örn +2.82); kalibrasyon
   test edene kadar half-Kelly + did_we_bet value_horses ile sınırlı.
 - yerli_engine +12 satır (MAX 15 altında); sadece KAYIT, davranış değişmedi.
+
+## PART B — Outcome Update (1E.2)
+- **update_outcomes_for_date**: retro fetch_results list'inden (hippo, altili, ayak)→winner
+  flat map; bet kayıtlarını eşleştirip update_bet_outcome. _norm_hippo ile "Ankara
+  Hipodromu"↔"Ankara" eşleşmesi. race_number=ayak ↔ retro leg_number.
+- **update_bet_outcome'a odds_at_close eklendi** (opsiyonel, geriye-uyumlu). CLV
+  rapor-zamanı compute_clv(odds_pred, odds_close) — BetRecord'a ayrı clv alanı yok.
+- **CLV proxy şu an YOK**: agf_close_data besleyen yok → odds_close None → clv None.
+  Phase 1E.3 (pre-race AGF fetch) doldurur; AGF 403 nedeniyle Phase 4 proxy'e bağımlı.
+- retro +14 satır (MAX 20 altında), import fallback'li (dashboard package / sys.path).
+  Sadece KAYIT, retro raporu değişmedi.
+- Smoke: WIN +74.5, LOSS −10, total 64.5 (birebir). Hippo normalize + ayak eşleşmesi OK.

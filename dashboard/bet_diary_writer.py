@@ -25,6 +25,10 @@ def _compute_confidence_grade(consensus_all_agree: bool, value_detected: bool,
     return {3: "strong", 2: "moderate", 1: "limited", 0: "insufficient"}[score]
 
 
+def _norm_hippo(s: Any) -> str:
+    return (str(s or "")).lower().replace(" hipodromu", "").replace(" hipodrom", "").strip()
+
+
 def write_predictions_for_altili(
     altili_result: dict,
     agf_alt: Any = None,
@@ -85,6 +89,58 @@ def write_predictions_for_altili(
                             out["value_bets"] += 1
                 except Exception as e:
                     out["errors"].append(f"{ayak}/{hr.get('number')}: {repr(e)[:60]}")
+    except Exception as e:
+        out["errors"].append(f"fatal: {repr(e)[:80]}")
+    return out
+
+
+def update_outcomes_for_date(target_date: Any, results: Any,
+                             agf_close_data: Optional[dict] = None) -> dict:
+    """Retro sonuçlarıyla outcome güncelle. Never-raises.
+
+    results: retro.fetch_results çıktısı — [{hippodrome, altili_no, winners:[{leg_number,
+      horse_number}]}]. agf_close_data: opsiyonel {(hippo_norm, altili_no, ayak): agf_pct}
+      → CLV proxy. Returns {records_updated, wins, losses, total_pnl_flat, errors}.
+    """
+    out = {"records_updated": 0, "wins": 0, "losses": 0, "total_pnl_flat": 0.0, "errors": []}
+    try:
+        wmap = {}
+        for r in (results or []):
+            hp = _norm_hippo(r.get("hippodrome"))
+            ano = r.get("altili_no")
+            for w in (r.get("winners") or []):
+                wmap[(hp, ano, w.get("leg_number"))] = w.get("horse_number")
+        if not wmap:
+            return out
+
+        since = None
+        if hasattr(target_date, "isoformat"):
+            from datetime import timedelta
+            since = (target_date - timedelta(days=1)).isoformat()
+
+        for rec in bd.read_bets(since=since):
+            try:
+                key = (_norm_hippo(rec.get("hippodrome")), rec.get("altili_no"),
+                       rec.get("race_number"))
+                if key not in wmap:
+                    continue
+                winner = wmap[key]
+                won = (rec.get("horse_number") == winner)
+                odds = rec.get("odds_at_prediction")
+                flat = rec.get("flat_bet_size") or 0.0
+                payout = round((odds or 0) * flat, 2) if (won and odds) else 0.0
+                odds_close = None
+                if agf_close_data:
+                    ac = agf_close_data.get(key)
+                    odds_close = bd.odds_from_agf(ac) if ac else None
+                if bd.update_bet_outcome(rec["prediction_id"], winner, payout,
+                                         odds_at_close=odds_close):
+                    out["records_updated"] += 1
+                    out["wins" if won else "losses"] += 1
+                    pnl = (flat * (odds - 1)) if (won and odds) else -flat
+                    out["total_pnl_flat"] = round(out["total_pnl_flat"] + pnl, 2)
+            except Exception as e:
+                out["errors"].append(f"{str(rec.get('prediction_id'))[:8]}: {repr(e)[:50]}")
     except Exception as e:
         out["errors"].append(f"fatal: {repr(e)[:80]}")
     return out

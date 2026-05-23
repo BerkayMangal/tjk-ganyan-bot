@@ -158,8 +158,13 @@ def read_bets(since: Any = None, hippodrome: Optional[str] = None) -> list[dict]
     return rows
 
 
-def update_bet_outcome(prediction_id: str, actual_winner: int, payout: float) -> bool:
-    """Outcome güncelle: did_we_win + theoretical P&L. Append (read_bets son'u alır)."""
+def update_bet_outcome(prediction_id: str, actual_winner: int, payout: float,
+                       odds_at_close: Optional[float] = None) -> bool:
+    """Outcome güncelle: did_we_win + theoretical P&L. Append (read_bets son'u alır).
+
+    odds_at_close verilirse kaydedilir (CLV rapor-zamanı compute_clv ile hesaplanır;
+    BetRecord'da ayrı clv alanı tutulmaz — odds_at_prediction + odds_at_close yeterli).
+    """
     rec = next((r for r in read_bets() if r.get("prediction_id") == prediction_id), None)
     if rec is None:
         return False
@@ -170,6 +175,8 @@ def update_bet_outcome(prediction_id: str, actual_winner: int, payout: float) ->
     rec["actual_winner_number"] = actual_winner
     rec["did_we_win"] = won
     rec["payout"] = payout
+    if odds_at_close:
+        rec["odds_at_close"] = odds_at_close
     if won and odds:
         rec["theoretical_pnl_flat"] = flat * (odds - 1.0)
         rec["theoretical_pnl_kelly"] = kelly_stake * (odds - 1.0)
