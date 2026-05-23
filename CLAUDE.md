@@ -111,9 +111,17 @@ agftablosu.com çökerse hepsi çöker. Fallback sadece **kod hatalarına / modu
   erişilemez → forward-only). Simulation engine + 3 strateji adaptörü hazır (replay smoke:
   3 sistem ~5x combo farkı, V7 en geniş, smart_genis canlı-state bağımlı). VALUE_THRESHOLD
   + bet_diary smoke PENDING (migration apply bekliyor).
+- **Phase 5.1.5 — UNBLOCK + USER PROTECTION: COMPLETE** → `audit/reports/phase_5_1_5_*.md`.
+  - 🟢 Backfill **FAST POSSIBLE** (Phase 5.1 SLOW'u aştı): `agftahmin.com/agf-tablosu/{date}`
+    geçmiş AGF veriyor (5/5 tarih, AGF% toplam 600/altılı=temiz). `simulation/backfill_agf_external.py`.
+  - Kalibrasyon ölçüm altyapısı: `04_bet_diary_report` Section 2 (Brier/log-loss/gap) +
+    `simulation/calibrators/{isotonic,platt}.py` + `smoke_daily_calibration.py`.
+  - **PROD**: `dashboard/user_warnings.py` + Telegram banner (PATCH_5_1_5_USER_WARNING,
+    env `TJK_PHASE_5_2_WARNING` default ON, text-only). Phase 5.3'te kaldır.
 - **Phase 5.2 — MODEL KALİBRASYONU: NEXT** (H1, en kritik). Gate: bet_diary verisi
-  (migration apply + ~50-60 gün forward VEYA backfill alternatifi). isotonic/Platt →
-  calibrated_prob; tüm coverage/width buna geçer. Plan: `docs/PHASE_5_2_TO_5_9_ROADMAP.md`.
+  (migration apply + forward VEYA agftahmin backfill — artık FAST POSSIBLE). isotonic/Platt
+  scaffold hazır → calibrated_prob; tüm coverage/width buna geçer + PATCH_5_1_5_USER_WARNING
+  kaldır (5.3 ile). Plan: `docs/PHASE_5_2_TO_5_9_ROADMAP.md`.
 
 ## Production activation checklist (Berkay)
 1. **Migration apply**: `phase_1a5_migration_apply_playbook.md` (m3 + m4, ~5 dk).

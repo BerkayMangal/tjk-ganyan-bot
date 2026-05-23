@@ -34,7 +34,9 @@ Hepsinin altında **kalibrasyon** (adım 3'ün ön koşulu) var → Phase 5.2 il
 ---
 
 ## PHASE 5.2 — MODEL KALİBRASYONU 🔴 (H1, en kritik)
-- **Precondition**: Phase 5.1 measurement (forward bet_diary VEYA backfill); n≥200 (model_prob, outcome) çifti.
+- **Precondition**: n≥200 (model_prob, outcome) çifti. İki yol: forward bet_diary VEYA
+  **backfill (Phase 5.1.5 FAST POSSIBLE: agftahmin.com geçmiş AGF + retro sonuç)**. Kalibrasyon
+  ölçüm altyapısı (04 Section 2 Brier/log-loss + isotonic/Platt scaffold) Phase 5.1.5'te hazır.
 - **Scope**: isotonic regression (veya Platt) — raw_model_prob → calibrated_prob. Tüm
   downstream (V7, kupon.py, smart_genis) calibrated_prob üzerinden. Kalibratör model/
   artifact olarak `model/trained/` altına; runtime'da uygula.
@@ -48,6 +50,8 @@ Hepsinin altında **kalibrasyon** (adım 3'ün ön koşulu) var → Phase 5.2 il
 - **Scope**: V5.1 vs V7 vs smart_genis backtest (kalibre prob ile). ROI/hit/drawdown/Sharpe.
   Kazananı tut VEYA üçünün en iyisini sentezleyen **v8**. Telegram tek kupon.
 - **Deliverable**: kazanan strateji seçimi raporu + v8 (gerekirse) + emeklilik planı.
+  **+ PATCH_5_1_5_USER_WARNING kaldır** (banner artık gereksiz — tek kupon; checklist:
+  phase_5_1_5_user_warning_deployment.md).
 - **KPI**: ROI farkı, drawdown farkı, Sharpe. (audit bulgusu: 3 paralel = combo ~5x fark)
 - **Ref**: simulation engine (Phase 5.1).
 
