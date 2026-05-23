@@ -6,9 +6,20 @@ canlıda görünmeyebilir). payout=PROXY. Sistem bot DEĞİL — karar Berkay'ı
 """
 from __future__ import annotations
 
+import os
+
 _D = {1: "1️⃣", 2: "2️⃣", 3: "3️⃣", 4: "4️⃣",
       5: "5️⃣", 6: "6️⃣"}
 SEP = "─" * 16
+
+
+def v9_live_enabled() -> bool:
+    """KILL-SWITCH (Phase 5.7.5): TJK_V9_LIVE default '1' (on). '0' → v9 canlı kapalı, V5.1 döner.
+    Berkay v9'u beğenmezse Railway env TJK_V9_LIVE=0 → anında V5.1."""
+    try:
+        return os.getenv("TJK_V9_LIVE", "1") != "0"
+    except Exception:
+        return True
 
 
 def _tl(x):
@@ -148,13 +159,14 @@ def format_message(out, hippo, no, t):
     return fn(out, hippo, no, t)
 
 
-def format_day_message(all_results, date_str) -> str:
-    """yerli_engine'den çağrılır. Her altılı → pipeline → format. Sistemik hata → raise (V5.1 fallback)."""
+def format_messages_list(all_results, date_str) -> list:
+    """Her altılı → bir v9 Telegram mesajı (LİSTE). send_telegram_simple bunu altılı-başına gönderir
+    (4096 limit + sleep). Sistemik hata (hepsi başarısız) → raise → V5.1 fallback."""
     from simulation.v9.pipeline import build_v9_race, run_pipeline
     from simulation.v9.carryover_detector import detect_carryover_state
     cs = detect_carryover_state(date_str)
-    blocks = []
-    n_ok = 0          # gerçek kupon üretilen altılı sayısı
+    msgs = []
+    n_ok = 0
     n_total = 0
     for r in all_results or []:
         if r.get("error"):
@@ -164,13 +176,18 @@ def format_day_message(all_results, date_str) -> str:
         try:
             rr = dict(r); rr.setdefault("date", date_str)
             out = run_pipeline(build_v9_race(rr, None), cs)
-            blocks.append(format_message(out, hippo, no, t))
+            msgs.append(format_message(out, hippo, no, t))
             n_ok += 1
         except Exception as e:
-            blocks.append(f"🏇 {hippo} #{no}\n⚠ v9 hesap hatası (atlandı): {repr(e)[:50]}")
-    if not blocks:
-        raise RuntimeError("v9: hiç blok üretilemedi")
-    # DEFENSE-IN-DEPTH (Phase 5.7.0): hiç gerçek kupon yoksa (hepsi hata) → raise → V5.1 fallback
+            msgs.append(f"🏇 {hippo} #{no}\n⚠ v9 hesap hatası (atlandı): {repr(e)[:50]}")
+    if not msgs:
+        raise RuntimeError("v9: hiç mesaj üretilemedi")
+    # DEFENSE-IN-DEPTH: hiç gerçek kupon yoksa (hepsi hata) → raise → V5.1 fallback
     if n_total > 0 and n_ok == 0:
         raise RuntimeError(f"v9: {n_total} altılının HEPSİ hata verdi → V5.1 fallback")
-    return ("\n\n" + ("━" * 18) + "\n\n").join(blocks)
+    return msgs
+
+
+def format_day_message(all_results, date_str) -> str:
+    """format_messages_list'in tek-string birleştirilmişi (dashboard/API result['telegram_msg'] için)."""
+    return ("\n\n" + ("━" * 18) + "\n\n").join(format_messages_list(all_results, date_str))

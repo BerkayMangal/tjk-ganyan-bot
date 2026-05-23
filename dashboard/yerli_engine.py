@@ -2592,11 +2592,13 @@ def run_yerli_pipeline(target_date=None):
             logger.warning(f"[smart] telegram annotation failed: {_e_ann}")
         # PATCH_5_6_5_HYBRID_LIVE — v9 strateji router CANLI. base_msg yukarıda V5.1 olarak kuruldu
         # (fallback sigortası); v9 BAŞARILIYSA onu kullan, HATA atarsa sessizce V5.1'de kal (log).
+        # KILL-SWITCH (5.7.5): TJK_V9_LIVE=0 → v9 atlanır, V5.1 gider (Berkay anında geri dönüş).
         try:
-            from telegram_formatter_v9 import format_day_message
-            _v9msg = format_day_message(all_results, date_str)
-            if _v9msg and _v9msg.strip():
-                base_msg = _v9msg
+            from telegram_formatter_v9 import format_day_message, v9_live_enabled
+            if v9_live_enabled():
+                _v9msg = format_day_message(all_results, date_str)
+                if _v9msg and _v9msg.strip():
+                    base_msg = _v9msg
         except Exception as _e_v9live:
             logger.warning(f"[v9] HYBRID_LIVE → V5.1 fallback: {repr(_e_v9live)[:120]}")
         banner_lines = [LIVE_TEST_DISCLAIMER,
@@ -5697,7 +5699,10 @@ def run_daily_recap(target_date_str=None, send_telegram=False):
                 _v9retro.append(format_retro_message(
                     alt.get("hippodrome"), alt.get("time", ""), _out["routing"]["strategy"],
                     winners, _out["kupon"].get("legs_selected") or [], _out["aggregated"]["legs"]))
-            if _v9retro:
+            # log_v9_signals HER ZAMAN çalışır (öğrenme loop'u); retro MESAJI sadece v9 canlıyken
+            # Telegram'a eklenir (kill-switch TJK_V9_LIVE=0 ise retro da gizlenir, log devam eder).
+            from telegram_formatter_v9 import v9_live_enabled
+            if _v9retro and v9_live_enabled():
                 tg_body = tg_body + "\n\n" + "\n\n".join(_v9retro)
                 recap["telegram_body"] = tg_body
         except Exception as _e_v9retro:
@@ -5720,7 +5725,18 @@ def send_telegram_simple(results_dict):
     import time as _time
     results = results_dict.get('hippodromes', [])
     date_str = results_dict.get('date', '')
-    messages = _get_telegram_messages(results, date_str)
+    # PATCH_5_6_5_HYBRID_LIVE — GERÇEK Telegram gönderici burası (app.py bunu çağırır). v9 router
+    # mesajları altılı-başına gider (kill-switch açık + başarılıysa); aksi V5.1 fallback.
+    messages = None
+    try:
+        from telegram_formatter_v9 import format_messages_list, v9_live_enabled
+        if v9_live_enabled():
+            messages = format_messages_list(results, date_str)
+    except Exception as _e_v9send:
+        logger.warning(f"[v9] send → V5.1 fallback: {repr(_e_v9send)[:120]}")
+        messages = None
+    if not messages:
+        messages = _get_telegram_messages(results, date_str)   # V5.1 fallback / kill-switch OFF
     if not messages:
         return
 
