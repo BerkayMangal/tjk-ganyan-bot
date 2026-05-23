@@ -1,17 +1,15 @@
-"""Phase 1A — Shadow source-consensus validation (READ-ONLY).
+"""Phase 1B.1 — Shadow source-consensus (READ-ONLY), expert_consensus tabanlı.
 
-Wraps `multi_source_validator`. OBSERVES, does NOT decide. The pipeline calls
-this and records the result into read-only meta; the kupon decision is never
-affected. Results are appended to a shadow log for later analysis (Phase 1B).
+OBSERVES, does NOT decide. The pipeline already computes at-level consensus via
+`expert_consensus.build_consensus` (→ result['consensus']); we consume THAT here
+instead of re-fetching. Phase 1A wrongly used `multi_source_validator`
+(altılı-existence, no horse pick) — rewired in 1B.1.
 
-Coupling rule: this module imports `multi_source_validator` ONLY. It must NEVER
-import `yerli_engine` (loose coupling — pipeline depends on us, not vice versa).
+Input: the consensus list (per ayak): {ayak, consensus_top, all_agree, super_banko,
+sources:{model,agf,horseturk}, model_agrees}.
 
-Validator reality (see audit/reports/validator_api_notes.md):
-  - validate_sources() does altılı-EXISTENCE cross-check, NOT horse-level picks.
-    So `consensus_top_pick` stays None (scope_out SO-1; Phase 1B's job).
-  - validate_sources() is expensive (~95s worst, no internal cache). We cache it
-    at module level: one call per process, every altılı reads the cache.
+Coupling: NO network, NO multi_source_validator, NO yerli_engine import. Pure
+transform of the consensus list + dual-write (JSONL + event_store).
 """
 from __future__ import annotations
 
@@ -21,141 +19,120 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-# repo_root/audit/reports/validator_shadow_log.jsonl
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(_HERE)
 SHADOW_LOG_PATH = os.path.join(
     _REPO_ROOT, "audit", "reports", "validator_shadow_log.jsonl"
 )
 
-_CONFIDENCE_MAP = {"HIGH": 1.0, "MEDIUM": 0.66, "LOW": 0.33, "NONE": 0.0}
-_KNOWN_SOURCES = ("agftablosu", "tjk_official", "horseturk")
-
-# Module cache — validate_sources() is expensive. Filled once per process.
-_VALIDATOR_CACHE: Optional[dict] = None
+_CONSENSUS_SOURCES = ("model", "agf", "horseturk")
 
 
 @dataclass
 class ValidatorOutput:
-    """Shadow observation for ONE altılı. Read-only; never drives decisions."""
-    source_confidence: float = 0.0                       # 0-1 (confidence map)
-    agreement_per_source: dict = field(default_factory=dict)  # {src: bool}
-    consensus_top_pick: Optional[int] = None             # validator picks no horse → None (SO-1)
+    """Shadow observation for ONE altılı (read-only; never drives decisions)."""
+    # ── Phase 1B.1 at-level (asıl veri) ──
+    consensus_top_pick: Optional[int] = None      # ayak-1 temsili; gerçek veri per_leg
+    all_agree: bool = False                       # TÜM ayaklar all_agree mi
+    super_banko: bool = False                     # herhangi ayak super_banko mu
+    model_pick: Optional[int] = None              # ayak-1 model pick
+    agf_pick: Optional[int] = None                # ayak-1 AGF pick
+    horseturk_pick: Optional[int] = None          # ayak-1 horseturk pick
+    per_leg_consensus: list = field(default_factory=list)  # 6 ayak (asıl)
+    # ── Phase 1A geriye-uyumlu (türev veya None) ──
+    source_confidence: float = 0.0
+    agreement_per_source: dict = field(default_factory=dict)
     agf_vs_consensus_disagreement: bool = False
     validator_degraded: bool = False
     degraded_reason: Optional[str] = None
-    raw_validator_response: dict = field(default_factory=dict)  # compact summary
+    raw_validator_response: dict = field(default_factory=dict)
     timestamp: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
 
 
-# ─────────────────────── cache control (also for tests) ───────────────────────
-
-def set_validator_cache(payload: dict) -> None:
-    """Inject a validate_sources()-shaped payload (smoke tests / fixtures).
-
-    Avoids real HTTP. Used when AGF is 403 or running offline.
-    """
-    global _VALIDATOR_CACHE
-    _VALIDATOR_CACHE = payload
-
-
-def reset_validator_cache() -> None:
-    global _VALIDATOR_CACHE
-    _VALIDATOR_CACHE = None
-
-
-def _get_validation(force: bool = False) -> dict:
-    global _VALIDATOR_CACHE
-    if _VALIDATOR_CACHE is not None and not force:
-        return _VALIDATOR_CACHE
-    from multi_source_validator import validate_sources  # local import: loose coupling
-    _VALIDATOR_CACHE = validate_sources()
-    return _VALIDATOR_CACHE
-
-
-def _norm_hippo(name: str) -> str:
-    try:
-        from multi_source_validator import _normalize_hippo
-        return _normalize_hippo(name or "")
-    except Exception:
-        return (name or "").lower().replace(" hipodromu", "").replace(" hipodrom", "").strip()
-
-
-# ─────────────────────────── core ───────────────────────────
-
 def run_shadow_validation(
     hippodrome: str,
     altili_no: int,
+    legs: Any = None,
     agf_data: Any = None,
+    consensus_result: Optional[list] = None,
 ) -> ValidatorOutput:
-    """Observe source consensus for one altılı. NEVER raises (returns degraded).
+    """Transform the pipeline's consensus list into a shadow observation.
 
-    Signature note (recon): validator is altılı-level, so race_number/horses
-    from the original plan are dropped. agf_data kept for Phase 1B (unused now).
+    NEVER raises. consensus_result yoksa/boşsa degraded döner. legs/agf_data
+    şu an kullanılmıyor (Phase 1C at-level karar için imzada tutuluyor).
     """
     ts = datetime.now(timezone.utc).isoformat()
-
-    try:
-        val = _get_validation()
-    except Exception as e:
+    cons = consensus_result or []
+    if not cons:
         return ValidatorOutput(
             validator_degraded=True,
-            degraded_reason=f"validate_sources_failed:{repr(e)[:100]}",
+            degraded_reason="no_consensus_result",
             timestamp=ts,
         )
 
     try:
-        sources = val.get("sources", {}) or {}
-        alive = val.get("alive_source_count", 0)
-        conf = val.get("confidence", "NONE")
-        nh = _norm_hippo(hippodrome)
+        per_leg: list = []
+        n_all = n_super = n_disagree = 0
+        srcs_seen = {s: False for s in _CONSENSUS_SOURCES}
 
-        confirmed_by: list = []
-        pool = (val.get("consensus_altilis", []) or []) + (val.get("single_source_altilis", []) or [])
-        for entry in pool:
-            if entry.get("hippodrome") == nh and entry.get("altili_no") == altili_no:
-                confirmed_by = entry.get("confirmed_by", []) or []
-                break
+        for c in cons:
+            sources = c.get("sources") or {}
+            model_p = sources.get("model")
+            agf_p = sources.get("agf")
+            ht_p = sources.get("horseturk")
+            aa = bool(c.get("all_agree"))
+            sb = bool(c.get("super_banko"))
+            n_all += int(aa)
+            n_super += int(sb)
+            if model_p is not None and agf_p is not None and model_p != agf_p:
+                n_disagree += 1
+            for s in _CONSENSUS_SOURCES:
+                if sources.get(s) is not None:
+                    srcs_seen[s] = True
+            per_leg.append({
+                "ayak": c.get("ayak"),
+                "consensus_top": c.get("consensus_top"),
+                "all_agree": aa,
+                "super_banko": sb,
+                "model": model_p,
+                "agf": agf_p,
+                "horseturk": ht_p,
+                "model_agrees": bool(c.get("model_agrees")),
+            })
 
-        agreement = {s: (s in confirmed_by) for s in _KNOWN_SOURCES}
-        agf_only = bool(agreement.get("agftablosu") and len(confirmed_by) == 1)
-        agf_missing = bool((not agreement.get("agftablosu")) and len(confirmed_by) >= 1)
-        disagreement = agf_only or agf_missing
-
-        agf_status = (sources.get("agftablosu", {}) or {}).get("status")
-        degraded = (alive < 2) or (agf_status != "OK")
-        reason = None
-        if degraded:
-            bits = []
-            if alive < 2:
-                bits.append(f"alive={alive}")
-            if agf_status != "OK":
-                agf_err = (sources.get("agftablosu", {}) or {}).get("error") or "FAIL"
-                bits.append(f"agf={agf_err}")
-            reason = ";".join(bits)[:120]
+        n = len(cons)
+        first = per_leg[0] if per_leg else {}
+        # Basit altılı-level güven: all_agree ağırlık 1.0, super_banko 0.66.
+        conf = round(min(1.0, (n_all * 1.0 + n_super * 0.66) / n), 3) if n else 0.0
 
         return ValidatorOutput(
-            source_confidence=_CONFIDENCE_MAP.get(conf, 0.0),
-            agreement_per_source=agreement,
-            consensus_top_pick=None,
-            agf_vs_consensus_disagreement=disagreement,
-            validator_degraded=degraded,
-            degraded_reason=reason,
+            consensus_top_pick=first.get("consensus_top"),
+            all_agree=(n_all == n and n > 0),
+            super_banko=(n_super > 0),
+            model_pick=first.get("model"),
+            agf_pick=first.get("agf"),
+            horseturk_pick=first.get("horseturk"),
+            per_leg_consensus=per_leg,
+            source_confidence=conf,
+            agreement_per_source=srcs_seen,
+            agf_vs_consensus_disagreement=(n_disagree > 0),
+            validator_degraded=False,
+            degraded_reason=None,
             raw_validator_response={
-                "confidence": conf,
-                "alive_source_count": alive,
-                "confirmed_by": confirmed_by,
-                "source_status": {s: (sources.get(s, {}) or {}).get("status") for s in sources},
+                "n_legs": n,
+                "n_all_agree": n_all,
+                "n_super_banko": n_super,
+                "n_model_agf_disagree": n_disagree,
             },
             timestamp=ts,
         )
     except Exception as e:
         return ValidatorOutput(
             validator_degraded=True,
-            degraded_reason=f"parse_failed:{repr(e)[:100]}",
+            degraded_reason=f"shadow_parse_failed:{repr(e)[:90]}",
             timestamp=ts,
         )
 
@@ -175,21 +152,19 @@ def _parse_altili_id(altili_id: str) -> tuple[Optional[str], Optional[str], Opti
 def log_shadow_result(altili_id: str, validator_output: ValidatorOutput) -> None:
     """Record one shadow observation. Dual-write, fire-and-forget.
 
-    1) JSONL (local dev / always-on) — SHADOW_LOG_PATH
-    2) event_store → Supabase pipeline_events (prod persistence; writer-bug-free).
-    Each sink is isolated: one failing never blocks the other or the pipeline.
+    1) JSONL (local dev) — SHADOW_LOG_PATH
+    2) event_store → Supabase pipeline_events (prod; writer-bug-free).
+    Each sink isolated; one failing never blocks the other or the pipeline.
     """
     rec = {"altili_id": altili_id, **validator_output.to_dict()}
 
-    # Sink 1: JSONL (lokal dev için her zaman)
     try:
         os.makedirs(os.path.dirname(SHADOW_LOG_PATH), exist_ok=True)
         with open(SHADOW_LOG_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
     except Exception:
-        pass  # shadow log must NEVER break the pipeline
+        pass
 
-    # Sink 2: event_store (prod kalıcılık — URL yoksa no-op)
     try:
         from event_store import write_event
         ev_date, ev_hippo, ev_alt = _parse_altili_id(altili_id)
@@ -201,4 +176,4 @@ def log_shadow_result(altili_id: str, validator_output: ValidatorOutput) -> None
             altili_no=ev_alt,
         )
     except Exception:
-        pass  # event_store opsiyonel; JSONL zaten yazıldı
+        pass

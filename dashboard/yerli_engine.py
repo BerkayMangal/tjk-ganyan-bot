@@ -2644,24 +2644,24 @@ def _process_proper_altili(agf_alt, program_data, target_date, model_ok):
     if model_ok and _MODEL and _FB:
         legs = _model_predict_legs(legs, hippo, target_date)
 
-    # Phase 1A: shadow source-consensus (READ-ONLY — kupon kararını ETKİLEMEZ).
-    # Sonuç sadece kayda geçer; aşağıdaki kupon üretimini hiçbir şekilde değiştirmez.
-    source_consensus_meta = {}
-    try:
-        from source_consensus import run_shadow_validation, log_shadow_result
-        _sc = run_shadow_validation(hippo, altili_no, agf_alt)
-        log_shadow_result(f"{target_date}_{hippo}_{altili_no}", _sc)
-        source_consensus_meta = _sc.to_dict()
-    except Exception as _e_sc:
-        source_consensus_meta = {"validator_degraded": True,
-                                 "degraded_reason": f"shadow_failed:{repr(_e_sc)[:80]}"}
-
     # Rating, kupon, value, consensus
     rating = _try_fn(lambda: _ext_rating(legs), lambda: _simple_rating(legs))
     dar = _try_fn(lambda: _ext_kupon(legs, hippo, 'dar'), lambda: _simple_kupon(legs, hippo, 'dar'))
     genis = _try_fn(lambda: _ext_kupon(legs, hippo, 'genis'), lambda: _simple_kupon(legs, hippo, 'genis'))
     value_horses = _try_value(legs, model_ok)
     consensus = _try_consensus(hippo, legs, target_date)
+
+    # Phase 1B.1: shadow source-consensus (READ-ONLY). consensus yukarıda zaten
+    # hesaplandı → pas geçiliyor (duplicate çağrı yok). Kupon kararını ETKİLEMEZ.
+    source_consensus_meta = {}
+    try:
+        from source_consensus import run_shadow_validation, log_shadow_result
+        _sc = run_shadow_validation(hippo, altili_no, legs, agf_alt, consensus)
+        log_shadow_result(f"{target_date}_{hippo}_{altili_no}", _sc)
+        source_consensus_meta = _sc.to_dict()
+    except Exception as _e_sc:
+        source_consensus_meta = {"validator_degraded": True,
+                                 "degraded_reason": f"shadow_failed:{repr(_e_sc)[:80]}"}
 
     return _inject_selection_integrity_audit({
         'hippodrome': hippo, 'altili_no': altili_no, 'time': time_str,
