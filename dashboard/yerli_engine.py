@@ -865,15 +865,24 @@ def _build_legs_from_programme(programme_data, hippodrome, race_numbers):
             })
         # Sort by horse_number ascending; coercion-safe for str/int mixes.
         all_horses_full.sort(key=lambda x: _safe_horse_num(x.get("number")))
+        # breed'i group_name'den TÜRET (eskiden group_name[:10] yazılıyordu → breed kirlenmesi).
+        grp = race.get("group_name", "") or ""
+        gl = grp.lower()
+        breed = "Arap" if "arap" in gl else ("İngiliz" if "ngiliz" in gl else "")
         legs.append({
             "ayak": i + 1,
             "race_number": race_no,
             "n_runners": len(horses),
             "top3": all_horses_full[:3],
             "all_horses": all_horses_full,
+            # KEY MISMATCH FIX: tüketiciler (legs_summary, v9, reconcile, retro) all_horses_with_mp
+            # okuyor; repaired leg'ler eskiden sadece all_horses yazıyordu → BOŞ görünüyordu.
+            "all_horses_with_mp": all_horses_full,
             "agf_missing": True,
             "leg_type": "TJK_ONLY",
-            "breed": race.get("group_name", "")[:10],
+            "breed": breed,
+            "group_name": grp,
+            "track_type": race.get("track_type", "") or "",
             "distance": race.get("distance", ""),
             "confidence": 0.0,
             "agreement": 0.0,
@@ -1108,6 +1117,7 @@ def _run_model_on_repaired_legs(result, programme_data, target_date):
         ranked = sorted(all_horses, key=_rank_key)
         leg["top3"] = ranked[:3]
         leg["all_horses"] = ranked
+        leg["all_horses_with_mp"] = ranked   # KEY MISMATCH FIX: tüketici key'ini senkron tut
         if any_filled:
             leg["has_model"] = True
             leg["model_inference_v3_1"] = True
@@ -2358,32 +2368,64 @@ def _ensure_loaded():
 
 
 def _reconcile_hippodromes(all_results):
-    """Multi-source assembly temizliği: aynı hipodrom farklı venue-adıyla ('İstanbul' +
-    'İstanbul Hipodromu') ve aynı altılı hem boş (at eşleşmemiş) hem dolu girdi olarak
-    gelebiliyor. Burada result['hippodromes'] listesi KÖKTEN temizlenir (sadece display değil):
-      1) venue adını normalize et ('İstanbul Hipodromu'→'İstanbul'),
-      2) aynı altılının kopyalarını (venue + leg-mesafe imzası eşit) birleştir → en çok ATLI olanı tut
-         (boş yapı + atlı kopya → atlı kopya),
-      3) hiçbir kopyası dolu olmayan BOŞ altılıyı düşür (gösterilemez; gerçek scrape boşluğu),
-      4) venue başına altili_no'yu yeniden ata (görünüm sırasıyla).
-    error girdileri dokunulmadan korunur. Returns (cleaned, actions)."""
+    """Multi-source assembly temizliği. result['hippodromes'] KÖKTEN temizlenir (display değil):
+      0) KEY-MISMATCH safety: repaired leg'lerde all_horses → all_horses_with_mp (tüketici key'i),
+      1) venue adını normalize ('İstanbul Hipodromu'→'İstanbul'),
+      2) PHANTOM/DUP DROP: AGF-native altılılar GÜVENİLİR (gerçek). Bir REPAIRED altılı, aynı
+         venue'deki bir AGF-native altılıyla YARIŞ PAYLAŞIYORSA → duplicate/phantom → düşür
+         (ör. İstanbul#2[5-10]repaired ↔ Hipodromu[5-10]AGF; Adana#2[4-9]repaired ↔ Adana#1[1-6]AGF).
+         Gerçek AYRIK altılılar (İstanbul AGF [1-6]+[5-10]) korunur,
+      3) aynı-yarış-seti exact-dup tekille → en çok atlıyı tut,
+      4) boş altılıyı düşür,
+      5) venue başına altili_no'yu yeniden ata.
+    error girdileri korunur. Returns (cleaned, actions)."""
     def _venue(r):
         return (r.get("hippodrome") or "?").replace(" Hipodromu", "").replace(" Hipodrom", "").strip()
 
     def _nh(r):
         return sum(len(ls.get("all_horses_with_mp") or []) for ls in (r.get("legs_summary") or []))
 
-    def _dist_sig(r):
-        return tuple(ls.get("distance") for ls in (r.get("legs_summary") or []))
+    def _races(r):
+        rn = r.get("race_numbers")
+        if rn:
+            return set(rn)
+        return set(ls.get("race_number") for ls in (r.get("legs_summary") or [])
+                   if ls.get("race_number") is not None)
+
+    def _is_repaired(r):
+        st = r.get("repair_status")
+        return bool(st) and st != "OK"
 
     errs = [r for r in all_results if r.get("error")]
     oks = [r for r in all_results if not r.get("error")]
     actions = []
 
-    # 1+2) (venue, mesafe-imzası) ile grupla → her grupta en çok atlıyı tut
-    groups, order = {}, []
+    # 0) KEY-MISMATCH safety net: repaired leg sadece all_horses yazmış olabilir → kopyala
     for r in oks:
-        key = (_venue(r), _dist_sig(r))
+        for ls in (r.get("legs_summary") or []):
+            if not ls.get("all_horses_with_mp") and ls.get("all_horses"):
+                ls["all_horses_with_mp"] = ls["all_horses"]
+
+    # 1+2) AGF-native (repaired DEĞİL) yarış setleri (venue başına) = güvenilir referans
+    agf_races_by_venue = {}
+    for r in oks:
+        if not _is_repaired(r):
+            agf_races_by_venue.setdefault(_venue(r), []).append(_races(r))
+    # repaired & aynı venue'de AGF ile örtüşen = dup/phantom → düş
+    survivors = []
+    for r in oks:
+        if _is_repaired(r):
+            rr = _races(r)
+            if rr and any(rr & ag for ag in agf_races_by_venue.get(_venue(r), [])):
+                actions.append(f"{_venue(r)} altılı#{r.get('altili_no')} (repaired, yarış {sorted(rr)}): "
+                               f"AGF altılısıyla örtüşüyor → dup/phantom, düşürüldü")
+                continue
+        survivors.append(r)
+
+    # 3) aynı-yarış-seti exact-dup tekille → en çok atlıyı tut
+    groups, order = {}, []
+    for r in survivors:
+        key = (_venue(r), frozenset(_races(r)))
         if key not in groups:
             groups[key] = []
             order.append(key)
@@ -2393,18 +2435,18 @@ def _reconcile_hippodromes(all_results):
         g = groups[key]
         best = max(g, key=_nh)
         if len(g) > 1:
-            actions.append(f"{key[0]}: {len(g)} kopya birleşti (atlı={_nh(best)} tutuldu)")
+            actions.append(f"{key[0]}: {len(g)} aynı-yarış kopya birleşti (atlı={_nh(best)} tutuldu)")
         kept.append(best)
 
-    # 3) atı olmayan altılıları düşür
+    # 4) atı olmayan altılıları düşür
     nonempty = []
     for r in kept:
         if _nh(r) > 0:
             nonempty.append(r)
         else:
-            actions.append(f"{_venue(r)} altılı#{r.get('altili_no')}: BOŞ (at çekilememiş) → düşürüldü")
+            actions.append(f"{_venue(r)} altılı#{r.get('altili_no')}: BOŞ (at yok) → düşürüldü")
 
-    # 4) venue normalize + venue başına yeniden numarala
+    # 5) venue normalize + venue başına yeniden numarala
     by_venue, vorder = {}, []
     for r in nonempty:
         v = _venue(r)
