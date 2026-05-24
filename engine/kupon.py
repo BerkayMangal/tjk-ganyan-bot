@@ -9,6 +9,7 @@ V5.1:
 - TEK kural: gap > 0.25 VE agreement >= 0.67 → TEK
 - Monte Carlo: model olasılıklarıyla simülasyon
 """
+import os
 import numpy as np
 import logging
 from config import (
@@ -224,6 +225,44 @@ def _budget_optimize(counts, legs, bf, budget, max_per_leg):
 # ANA KUPON BUILDER
 # ═══════════════════════════════════════════════════════════
 
+def _maybe_flb_reweight(legs):
+    """PATCH_5_5_FLB_COMPENSATION — score'a FLB multiplier(agf) uygula (shadow, env-flag).
+
+    leg['flb_meta'] HER ZAMAN yazılır (gözlem). TJK_FLB_ACTIVE=1 ise horses comp_score ile
+    re-sort/replace edilir (ranking+coverage değişir). Compensator yoksa / OFF → no-op.
+    Never-raises. Bkz audit/reports/phase_5_5_scoring_flow_map.md (A.4 caveat: prod'da
+    score=model_prob → value-tilt, forward validation şart).
+    """
+    try:
+        try:
+            from calibration_loader import flb_multiplier
+        except ImportError:
+            from dashboard.calibration_loader import flb_multiplier
+    except Exception:
+        return legs
+    active = os.getenv("TJK_FLB_ACTIVE", "0") == "1"
+    out = []
+    for leg in legs:
+        agf_map = {d.get('horse_number'): d.get('agf_pct', 0)
+                   for d in (leg.get('agf_data') or [])}
+        horses = leg.get('horses') or []
+        meta = []
+        comp = []
+        for h in horses:
+            name, score, num = h[0], h[1], h[2]
+            mult = flb_multiplier(agf_map.get(num, 0))
+            cs = (score or 0) * mult
+            meta.append({'number': num, 'mult': mult, 'comp_score': round(cs, 4)})
+            comp.append((name, cs, num))
+        leg = dict(leg)
+        leg['flb_meta'] = meta
+        if active and comp:
+            comp.sort(key=lambda c: -c[1])
+            leg['horses'] = comp  # comp_score hem ranking hem coverage'ı sürer
+        out.append(leg)
+    return out
+
+
 def build_kupon(legs, hippodrome, mode='dar'):
     """
     Model score bazlı 6'lı ganyan kuponu üret.
@@ -231,6 +270,7 @@ def build_kupon(legs, hippodrome, mode='dar'):
     Returns: dict with counts, cost, selected horses, hitrate
     """
     bf = birim_fiyat(hippodrome)
+    legs = _maybe_flb_reweight(legs)  # PATCH_5_5_FLB_COMPENSATION (shadow, env-flag, OFF default)
     budget = DAR_BUDGET if mode == 'dar' else GENIS_BUDGET
     max_per = 4 if mode == 'dar' else 6
 

@@ -2580,10 +2580,27 @@ def run_yerli_pipeline(target_date=None):
         try:
             base_msg = format_live_test_annotations(base_msg, all_results)
             base_msg = _inject_leg_tags_in_telegram(base_msg, all_results)
-            base_msg = _format_smart_genis_for_telegram(base_msg, all_results)
-            base_msg = _format_v7_for_telegram(base_msg, all_results)  # PATCH_FAZ7E_V7_TELEGRAM_BLOCK_v1
+            # PATCH_5_3_DEFER_SMARTGENIS (env-flag TJK_KUPON_MODE; default v5_1_only → smart_genis
+            # Telegram'a gitmez, kod V8 design için kalır. Rollback: TJK_KUPON_MODE=all)
+            if os.getenv("TJK_KUPON_MODE", "v5_1_only") == "all":
+                base_msg = _format_smart_genis_for_telegram(base_msg, all_results)
+            # PATCH_5_3_RETIRE_V7 (env-flag TJK_KUPON_MODE; default v5_1_only → V7 Telegram'a
+            # gitmez, kod+snapshot shadow'da kalır. Rollback: TJK_KUPON_MODE=all)
+            if os.getenv("TJK_KUPON_MODE", "v5_1_only") == "all":
+                base_msg = _format_v7_for_telegram(base_msg, all_results)  # PATCH_FAZ7E_V7_TELEGRAM_BLOCK_v1
         except Exception as _e_ann:
             logger.warning(f"[smart] telegram annotation failed: {_e_ann}")
+        # PATCH_5_6_5_HYBRID_LIVE — v9 strateji router CANLI. base_msg yukarıda V5.1 olarak kuruldu
+        # (fallback sigortası); v9 BAŞARILIYSA onu kullan, HATA atarsa sessizce V5.1'de kal (log).
+        # KILL-SWITCH (5.7.5): TJK_V9_LIVE=0 → v9 atlanır, V5.1 gider (Berkay anında geri dönüş).
+        try:
+            from telegram_formatter_v9 import format_day_message, v9_live_enabled
+            if v9_live_enabled():
+                _v9msg = format_day_message(all_results, date_str)
+                if _v9msg and _v9msg.strip():
+                    base_msg = _v9msg
+        except Exception as _e_v9live:
+            logger.warning(f"[v9] HYBRID_LIVE → V5.1 fallback: {repr(_e_v9live)[:120]}")
         banner_lines = [LIVE_TEST_DISCLAIMER,
                         f"📊 Veri kalitesi: {dq_level} (skor {dq_score})"]
         if dq_level in ("WARNING", "BAD"):
@@ -2651,14 +2668,70 @@ def _process_proper_altili(agf_alt, program_data, target_date, model_ok):
     value_horses = _try_value(legs, model_ok)
     consensus = _try_consensus(hippo, legs, target_date)
 
-    return _inject_selection_integrity_audit({
+    # Phase 1B.1: shadow source-consensus (READ-ONLY). consensus yukarıda zaten
+    # hesaplandı → pas geçiliyor (duplicate çağrı yok). Kupon kararını ETKİLEMEZ.
+    source_consensus_meta = {}
+    try:
+        from source_consensus import run_shadow_validation, log_shadow_result
+        _sc = run_shadow_validation(hippo, altili_no, legs, agf_alt, consensus)
+        log_shadow_result(f"{target_date}_{hippo}_{altili_no}", _sc)
+        source_consensus_meta = _sc.to_dict()
+    except Exception as _e_sc:
+        source_consensus_meta = {"validator_degraded": True,
+                                 "degraded_reason": f"shadow_failed:{repr(_e_sc)[:80]}"}
+
+    result = _inject_selection_integrity_audit({
         'hippodrome': hippo, 'altili_no': altili_no, 'time': time_str,
         'dar': _ticket_to_json(dar), 'genis': _ticket_to_json(genis),
         'rating': {'rating': rating['rating'], 'stars': rating['stars'], 'verdict': rating['verdict'],
                    'score': round(rating.get('score', 0), 2), 'reasons': rating.get('reasons', [])},
         'value_horses': value_horses, 'consensus': consensus,
         'legs_summary': _build_legs_summary(legs),
+        'source_consensus': source_consensus_meta,
         'model_used': model_ok and any(l.get('has_model') for l in legs)}, legs)
+
+    # PATCH_5_2_CALIBRATION (shadow, no decision impact). active.pkl yoksa no-op (None).
+    try:
+        from calibration_loader import apply_calibration
+        for _ls in result.get('legs_summary', []) or []:
+            for _h in _ls.get('all_horses_with_mp', []) or []:
+                _h['calibrated_prob'] = apply_calibration((_h.get('model_prob') or 0) / 100.0)
+    except Exception:
+        pass
+
+    # PATCH_5_5_FLB_COMPENSATION (shadow meta, no decision impact here — karar build_kupon'da,
+    # env TJK_FLB_ACTIVE. Bu blok sadece gözlem: flb_multiplier + compensated model_prob).
+    try:
+        from calibration_loader import flb_multiplier, apply_flb_compensation
+        for _ls in result.get('legs_summary', []) or []:
+            for _h in _ls.get('all_horses_with_mp', []) or []:
+                _agf = _h.get('agf_pct') or 0
+                _h['flb_multiplier'] = flb_multiplier(_agf)
+                _h['flb_compensated_mp'] = apply_flb_compensation(_h.get('model_prob'), _agf)
+    except Exception:
+        pass
+
+    # PATCH_5_6_V9_SHADOW (env-flag TJK_V8_STRATEGY_ROUTER default off, META only).
+    # v9 9-layer + router YAN YANA çalışır → result['v9_shadow']. Telegram DOKUNULMAZ (bu tur);
+    # karar-swap gelecek UX turu. ENV off/on her durumda prod davranışı AYNI (sadece meta).
+    try:
+        from calibration_loader import get_v9_pipeline
+        _v9run = get_v9_pipeline()
+        if _v9run:
+            result['v9_shadow'] = _v9run(result)
+    except Exception as _e_v9:
+        result['v9_shadow'] = {"error": repr(_e_v9)[:120]}
+
+    # Phase 1E.1: bet_diary prediction-time write (sadece KAYIT — kupon kararını ETKİLEMEZ).
+    try:
+        from bet_diary_writer import write_predictions_for_altili
+        _bd = write_predictions_for_altili(result, agf_alt, source_consensus_meta, target_date)
+        if _bd.get("records_written"):
+            logger.info(f"  Bet diary: {_bd['records_written']} kayıt, {_bd['value_bets']} value bet")
+    except Exception as _e_bd:
+        logger.warning(f"  Bet diary write failed: {_e_bd}")
+
+    return result
 
 
 def _fetch_domestic_tracks():
@@ -4443,7 +4516,8 @@ def _get_telegram_messages(results, date_str):
         # PATCH_V7_TOP3_TRANSPARENCY_v1
         legs_summary_v7 = r.get("legs_summary") or []
         gs_legs_v7 = (r.get("genis_smart") or {}).get("legs") or []
-        has_v7 = bool(legs_summary_v7) and any(
+        # PATCH_5_3_RETIRE_V7 (env-flag): v5_1_only modda V7 ANALİZ bloğu gizlenir (tek kupon)
+        has_v7 = (os.getenv("TJK_KUPON_MODE", "v5_1_only") == "all") and bool(legs_summary_v7) and any(
             isinstance(L, dict) and L.get("top3_v7") for L in legs_summary_v7
         )
         dar = r.get('dar')
@@ -5606,6 +5680,34 @@ def run_daily_recap(target_date_str=None, send_telegram=False):
         tg_body = _format_telegram_recap_v7(target_date_str, per_altili, totals)
         recap["telegram_body"] = tg_body
 
+        # PATCH_5_6_5_HYBRID_LIVE — v9 akşam retro + sinyal-validation log (guarded, recap'i bozmaz)
+        try:
+            from simulation.v9.pipeline import build_v9_race, run_pipeline
+            from retro_formatter_v9 import format_retro_message, log_v9_signals
+            _v9retro = []
+            for alt in (snap.get("hippodromes") or []):
+                o = official_idx.get((_normalize_hippo_v7(alt.get("hippodrome")), alt.get("altili_no")))
+                if not o:
+                    continue
+                _wmap = {w.get("leg_number"): w.get("horse_number") for w in (o.get("winners") or [])}
+                winners = [_wmap.get(i) for i in range(1, 7)]
+                if None in winners:
+                    continue
+                _rr = dict(alt); _rr.setdefault("date", target_date_str)
+                _out = run_pipeline(build_v9_race(_rr, None))
+                log_v9_signals(_out, winners, target_date_str, alt.get("hippodrome"))
+                _v9retro.append(format_retro_message(
+                    alt.get("hippodrome"), alt.get("time", ""), _out["routing"]["strategy"],
+                    winners, _out["kupon"].get("legs_selected") or [], _out["aggregated"]["legs"]))
+            # log_v9_signals HER ZAMAN çalışır (öğrenme loop'u); retro MESAJI sadece v9 canlıyken
+            # Telegram'a eklenir (kill-switch TJK_V9_LIVE=0 ise retro da gizlenir, log devam eder).
+            from telegram_formatter_v9 import v9_live_enabled
+            if _v9retro and v9_live_enabled():
+                tg_body = tg_body + "\n\n" + "\n\n".join(_v9retro)
+                recap["telegram_body"] = tg_body
+        except Exception as _e_v9retro:
+            logger.warning(f"[v9] retro hook skip: {repr(_e_v9retro)[:120]}")
+
         sent = False
         if send_telegram:
             sent = _send_telegram_recap_v7(tg_body)
@@ -5623,9 +5725,28 @@ def send_telegram_simple(results_dict):
     import time as _time
     results = results_dict.get('hippodromes', [])
     date_str = results_dict.get('date', '')
-    messages = _get_telegram_messages(results, date_str)
+    # PATCH_5_6_5_HYBRID_LIVE — GERÇEK Telegram gönderici burası (app.py bunu çağırır). v9 router
+    # mesajları altılı-başına gider (kill-switch açık + başarılıysa); aksi V5.1 fallback.
+    messages = None
+    try:
+        from telegram_formatter_v9 import format_messages_list, v9_live_enabled
+        if v9_live_enabled():
+            messages = format_messages_list(results, date_str)
+    except Exception as _e_v9send:
+        logger.warning(f"[v9] send → V5.1 fallback: {repr(_e_v9send)[:120]}")
+        messages = None
+    if not messages:
+        messages = _get_telegram_messages(results, date_str)   # V5.1 fallback / kill-switch OFF
     if not messages:
         return
+
+    try:  # PATCH_5_1_5_USER_WARNING — Phase 5.3'te kaldır (env: TJK_PHASE_5_2_WARNING)
+        from user_warnings import get_banner as _gb
+        _w = _gb()
+        if _w:
+            messages[0] = _w + messages[0]
+    except Exception:
+        pass
 
     token = os.environ.get('TELEGRAM_BOT_TOKEN', '')
     chat_id = os.environ.get('TELEGRAM_CHAT_ID', '')

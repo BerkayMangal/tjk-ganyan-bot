@@ -474,6 +474,20 @@ def run_retro(target_date=None) -> str:
     if not results:
         return f"📊 RETRO — {date_str}\n❌ Sonuçlar henüz gelmiyor. Sonra tekrar denenecek."
 
+    # Phase 1E.2: bet_diary outcome update (sadece KAYIT — retro raporunu ETKİLEMEZ)
+    try:
+        try:
+            from dashboard.bet_diary_writer import update_outcomes_for_date
+        except ImportError:
+            import sys as _sys, os as _os
+            _sys.path.insert(0, _os.path.join(_os.path.dirname(
+                _os.path.dirname(_os.path.abspath(__file__))), "dashboard"))
+            from bet_diary_writer import update_outcomes_for_date
+        _bo = update_outcomes_for_date(target_date, results)
+        logger.info(f"  Bet diary outcomes: {_bo}")
+    except Exception as _e_bo:
+        logger.warning(f"  Bet diary outcome update failed: {_e_bo}")
+
     # Karşılaştır
     report_lines = [
         f"📊 RETRO RAPOR — {date_str}",

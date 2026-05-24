@@ -315,6 +315,28 @@ Railway auto-deploys on `git push`:
 4. **Data > Model**: Going from 14K to 401K records, filling jockey (3%→99%), dam-sire (0%→99%) was bigger than any algorithm change.
 5. **Altılı is hard**: 6-leg accumulator magnifies errors. Single-race value betting is more profitable.
 
+## Haftalık kalibrasyon + feedback (Phase 5.6)
+
+Sistem bir BOT değil — karar destek aracı. Berkay karar verici. Haftalık döngü:
+
+**1. Ne oynadığını kaydet** (her oyun sonrası, ~10 sn):
+```
+python audit/cli/log_play.py --date 2026-05-23 --race "Ankara#1" --strategy kangal \
+    --cost 4800 --played true --hit false --notes "Ayak 5 banker yerine 2 at"
+```
+→ `data/play_log/{date}.jsonl` (gitignored). `--played false` = atladım.
+
+**2. Pazartesi haftalık rapor** (5 dk oku):
+```
+PYTHONPATH=.:dashboard python audit/weekly_calibration_report.py
+```
+→ `audit/weekly_calibration/{YYYY-WW}.md`: strateji dağılımı, ne oynadın, **sinyal doğrulama**
+(FLB/skill/form tag'leri tuttu mu — gap=win−agf), sistematik yanlışlar, öğrenme.
+
+**3. v9 shadow** (env-flag, default off — prod davranışı değişmez): `result['v9_shadow']` META'da
+9-layer profil + strateji router önerisi. `TJK_V8_STRATEGY_ROUTER` ON yapsan bile Telegram V5.1
+(karar-swap ayrı UX turu). Devir günü: `TJK_CARRYOVER_DAY=2|3` (Kangal tetiğini gevşetir).
+
 ## License
 
 Private — not for redistribution.
