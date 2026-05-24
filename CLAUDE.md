@@ -154,6 +154,13 @@ agftablosu.com çökerse hepsi çöker. Fallback sadece **kod hatalarına / modu
   PATCH_5_3_RETIRE_V7 (coupon @2584 + V7 ANALİZ @4491), PATCH_5_3_DEFER_SMARTGENIS (@2583).
   build+snapshot shadow'da KALIR (v8 girdisi). Banner sade bilgi notuna güncellendi. Smoke 7/7:
   kullanıcı mesajı **15820→2421 char** (tek V5.1 kupon). **Berkay: rollback `TJK_KUPON_MODE=all`.**
+- **Phase 5.8.2 — REFACTOR → MAIN MERGE + RAILWAY DEPLOY** → `audit/reports/phase_5_8_2_*`. Sabah V7
+  sızıntısının kök sebebi: main 8 tur geride (Railway main'den deploy). **refactor → main merge**
+  (merge commit ffa1c85, 106 commit, origin/main direkt-ata → 0 conflict). Backup tag'ler push'lu.
+  Code default'ları ROBUST doğrulandı (TJK_KUPON_MODE=v5_1_only → V7 emekli, TJK_V9_LIVE=1,
+  HEAVY_FAV_PCT=50) → **Railway env BOŞ olsa bile doğru çalışır**. Railway auto-deploy tetiklendi.
+  V5.1 fallback + kill-switch. **Branch politikası: main artık güncel; ileride main'de çalış VEYA
+  refactor↔main senkron tut (Berkay karar).** Berkay: Railway dashboard build-success + 13:15 Telegram kontrol.
 - **Phase 5.8.1 — V9 CONFIG DÜZELT: v9_A50 CANLI** → `audit/reports/phase_5_8_1_*`. Alpha-hunt
   flag'i (v9 prod hit %0.8 < V5.1 %4.9) düzeltildi. 4 varyant paired backtest → **KAZANAN v9_A50**
   (FavoriYıkma eşiği 40→**50**): hit6 %4.9 (=V5.1) + cost −%30 + OOS-pozitif + d+0.12. hybrid reddedildi.
