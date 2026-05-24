@@ -664,6 +664,31 @@ def send_yerli_telegram():
     except Exception as e:
         return jsonify({"error": str(e)})
 
+@app.route("/api/manual-trigger", methods=["POST"])
+def manual_trigger():
+    # Pipeline+Telegram'ı ARKA PLAN THREAD'inde koşar: senkron request ~120s'i aşıp
+    # gunicorn --timeout 120 worker'ı öldürüyordu (gönderim yarıda kesiliyordu). Thread
+    # request limitine tabi değil — scheduler'ın _scheduled_pipeline akışıyla aynı.
+    if request.headers.get("X-Token", "") != os.getenv("MANUAL_TRIGGER_TOKEN", "tjk-acil-2026"):
+        return jsonify({"error": "unauthorized"}), 401
+    if not YERLI_ENGINE_OK:
+        return jsonify({"error": "engine off"}), 503
+
+    def _run():
+        try:
+            from yerli_engine import run_yerli_pipeline, send_telegram_simple
+            result = run_yerli_pipeline()
+            with _yerli_lock:
+                _yerli_cache['data'] = result
+                _yerli_cache['ts'] = _now_utc()
+            send_telegram_simple(result)
+            app.logger.info("manual-trigger: kupon Telegram'a gönderildi")
+        except Exception as _e:
+            app.logger.error(f"manual-trigger pipeline error: {_e}")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"status": "triggered", "ts": datetime.utcnow().isoformat()}), 202
+
 # PATCH_FAZ4_ANA_ALPHA_DANGER_v1: BUG 9 — 5 diagnostic endpoints removed
 # (loader_diag, recap_diag, snap_diag, tjk_agf_probe, disk_diag).
 # These were temporary debug helpers for V7 snapshot/recap troubleshooting and
