@@ -48,7 +48,7 @@ def main():
     out_on = _capture_send(rd)
     checks.append(("send ON → v9 footer (payout=PROXY) gönderiliyor", "payout=PROXY" in out_on))
     checks.append(("send ON → strateji başlığı gönderiliyor",
-                   any(k in out_on for k in ("Strateji:", "net sinyal"))))
+                   any(k in out_on for k in ("🎯", "TAM SİSTEM", "FAVORİ YIKMA", "KANGAL", "net sinyal"))))
 
     # 4) kill-switch OFF → V5.1 gönderiliyor (v9 değil)
     os.environ["TJK_V9_LIVE"] = "0"

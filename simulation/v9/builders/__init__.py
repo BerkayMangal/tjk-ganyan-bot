@@ -6,7 +6,12 @@ backtest). Bütçe bandı = ÖNERİ → aşarsa en geniş ayaklardan shrink (ön
 """
 from __future__ import annotations
 
+import os
+
 BF = 1.25
+# Min ticket maliyeti (öneri tabanı): tek-kombi "Main" (combo=1 → ~1 TL) absürtlüğünü engelle.
+# Altı-ayaklı sistemde anlamlı en küçük kupon ~combo 80 (≈100 TL). Berkay env ile ayarlar.
+MIN_TICKET_COST = float(os.getenv("TJK_V9_MIN_TICKET_COST", "100"))
 
 
 def combo_of(legs_selected):
@@ -18,6 +23,23 @@ def combo_of(legs_selected):
 
 def cost_of(combo):
     return round(combo * BF, 2)
+
+
+def grow_to_min(legs_selected, ranked_per_leg, min_cost=None):
+    """combo·BF < min_cost ise en DAR ayaklara v9-sıralı bir sonraki atı ekle (öneri tabanı).
+    ranked_per_leg[i] = leg i'nin v9_final'a göre sıralı TÜM at numaraları. Aday bitince durur."""
+    if min_cost is None:
+        min_cost = MIN_TICKET_COST
+    ls = [list(x) for x in legs_selected]
+    guard = 0
+    while cost_of(combo_of(ls)) < min_cost and guard < 200:
+        guard += 1
+        cand = [i for i in range(len(ls)) if i < len(ranked_per_leg) and len(ls[i]) < len(ranked_per_leg[i])]
+        if not cand:
+            break
+        i = min(cand, key=lambda k: len(ls[k]))   # en dar ayak
+        ls[i].append(ranked_per_leg[i][len(ls[i])])
+    return ls
 
 
 def top_by_v9(profiles, n):

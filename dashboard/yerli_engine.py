@@ -4464,7 +4464,8 @@ def _build_legs_summary(legs):
             'has_model':leg.get('has_model',False),'confidence':round(leg.get('confidence',0),4),
             'agreement':round(leg.get('model_agreement',0),2),'leg_type':lt,'top3':top3,
             'all_horses_with_mp':all_horses_with_mp,
-            'distance':leg.get('distance',''),'breed':'Arap' if leg.get('is_arab') else ('\u0130ngiliz' if leg.get('is_english') else '')})
+            'distance':leg.get('distance',''),'breed':'Arap' if leg.get('is_arab') else ('\u0130ngiliz' if leg.get('is_english') else ''),
+            'group_name':leg.get('group_name','') or '','track_type':leg.get('track_type','') or ''})
     return out
 
 
