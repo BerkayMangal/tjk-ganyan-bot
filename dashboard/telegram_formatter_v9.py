@@ -39,6 +39,15 @@ def _track_tr(t):
     return _TRACK_TR.get(str(t or "").strip().lower(), "")
 
 
+def _clean_group(g):
+    """Ham group_name çok satırlı scrape çöpü içerir (mesafe/pist/E.İ.D. rekoru gömülü).
+    İlk satır = gerçek yarış sınıfı; gerisi atılır. Mesafe/pist zaten ayrı alanlarda."""
+    if not g:
+        return ""
+    first = str(g).replace("\r", "\n").split("\n")[0]
+    return first.strip().rstrip(" ,").strip()[:48]
+
+
 def _dist(d):
     if d is None or d == "":
         return ""
@@ -63,7 +72,7 @@ def _build_meta(r) -> dict:
                       "mp": hd.get("model_prob", 0) or 0,
                       "agf": hd.get("agf_pct", 0) or 0,
                       "edge": hd.get("value_edge", 0) or 0}
-        meta[ayak] = {"group_name": (ls.get("group_name") or "").strip(),
+        meta[ayak] = {"group_name": _clean_group(ls.get("group_name")),
                       "breed": (ls.get("breed") or "").strip(),
                       "distance": ls.get("distance", ""), "track": _track_tr(ls.get("track_type")),
                       "leg_type": ls.get("leg_type", ""), "order": order, "h": h}
@@ -238,6 +247,58 @@ def _has_data(r) -> bool:
     return False
 
 
+def _norm_venue(h):
+    return (h or "?").replace(" Hipodromu", "").replace(" Hipodrom", "").strip()
+
+
+def _leg_sig(r):
+    """Altılı imzası: her ayağın at-numara seti. Dup tespiti için."""
+    return tuple((ls.get("ayak"), frozenset(x.get("number") for x in (ls.get("all_horses_with_mp") or [])))
+                 for ls in (r.get("legs_summary") or []))
+
+
+def _n_horses(r):
+    return sum(len(ls.get("all_horses_with_mp") or []) for ls in (r.get("legs_summary") or []))
+
+
+def _proper_subset(a, b):
+    """a'nın ayakları b'nin ayaklarının ALT KÜMESİ mi (aynı yarışlar, a daha eksik kopya)?"""
+    la = {ls.get("ayak"): set(x.get("number") for x in (ls.get("all_horses_with_mp") or []))
+          for ls in (a.get("legs_summary") or [])}
+    lb = {ls.get("ayak"): set(x.get("number") for x in (ls.get("all_horses_with_mp") or []))
+          for ls in (b.get("legs_summary") or [])}
+    if not la or set(la.keys()) != set(lb.keys()):
+        return False
+    return _n_horses(a) < _n_horses(b) and all(la[k] <= lb.get(k, set()) for k in la)
+
+
+def _dedupe_renumber(results):
+    """Boş/error altılı at; venue adını normalize et ('İstanbul Hipodromu'→'İstanbul');
+    aynı yarışların kopyalarını (exact + eksik-subset) tekille; venue başına yeniden numarala.
+    → [(venue, altili_no, r)]. Veri çoklu-kaynak duplikasyonunu (Phase 5.8.4) düzeltir."""
+    usable = [r for r in (results or []) if not r.get("error") and _has_data(r)]
+    by_venue, order = {}, []
+    for r in usable:
+        v = _norm_venue(r.get("hippodrome"))
+        if v not in by_venue:
+            by_venue[v] = []; order.append(v)
+        by_venue[v].append(r)
+    final = []
+    for v in order:
+        entries = by_venue[v]
+        uniq, seen = [], set()
+        for r in entries:                        # 1) exact-dup (aynı imza) → ilkini tut
+            s = _leg_sig(r)
+            if s in seen:
+                continue
+            seen.add(s); uniq.append(r)
+        kept = [r for r in uniq                   # 2) eksik-subset kopyaları çıkar
+                if not any(o is not r and _proper_subset(r, o) for o in uniq)]
+        for i, r in enumerate(kept, 1):
+            final.append((v, i, r))
+    return final
+
+
 def format_messages_list(all_results, date_str) -> list:
     """Her altılı → bir v9 Telegram mesajı (LİSTE). send_telegram_simple bunu altılı-başına gönderir
     (4096 limit + sleep). Sistemik hata (hepsi başarısız) → raise → V5.1 fallback."""
@@ -246,19 +307,17 @@ def format_messages_list(all_results, date_str) -> list:
     cs = detect_carryover_state(date_str)
     msgs = []
     n_ok = 0
-    n_total = 0
-    for r in all_results or []:
-        if r.get("error") or not _has_data(r):   # boş/malformed altılı atla (boş başlık bug'ı)
-            continue
-        n_total += 1
-        hippo = r.get("hippodrome", "?"); no = r.get("altili_no", 1); t = r.get("time", "")
+    final = _dedupe_renumber(all_results)   # boş/dup altılı temizle + venue normalize + renumber
+    n_total = len(final)
+    for v, no, r in final:
+        t = r.get("time", "")
         try:
             rr = dict(r); rr.setdefault("date", date_str)
             out = run_pipeline(build_v9_race(rr, None), cs)
-            msgs.append(format_message(out, hippo, no, t, _build_meta(r)))
+            msgs.append(format_message(out, v, no, t, _build_meta(r)))
             n_ok += 1
         except Exception as e:
-            msgs.append(f"🏇 {hippo} #{no}\n⚠ v9 hesap hatası (atlandı): {repr(e)[:50]}")
+            msgs.append(f"🏇 {v} {no}. altılı\n⚠ v9 hesap hatası (atlandı): {repr(e)[:50]}")
     if not msgs:
         raise RuntimeError("v9: hiç mesaj üretilemedi")
     # DEFENSE-IN-DEPTH: hiç gerçek kupon yoksa (hepsi hata) → raise → V5.1 fallback
