@@ -12,8 +12,8 @@ import os
 
 PATCH_5_1_5_USER_WARNING = "phase_5_2_calibration_period_banner"
 
-WARNING_BANNER = """ℹ️ Phase 5.6.5 HYBRID CANLI — 3 strateji router aktif
-Tam Sistem / Favori Yıkma / Kangal / Pas önerileri + akşam retro. V5.1 fallback'te.
+WARNING_BANNER = """ℹ️ Phase 5.8.1 CANLI — v9 router (kalibre: favori-yıkma sadece ağır favori ≥%50)
+Tam Sistem ağırlıklı + akşam retro. Coverage V5.1 seviyesine döndü, maliyet ~%30 düşük.
 Beğenmezsen: Railway env TJK_V9_LIVE=0 → anında V5.1. Bot DEĞİL — karar sende."""
 
 

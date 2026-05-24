@@ -10,10 +10,23 @@ Tamamen L4(FLB)+agf ile çalışır → PROD'da (jokey/form yokken) da tetikleni
 """
 from __future__ import annotations
 
+import os
+
 MED_GAP = 0.0572
 KANGAL_FY = 4
-HEAVY_FAV_PCT = 40.0
+# Phase 5.8.1 KAZANAN (VARYANT A50): eşik 40→50. Backtest: A40 hit6 %0.8 (coverage öldü) →
+# A50 hit6 %4.9 (=V5.1) + cost %30 düşük + OOS-pozitif + Cohen's d +0.12. Sadece EN AĞIR
+# favoriler (≥%50, FLB corr~0.51 en overbet) fade edilir; gerisi Tam Sistem (coverage korunur).
+HEAVY_FAV_PCT = 50.0   # env TJK_V9_FAV_AGF_THRESHOLD ile override edilebilir
 _rf = None
+
+
+def _fav_threshold():
+    """FavoriYıkma AĞIR-favori eşiği. env TJK_V9_FAV_AGF_THRESHOLD (default HEAVY_FAV_PCT)."""
+    try:
+        return float(os.getenv("TJK_V9_FAV_AGF_THRESHOLD", str(HEAVY_FAV_PCT)))
+    except Exception:
+        return HEAVY_FAV_PCT
 
 
 def _risk():
@@ -31,7 +44,7 @@ def _leg_signals(agg_leg, race_leg):
     if len(profs) >= 2:
         sig["gap"] = profs[0]["v9_final_score"] - profs[1]["v9_final_score"]
     agf_sorted = sorted(profs, key=lambda p: -p["agf_pct"])
-    if agf_sorted and agf_sorted[0]["agf_pct"] >= HEAVY_FAV_PCT:   # AĞIR favori = FLB-overbet fade hedefi
+    if agf_sorted and agf_sorted[0]["agf_pct"] >= _fav_threshold():   # AĞIR favori = FLB-overbet fade hedefi
         fav = agf_sorted[0]
         sig["fav_number"] = fav["number"]
         sig["fav_agf"] = fav["agf_pct"]
