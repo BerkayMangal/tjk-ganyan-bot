@@ -154,6 +154,15 @@ agftablosu.com çökerse hepsi çöker. Fallback sadece **kod hatalarına / modu
   PATCH_5_3_RETIRE_V7 (coupon @2584 + V7 ANALİZ @4491), PATCH_5_3_DEFER_SMARTGENIS (@2583).
   build+snapshot shadow'da KALIR (v8 girdisi). Banner sade bilgi notuna güncellendi. Smoke 7/7:
   kullanıcı mesajı **15820→2421 char** (tek V5.1 kupon). **Berkay: rollback `TJK_KUPON_MODE=all`.**
+- **Phase 5.8.1 — V9 CONFIG DÜZELT: v9_A50 CANLI** → `audit/reports/phase_5_8_1_*`. Alpha-hunt
+  flag'i (v9 prod hit %0.8 < V5.1 %4.9) düzeltildi. 4 varyant paired backtest → **KAZANAN v9_A50**
+  (FavoriYıkma eşiği 40→**50**): hit6 %4.9 (=V5.1) + cost −%30 + OOS-pozitif + d+0.12. hybrid reddedildi.
+  `strategy_router.HEAVY_FAV_PCT=50` (env `TJK_V9_FAV_AGF_THRESHOLD`). Dağılım: TamSistem %52/Pas %33/
+  FavoriYıkma %16. V5.1 fallback + kill-switch intact. ⚠ payout=PROXY (Cephe 2 gerçek-dividend bekler).
+- **Phase 5.8.0 — GECE ALPHA HUNT** → `audit/reports/phase_5_8_0_ALPHA_HUNT_REPORT.md`. 12 blok
+  research, **0 yeni tradeable alpha** (dürüst). FLB favori-fade + jokey-skill TEYİT (zaten v9'da).
+  "longshot +ROI" = PROXY artifact (takeout+tail, debunk). Ayaklar bağımsız; segment/cell negatif.
+  4 blok veri-infeasible (carryover/steam/arbitraj/Kelly → Phase 5.7 gerek). Çıkan flag → 5.8.1.
 - **Phase 5.7.0/5.7.5 — GÜN SONU AUDIT + 2 KRİTİK HOTFIX + KILL-SWITCH** → `audit/reports/phase_5_7_*`.
   - 🔴→🟢 **5.7.0**: complete.csv gitignored→prod'da YOK; v9 loader'ları guard'sız open()→crash→
     "hesap hatası" sel (V5.1 fallback tetiklenmezdi). Fix: graceful degrade + defense raise.
