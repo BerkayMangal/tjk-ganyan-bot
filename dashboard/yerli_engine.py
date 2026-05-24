@@ -2357,6 +2357,70 @@ def _ensure_loaded():
         return False
 
 
+def _reconcile_hippodromes(all_results):
+    """Multi-source assembly temizliği: aynı hipodrom farklı venue-adıyla ('İstanbul' +
+    'İstanbul Hipodromu') ve aynı altılı hem boş (at eşleşmemiş) hem dolu girdi olarak
+    gelebiliyor. Burada result['hippodromes'] listesi KÖKTEN temizlenir (sadece display değil):
+      1) venue adını normalize et ('İstanbul Hipodromu'→'İstanbul'),
+      2) aynı altılının kopyalarını (venue + leg-mesafe imzası eşit) birleştir → en çok ATLI olanı tut
+         (boş yapı + atlı kopya → atlı kopya),
+      3) hiçbir kopyası dolu olmayan BOŞ altılıyı düşür (gösterilemez; gerçek scrape boşluğu),
+      4) venue başına altili_no'yu yeniden ata (görünüm sırasıyla).
+    error girdileri dokunulmadan korunur. Returns (cleaned, actions)."""
+    def _venue(r):
+        return (r.get("hippodrome") or "?").replace(" Hipodromu", "").replace(" Hipodrom", "").strip()
+
+    def _nh(r):
+        return sum(len(ls.get("all_horses_with_mp") or []) for ls in (r.get("legs_summary") or []))
+
+    def _dist_sig(r):
+        return tuple(ls.get("distance") for ls in (r.get("legs_summary") or []))
+
+    errs = [r for r in all_results if r.get("error")]
+    oks = [r for r in all_results if not r.get("error")]
+    actions = []
+
+    # 1+2) (venue, mesafe-imzası) ile grupla → her grupta en çok atlıyı tut
+    groups, order = {}, []
+    for r in oks:
+        key = (_venue(r), _dist_sig(r))
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(r)
+    kept = []
+    for key in order:
+        g = groups[key]
+        best = max(g, key=_nh)
+        if len(g) > 1:
+            actions.append(f"{key[0]}: {len(g)} kopya birleşti (atlı={_nh(best)} tutuldu)")
+        kept.append(best)
+
+    # 3) atı olmayan altılıları düşür
+    nonempty = []
+    for r in kept:
+        if _nh(r) > 0:
+            nonempty.append(r)
+        else:
+            actions.append(f"{_venue(r)} altılı#{r.get('altili_no')}: BOŞ (at çekilememiş) → düşürüldü")
+
+    # 4) venue normalize + venue başına yeniden numarala
+    by_venue, vorder = {}, []
+    for r in nonempty:
+        v = _venue(r)
+        if v not in by_venue:
+            by_venue[v] = []
+            vorder.append(v)
+        by_venue[v].append(r)
+    out = []
+    for v in vorder:
+        for i, r in enumerate(by_venue[v], 1):
+            r["hippodrome"] = v
+            r["altili_no"] = i
+            out.append(r)
+    return out + errs, actions
+
+
 def run_yerli_pipeline(target_date=None):
     if target_date is None:
         target_date = date.today()
@@ -2513,6 +2577,15 @@ def run_yerli_pipeline(target_date=None):
                 )
     except Exception as _e_repair:
         logger.warning(f"[smart-repair] failed: {_e_repair}")
+
+    # ── RECONCILE: venue normalize + aynı-altılı kopya birleştir + boş düşür + renumber ──
+    # (multi-source assembly: 'İstanbul'+'İstanbul Hipodromu' ve boş altili_no=2 kök temizliği)
+    try:
+        all_results, _recon_actions = _reconcile_hippodromes(all_results)
+        for _a in _recon_actions:
+            logger.warning(f"[reconcile] {_a}")
+    except Exception as _e_recon:
+        logger.warning(f"[reconcile] failed (liste değişmedi): {_e_recon}")
 
     try:
         for _r in all_results:
