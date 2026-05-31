@@ -208,5 +208,12 @@ def warm_cache_async(at_adis: list, **kwargs) -> threading.Thread:
 
 
 def is_enabled() -> bool:
-    """Phase 9 kill-switch (default OFF — TJK_FORM_ACTIVE=1 ile aç)."""
-    return os.getenv("TJK_FORM_ACTIVE", "0") == "1"
+    """Phase 9 DİSABLE — hard-off (production sorun: per-horse DB query × 300 + warm thread
+    Supabase rate-limit/connection overload → pipeline hang → kupon gelmiyor).
+    Bulk-query refactor pending. Re-enable: TJK_FORM_V2_BULK=1 (default off) — kullanıcının
+    mevcut TJK_FORM_ACTIVE=1 env'i tek başına aktive ETMEZ artık (hot-fix)."""
+    if os.getenv("TJK_FORM_ACTIVE", "0") != "1":
+        return False
+    if os.getenv("TJK_FORM_V2_BULK", "0") != "1":
+        return False
+    return True
