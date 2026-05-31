@@ -30,6 +30,7 @@ VALID_EVENT_TYPES = {
     "pipeline_run",
     "bet_decision",
     "daily_snapshot",   # Phase 7: snapshot persistence (Railway ephemeral disk fix)
+    "horse_derece",     # Phase 9: at-form cache (TJK DetayliDereceIst kayıtları)
 }
 
 
@@ -191,6 +192,63 @@ def load_daily_snapshot(date_iso: str) -> Optional[dict]:
     except Exception as e:
         logger.warning("event_store: load_daily_snapshot('%s') failed: %s",
                        date_iso, repr(e)[:140])
+        return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 9 — HORSE FORM (DetayliDereceIst kayıtları, at başına)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def save_horse_derece(at_adi: str, records: list) -> bool:
+    """Bir atın derece kayıtlarını sakla. payload.at_adi = key. timestamp = scrape zamanı.
+    Aynı atın yeni scrape'i append eder; load en yenisini döner."""
+    if not at_adi:
+        return False
+    return write_event(event_type="horse_derece",
+                       payload={"at_adi": at_adi, "records": records or [],
+                                "count": len(records or [])})
+
+
+def load_horse_derece(at_adi: str, max_age_hours: int = 24) -> Optional[list]:
+    """Bir at için en son cache'lenmiş derece kayıtlarını oku. Cache stale (> max_age_hours)
+    veya hiç yok → None. payload.records → list of derece dicts."""
+    if not at_adi:
+        return None
+    url = _db_url()
+    if not url:
+        return None
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+    except ImportError as e:
+        logger.warning("event_store: psycopg2 missing: %s", e)
+        return None
+    conn = None
+    try:
+        conn = psycopg2.connect(url, connect_timeout=CONNECT_TIMEOUT)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT payload FROM pipeline_events "
+                "WHERE event_type = 'horse_derece' "
+                "AND payload->>'at_adi' = %s "
+                "AND timestamp >= NOW() - (%s || ' hours')::interval "
+                "ORDER BY timestamp DESC LIMIT 1",
+                (at_adi, str(max_age_hours)),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            pl = row.get("payload") or {}
+            return list(pl.get("records") or [])
+    except Exception as e:
+        logger.warning("event_store: load_horse_derece('%s') failed: %s",
+                       at_adi, repr(e)[:140])
         return None
     finally:
         if conn is not None:

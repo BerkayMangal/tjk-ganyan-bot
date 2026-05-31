@@ -46,7 +46,8 @@ def _norm(s):
 
 
 def build_v9_race(snap_result: dict, enr=None) -> dict:
-    """snapshot result → v9 race contract (jokey/form enriched lookup'tan)."""
+    """snapshot result → v9 race contract (jokey/form enriched lookup'tan).
+    Phase 9: horse'a 'name', leg'e 'mesafe' eklendi → L6_CANLI form_loader plumbing."""
     date = snap_result.get("date")
     hip = snap_result.get("hippodrome")
     hipn = _norm(hip)
@@ -58,8 +59,10 @@ def build_v9_race(snap_result: dict, enr=None) -> dict:
             extra = (enr or {}).get((date, hipn, num), {}) if enr else {}
             horses.append({"number": num, "agf_pct": h.get("agf_pct", 0),
                            "score": (h.get("model_prob") or 0) / 100.0,
-                           "jockey": extra.get("jockey"), "form_score": extra.get("form_score")})
-        legs.append({"ayak": ls.get("ayak"), "horses": horses})
+                           "jockey": extra.get("jockey"), "form_score": extra.get("form_score"),
+                           "name": h.get("name")})   # Phase 9: form_loader için at_adi
+        legs.append({"ayak": ls.get("ayak"), "horses": horses,
+                     "mesafe": ls.get("distance")})  # Phase 9: form_loader için yarış mesafesi
     return {"date": date, "hippodrome": hip, "legs": legs}
 
 

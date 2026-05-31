@@ -49,10 +49,12 @@ def _flb_mult(agf_pct):
         return 1.0
 
 
-def profile_for_horse(horse: dict, leg_surprise=None, layers=None) -> dict:
-    """horse: {number, agf_pct, score, jockey?, form_score?}. → v9 profile dict.
+def profile_for_horse(horse: dict, leg_surprise=None, layers=None,
+                      leg_info: dict = None) -> dict:
+    """horse: {number, agf_pct, score, jockey?, form_score?, name?}. → v9 profile dict.
 
     layers: None=tümü; aksi halde aktif layer seti (ablation), ör. {"L4","L5"}. Pasif layer mult=1.
+    leg_info: Phase 9 — {sehir, mesafe} → form_loader pist+mesafe match için.
     """
     _ensure()
     _on = (lambda L: layers is None or L in layers)
@@ -84,13 +86,25 @@ def profile_for_horse(horse: dict, leg_surprise=None, layers=None) -> dict:
             niche_tags.append("skill- jokey")
             bias_flags.append("jockey_skill_low")
 
-    # L6 form — ETİKET-ONLY (Phase 5.6.5: hard-zero KAPATILDI). Backtest (Phase 5.6 P8): L6 hard-
-    # AVOID hit-rate'i −3 düşürüyordu; kötü-form favori %19 kazanabiliyor → sıfırlamak garantili
-    # miss. Artık form_mult=1.0 her zaman; sadece UYARI etiketi (Berkay görür, sistem atı tutar).
+    # L6 form — Phase 5.6.5: hard-zero KAPATILDI (form_mult=1.0 default), sadece etiket.
+    # Phase 9 (TJK_FORM_ACTIVE=1): form_loader DetayliDereceIst cache'inden CANLI form_mult
+    # üretir (PROD'da L6 nötr değil artık). Cache yoksa nötr (1.0) — graceful.
     form_mult = 1.0
     ai = agf / 100.0
+    if _on("L6"):
+        try:
+            from simulation.v9 import form_loader as _fl
+            if _fl.is_enabled() and horse.get("name"):
+                feat = _fl.get_form(horse["name"], leg_info or {})
+                if feat.get("available"):
+                    form_mult, form_tags = _fl.form_mult(feat, agf)
+                    for ft in form_tags:
+                        tags.append(f"form: {ft}")
+        except Exception:
+            pass   # cache yok / DB no-op / hata → nötr
+    # Legacy etiket (Taydex offline form_score, PROD'da çoğunlukla None)
     if _on("L6") and form is not None and form >= POOR_FORM and ai >= FAV_AGF:
-        tags.append("⚠ kötü-form + yüksek-AGF favori (etiket-only — sistem kuponda tuttu)")
+        tags.append("⚠ kötü-form + yüksek-AGF favori (etiket-only)")
     elif form is not None and form <= GOOD_FORM and ai < LOW_AGF:
         niche_tags.append("iyi-form/düşük-AGF (⚠ confound)")
 
@@ -121,13 +135,16 @@ def profile_for_horse(horse: dict, leg_surprise=None, layers=None) -> dict:
 
 def aggregate_race(race: dict, carryover_state=None, layers=None) -> dict:
     """race.legs[*].horses → her ata profile ekler; leg'e surprise_prob; özel-gün etiketi.
-    layers: None=tümü; ablation için aktif layer seti."""
+    layers: None=tümü; ablation için aktif layer seti.
+    Phase 9: leg_info (sehir, mesafe) profile_for_horse'a → L6_CANLI form_loader içeriği için."""
     from simulation.v9.surprise_layer import surprise_for_leg
+    sehir = race.get("hippodrome")
     out_legs = []
     for leg in race.get("legs", []) or []:
         horses = leg.get("horses") or []
         sp = surprise_for_leg([h.get("agf_pct", 0) for h in horses])
-        profs = [profile_for_horse(h, sp, layers) for h in horses]
+        leg_info = {"sehir": sehir, "mesafe": leg.get("mesafe")}
+        profs = [profile_for_horse(h, sp, layers, leg_info) for h in horses]
         profs.sort(key=lambda p: -p["v9_final_score"])
         out_legs.append({"ayak": leg.get("ayak"), "surprise_prob": sp, "profiles": profs})
     return {"date": race.get("date"), "hippodrome": race.get("hippodrome"),

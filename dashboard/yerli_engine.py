@@ -2642,6 +2642,26 @@ def run_yerli_pipeline(target_date=None):
     except Exception as _e_recon:
         logger.warning(f"[reconcile] failed (liste değişmedi): {_e_recon}")
 
+    # Phase 9: at-form cache warm (TJK_FORM_ACTIVE=1 ise). Async thread → pipeline'ı bloklamaz.
+    # İlk run cache'i doldurur (yeni atlar için ~2s/at), sonraki run'lar L6_CANLI'dan yararlanır.
+    try:
+        from simulation.v9 import form_loader as _fl
+        if _fl.is_enabled():
+            _names = []
+            for _r in all_results:
+                if _r.get("error"):
+                    continue
+                for _ls in (_r.get("legs_summary") or []):
+                    for _h in (_ls.get("all_horses_with_mp") or []):
+                        _nm = (_h.get("name") or "").strip()
+                        if _nm:
+                            _names.append(_nm)
+            if _names:
+                _fl.warm_cache_async(list(dict.fromkeys(_names)))
+                logger.info(f"[form_loader] warm thread spawned: {len(set(_names))} unique at")
+    except Exception as _e_fl:
+        logger.warning(f"[form_loader] warm spawn failed: {_e_fl}")
+
     try:
         for _r in all_results:
             try:
