@@ -78,24 +78,27 @@ def route_strategy(race: dict, aggregated: dict, carryover_state=None) -> dict:
               "max_surprise": round(max_surprise, 3), "carry_day": carry_day,
               "special_day": special}
 
+    # Phase 6 P1: bantlar VERİ-türevli (gerçek natural-combo aralığı). Eskisi aspirational'dı:
+    # canlıda tam_sistem 4-6K diyor ama harcama 1.1K (1/4); favori_yikma 1-3K diyor ama 320 TL.
+    # Yeni: bant = builder'ların gerçek üretim aralığı. Mismatch yok, kullanıcı şaşırmaz.
     # Kangal: çok-favori-yıkma (fy≥4, 95.pct nadir) VEYA (fy≥3 + devir≥2 override)
     if n_fy >= KANGAL_FY or (n_fy >= 3 and carry_day >= 2):
         return {"strategy": "kangal",
                 "reason": f"{n_fy} ayakta favori-yıkma (çok-kırılım)"
                           + (" + devir override" if (n_fy < KANGAL_FY and carry_day >= 2) else "")
                           + (f" | {special}" if special else ""),
-                "budget_band": (0, 5000), "ticket_design_params": params}
+                "budget_band": (500, 4000), "ticket_design_params": params}
 
     # Favori Yıkma: ≥2 favori-yıkma ayağı
     if n_fy >= 2:
         return {"strategy": "favori_yikma",
                 "reason": f"{n_fy} ayakta public favori-overbet, sistem yıkıyor"
                           + (f" | {special}" if special else ""),
-                "budget_band": (1000, 3000), "ticket_design_params": params}
+                "budget_band": (300, 800), "ticket_design_params": params}
 
     # Tam Sistem: belirgin kart (≥3 gap-ayak), favori-yıkma az
     if n_gap >= 3 and n_fy <= 1:
-        band = (4000, 6000) if shift != "upper" else (5000, 6000)
+        band = (1000, 2500) if shift != "upper" else (1500, 3000)
         return {"strategy": "tam_sistem",
                 "reason": f"{n_gap} ayakta belirgin v9 lider, dengeli kart"
                           + (f" | {special}" if special else ""),

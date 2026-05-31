@@ -853,11 +853,13 @@ def record_kupons_from_pipeline_result(
         if not isinstance(alt, dict):
             continue
 
-        # Each altılı may have multiple kupon variants attached under various keys
+        # Phase 6 P2 fix: Phase 0'da bulunan writer-bug (kupon_dar vs dar) — pipeline result_alt
+        # dict'i 'dar'/'genis'/'genis_smart' yazıyor, eskiden 'kupon_dar' aranıyordu → her zaman None
+        # → 0 kayıt yazılırdı. Canonical key'ler aşağıda.
         for kupon_type, payload_key in (
-            ("DAR", "kupon_dar"),
-            ("GENIS", "kupon_genis"),
-            ("SMART", "kupon_smart"),
+            ("DAR", "dar"),
+            ("GENIS", "genis"),
+            ("SMART", "genis_smart"),
         ):
             payload = alt.get(payload_key)
             if not payload or not isinstance(payload, dict):

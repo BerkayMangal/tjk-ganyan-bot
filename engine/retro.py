@@ -141,28 +141,85 @@ def _legs_agf_summary(legs):
 
 def fetch_results(target_date=None) -> List[Dict]:
     """
-    Günün sonuçlarını çek.
-    Kaynak 1: agftablosu.com/at-yarisi-sonuclar
-    Kaynak 2: (fallback) TJK sonuç sayfası
+    Günün sonuçlarını çek (Phase 6 P0 fix — retro öğrenme döngüsü).
+    Kaynak 1: TJK Şehir page (statik HTML, Phase 5.2.5'te 30/30 doğrulu — PRIMARY).
+    Kaynak 2: agftablosu.com/at-yarisi-sonuclar (FALLBACK).
+    Kaynak 3: TJK altılı sayfası (FALLBACK).
 
-    Returns: list of result dicts per altılı
+    Her winner artık race_number içerir → run_daily_recap altılı_no'ya değil, yarış numarasına
+    göre eşleşebilir (heuristic-aligned altılı sayılaması yine de korunur — geriye uyumlu).
+
+    Returns: list of altılı dicts; boş ise ❌ ERROR log atar (sessiz boşluk YOK).
     """
     if target_date is None:
         target_date = date.today()
 
+    # PRIMARY: TJK Şehir (Phase 5.2.5, statik HTML, IP-block riski en düşük).
+    try:
+        from simulation.backfill_outcomes import fetch_outcomes_for_date
+        date_iso = (target_date.strftime("%Y-%m-%d")
+                    if hasattr(target_date, "strftime") else str(target_date))
+        raw = fetch_outcomes_for_date(date_iso)
+        if raw.get("ok") and raw.get("hippodromes"):
+            results = _altili_from_sehir(raw, target_date)
+            if results:
+                logger.info(f"Results from tjk_sehir: {len(results)} altılı")
+                return results
+            logger.warning(f"tjk_sehir parsed ama altılı kurulamadı ({date_iso})")
+        else:
+            logger.warning(f"tjk_sehir boş hippodromes döndü ({date_iso})")
+    except Exception as e:
+        logger.warning(f"tjk_sehir fetch hatası: {e}")
+
+    # FALLBACK 1: agftablosu
     results = _fetch_agftablosu_results(target_date)
     if results:
-        logger.info(f"Results from agftablosu: {len(results)} altılı")
+        logger.info(f"Results from agftablosu (fallback): {len(results)} altılı")
         return results
 
-    logger.warning("agftablosu results failed, trying TJK...")
+    # FALLBACK 2: TJK altılı sayfası
+    logger.warning("agftablosu fallback boş, TJK altılı sayfası deneniyor...")
     results = _fetch_tjk_results(target_date)
     if results:
-        logger.info(f"Results from TJK: {len(results)} altılı")
+        logger.info(f"Results from TJK altılı (fallback): {len(results)} altılı")
         return results
 
-    logger.error("No results from any source!")
+    logger.error(
+        f"❌ RETRO LEARNING STALL: {target_date} için 3 kaynağın HEPSİ boş döndü — "
+        "bet_diary outcomes güncellenmeyecek, model bugün öğrenemeyecek!"
+    )
     return []
+
+
+def _altili_from_sehir(raw: Dict, target_date) -> List[Dict]:
+    """TJK Şehir ham yarış sonuçlarını altılı formatına çevir.
+
+    Her hipodromda N koşu için: altılı #1 = ilk 6 koşu, altılı #2 = son 6 koşu (N>=7 ise).
+    Heuristic — gerçek altılı_no labeling ham veride yok; snapshot'ın race_number'ları üzerinden
+    eşleşme yapıldığı sürece label önemli değil. winner'lar race_number içerir."""
+    results = []
+    date_iso = (target_date.strftime("%Y-%m-%d")
+                if hasattr(target_date, "strftime") else str(target_date))
+    for hp in raw.get("hippodromes", []) or []:
+        hippo = hp.get("hippodrome", "?")
+        kosular = hp.get("kosular", {}) or {}
+        race_nos = sorted(kosular.keys())
+        n = len(race_nos)
+        if n < 6:
+            continue
+        def _winners(rns):
+            return [{"leg_number": i + 1,
+                     "horse_number": kosular[rn].get("winner"),
+                     "race_number": rn}
+                    for i, rn in enumerate(rns)]
+        results.append({"hippodrome": hippo, "altili_no": 1,
+                        "winners": _winners(race_nos[:6]),
+                        "date": date_iso, "source": "tjk_sehir"})
+        if n >= 7:
+            results.append({"hippodrome": hippo, "altili_no": 2,
+                            "winners": _winners(race_nos[-6:]),
+                            "date": date_iso, "source": "tjk_sehir"})
+    return results
 
 
 def _fetch_agftablosu_results(target_date) -> List[Dict]:

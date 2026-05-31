@@ -2,15 +2,16 @@
 farklı longshot dağılımı. Spread yok (sıkı kupon). Bütçe ≤5000 (öneri)."""
 from __future__ import annotations
 
-from simulation.v9.builders import (finalize, make_ticket, shrink_to_budget,
-                                     top_by_v9, top_by_value)
+from simulation.v9.builders import (finalize, grow_to_min, make_ticket,
+                                     shrink_to_budget, top_by_v9, top_by_value)
 from simulation.v9.strategy_router import MED_GAP
 
 
 def build(aggregated, routing):
     legs = aggregated.get("legs") or []
     sigs = routing["ticket_design_params"]["sigs"]
-    band_max = routing["budget_band"][1] or 5000
+    band_min, band_max = routing["budget_band"][0] or 500, routing["budget_band"][1] or 4000
+    ranked = [[p["number"] for p in (leg.get("profiles") or [])] for leg in legs]
     ana, yikici, summary = [], [], []
     for i, leg in enumerate(legs):
         profs = leg["profiles"]
@@ -32,7 +33,11 @@ def build(aggregated, routing):
             t2 = top_by_v9(profs, 2)
             ana.append(t2); yikici.append(t2)
             summary.append(f"Ayak {leg.get('ayak')}: 2 at")
-    half = max(1000, band_max // 2)
-    tickets = [make_ticket("Kangal Ana", shrink_to_budget(ana, half)),
-               make_ticket("Kangal Yıkıcı", shrink_to_budget(yikici, half))]
+    # Phase 6 P1: tavan band_max/2, taban band_min/2 her ticket için (toplam ≈ band).
+    half_max = max(500, band_max // 2)
+    half_min = max(200, band_min // 2)
+    ana_final = grow_to_min(shrink_to_budget(ana, half_max), ranked, min_cost=half_min)
+    yikici_final = grow_to_min(shrink_to_budget(yikici, half_max), ranked, min_cost=half_min)
+    tickets = [make_ticket("Kangal Ana", ana_final),
+               make_ticket("Kangal Yıkıcı", yikici_final)]
     return finalize("kangal", tickets, summary)

@@ -922,10 +922,11 @@ def record_kupons_from_pipeline_result(
     for alt in hippos:
         if not isinstance(alt, dict):
             continue
+        # Phase 6 P2 fix: Phase 0 writer-bug (kupon_dar vs dar) → canonical key'ler.
         for kupon_type, payload_key in (
-            ("DAR", "kupon_dar"),
-            ("GENIS", "kupon_genis"),
-            ("SMART", "kupon_smart"),
+            ("DAR", "dar"),
+            ("GENIS", "genis"),
+            ("SMART", "genis_smart"),
         ):
             payload = alt.get(payload_key)
             if not payload or not isinstance(payload, dict):

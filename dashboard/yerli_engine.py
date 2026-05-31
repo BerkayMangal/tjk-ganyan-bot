@@ -5766,15 +5766,36 @@ def run_daily_recap(target_date_str=None, send_telegram=False):
             logger.warning(f"[recap] fetch_results failed: {e}")
             results_status = f"error: {e}"
 
-        official_idx = {}
+        # Phase 6: hybrid eşleşme — önce race_number (robust, snapshot'ın altılı tanımına
+        # bağımsız), fallback altılı_no. Winner'ların yeni 'race_number' alanı eklendi (tjk_sehir).
+        official_by_venue_race = {}   # (hippo_norm, race_no) → horse_no
+        official_by_hippo_alt = {}    # (hippo_norm, altili_no) → o (legacy fallback)
         for o in raw_results:
-            key = (_normalize_hippo_v7(o.get("hippodrome")), o.get("altili_no"))
-            official_idx[key] = o
+            h = _normalize_hippo_v7(o.get("hippodrome"))
+            official_by_hippo_alt[(h, o.get("altili_no"))] = o
+            for w in (o.get("winners") or []):
+                rn = w.get("race_number")
+                if rn is not None:
+                    official_by_venue_race[(h, rn)] = w.get("horse_number")
 
         per_altili = []
         for alt in (snap.get("hippodromes") or []):
-            key = (_normalize_hippo_v7(alt.get("hippodrome")), alt.get("altili_no"))
-            o = official_idx.get(key)
+            h_norm = _normalize_hippo_v7(alt.get("hippodrome"))
+            # Race-number lookup (preferred): snapshot leg'lerinin race_number'larıyla eşleş
+            winners_rn = []
+            for leg in (alt.get("legs_summary") or []):
+                rn = leg.get("race_number")
+                ayak = leg.get("ayak")
+                if rn is not None and (h_norm, rn) in official_by_venue_race:
+                    winners_rn.append({"leg_number": ayak,
+                                       "horse_number": official_by_venue_race[(h_norm, rn)],
+                                       "race_number": rn})
+            if winners_rn:
+                o = {"hippodrome": alt.get("hippodrome"), "altili_no": alt.get("altili_no"),
+                     "winners": winners_rn, "source": "race_number_match"}
+            else:
+                # Legacy fallback: (hippo, altili_no) eşleşme
+                o = official_by_hippo_alt.get((h_norm, alt.get("altili_no")))
             sc = _score_altili_v7(alt, o)
             per_altili.append(sc)
 
@@ -5794,6 +5815,14 @@ def run_daily_recap(target_date_str=None, send_telegram=False):
         _update_cumulative_stats_v7(target_date_str, recap)
 
         tg_body = _format_telegram_recap_v7(target_date_str, per_altili, totals)
+        # Phase 6 P3: results boşsa sessizce "evaluation_pending" GÖSTERME yerine sistemsel
+        # alarm → model bugün öğrenemiyor demek; Berkay scraper/altyapı sorununu fark etsin.
+        if results_status != "ok" and not str(results_status).startswith("error"):
+            results_status = f"unavailable ({results_status})" if results_status != "unavailable" else results_status
+        if results_status != "ok":
+            tg_body = (f"⚠️ <b>RETRO ALARMI:</b> Sonuçlar çekilemedi ({results_status}). "
+                       f"3 kaynak (tjk_sehir/agftablosu/tjk altılı) boş döndü → bet_diary outcome "
+                       f"güncellenmiyor, model bugün öğrenemiyor.\n\n") + tg_body
         recap["telegram_body"] = tg_body
 
         # PATCH_5_6_5_HYBRID_LIVE — v9 akşam retro + sinyal-validation log (guarded, recap'i bozmaz)
