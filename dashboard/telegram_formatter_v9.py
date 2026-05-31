@@ -39,13 +39,37 @@ def _track_tr(t):
     return _TRACK_TR.get(str(t or "").strip().lower(), "")
 
 
+_GROUP_CODE_RE = None
+
+
 def _clean_group(g):
-    """Ham group_name çok satırlı scrape çöpü içerir (mesafe/pist/E.İ.D. rekoru gömülü).
-    İlk satır = gerçek yarış sınıfı; gerisi atılır. Mesafe/pist zaten ayrı alanlarda."""
+    """Ham group_name çok satırlı scrape çöpü içerir (mesafe/pist/E.İ.D. + /DHÖW /H1 kodları).
+    İlk satır + kod-eklerini sil → 'Handikap 15/DHÖW /H1, 4 ve Yukarı Araplar' → 'Handikap 15, 4 ve Yukarı Araplar'."""
     if not g:
         return ""
+    import re as _re
+    global _GROUP_CODE_RE
+    if _GROUP_CODE_RE is None:
+        # "/DHÖW" "/H1" "/Y3" gibi kodları sil; ama "/Dişi" "/Yaşlı" gibi anlamlı küçük-harfli
+        # ekleri KORU. Lookahead: kodun ardı küçük harf gelmemeli ("/D" + "işi" → eşleşme reddedilir).
+        _GROUP_CODE_RE = _re.compile(r"\s*/[A-ZÇĞÖŞÜİ0-9]+(?![a-zçğıöşüi])")
     first = str(g).replace("\r", "\n").split("\n")[0]
+    first = _GROUP_CODE_RE.sub("", first)
     return first.strip().rstrip(" ,").strip()[:48]
+
+
+_NAME_PAREN_RE = None
+
+
+def _clean_name(n):
+    """At adındaki '(N)' sonek kuyruğunu sil ('GÜMBÜRHAN(7)' → 'GÜMBÜRHAN')."""
+    if not n:
+        return ""
+    import re as _re
+    global _NAME_PAREN_RE
+    if _NAME_PAREN_RE is None:
+        _NAME_PAREN_RE = _re.compile(r"\s*\(\d+\)\s*$")
+    return _NAME_PAREN_RE.sub("", str(n)).strip()
 
 
 def _dist(d):
@@ -68,7 +92,7 @@ def _build_meta(r) -> dict:
         for hd in (ls.get("all_horses_with_mp") or []):  # zaten model_prob desc sıralı
             num = hd.get("number")
             order.append(num)
-            h[num] = {"name": (hd.get("name") or "").strip(),
+            h[num] = {"name": _clean_name(hd.get("name")),
                       "mp": hd.get("model_prob", 0) or 0,
                       "agf": hd.get("agf_pct", 0) or 0,
                       "edge": hd.get("value_edge", 0) or 0}
@@ -101,30 +125,41 @@ def _names(ml, nums, maxn=4):
     return s
 
 
-def _leg_block(ml, ayak, sel_nums=None, tag=""):
-    """Per-leg: grup başlığı + Top-3 (model/AGF/edge) + v9 seçim satırı. Boş veri → guard."""
+def _leg_block(ml, ayak, sel_nums=None, tag="", fy_fav=None):
+    """Per-leg compact: grup başlığı + Top-3 (model% / AGF% (edge)) ⭐/❌ markerlı.
+    ⭐ = v9 seçim, ❌ = favori_yıkma fade hedefi. Top-3 dışı seçimler '+geniş' satırında.
+    Boş veri → guard."""
     L = [_leg_hdr(ayak, ml)]
     order = ml.get("order", []) if ml else []
     h = ml.get("h", {}) if ml else {}
     if not order:
-        L.append("   (bu ayakta model/AGF verisi yok)")
+        L.append("   (veri yok)")
         return L
-    for rank, n in enumerate(order[:3], 1):
+    sel_set = set(sel_nums or [])
+    for n in order[:3]:
         d = h.get(n, {})
-        nm = (d.get("name") or "").strip() or f"#{n}"
+        nm = d.get("name") or f"#{n}"
         mp, agf, edge = d.get("mp", 0), d.get("agf", 0), d.get("edge", 0)
         fire = " 🔥" if edge >= 15 else ""
-        L.append(f"   {rank}) #{n} {nm} — model {mp:.0f}% · AGF {agf:.0f}% · edge {edge:+.0f}{fire}")
-    if sel_nums:
-        pos = {n: i for i, n in enumerate(order)}   # union number-sorted gelir → model sırasına diz
-        sel_sorted = sorted(sel_nums, key=lambda n: pos.get(n, 999))
-        L.append(f"   → v9: {_names(ml, sel_sorted)}" + (f" · {tag}" if tag else ""))
+        if n == fy_fav:
+            mark = "❌"
+        elif n in sel_set:
+            mark = "⭐"
+        else:
+            mark = "  "
+        L.append(f"  {mark} #{n} {nm}  {mp:.0f}% / {agf:.0f}% ({edge:+.0f}){fire}")
+    # Top-3 dışı seçilen atlar (Coverage/Spread genişlik)
+    pos = {n: i for i, n in enumerate(order)}
+    extras = sorted([n for n in (sel_nums or []) if n not in order[:3]],
+                    key=lambda x: pos.get(x, 99))
+    if extras:
+        ex_str = "  ".join(f"#{n} {h.get(n, {}).get('name', '')}".strip() for n in extras[:3])
+        L.append(f"     +geniş: {ex_str}")
     return L
 
 
 def _footer():
-    return (f"{SEP}\nℹ️ payout=PROXY · PROD'da jokey/form yok (L5/L6 nötr) · Phase 5.6.5 hybrid\n"
-            "Sistem bot DEĞİL — son karar sende.")
+    return f"{SEP}\nℹ️ payout=PROXY · model kalibre değil · karar sende"
 
 
 def _hdr(emoji, hippo, no, t, line2):
@@ -133,23 +168,20 @@ def _hdr(emoji, hippo, no, t, line2):
     return f"{head}\n🎯 {line2}"
 
 
-def _budget_line(k, band):
-    b0, b1 = (band or (0, 0))[0], (band or (0, 0))[1]
-    sp = _tl(k.get("total_cost", 0))
+def _budget_line(k, band=None):
+    """Tek satır harcama. Bant artık veri-türevli (Phase 6 P1) → 'öneri Y-Z' gereksiz noise."""
+    sp = k.get("total_cost", 0)
     n = len(k.get("tickets", []) or [])
-    base = f"💰 Harcama {sp}" + (f" · {n} ticket" if n else "")
-    if b1:
-        base += f" (öneri ≤{_tl(b1)})" if not b0 else f" (öneri {_tl(b0)}–{_tl(b1)})"
-    return base
+    return f"💰 {_tl(sp)}" + (f" · {n} ticket" if n else "")
 
 
 def _ticket_summary(k):
-    L = [SEP, "🎫 KUPONLAR (öneri):"]
-    for tk in (k.get("tickets") or []):
-        L.append(f"• {tk['name']} — {tk['combo']} kombi · {_tl(tk['cost'])}")
-    if len(k.get("tickets", []) or []) > 1:
-        L.append(f"Toplam: {_tl(k.get('total_cost', 0))}")
-    return L
+    """Tek satır ticket özet: 'Main 96k · Coverage 729k · Spread 64k (1.111 TL)'."""
+    tickets = k.get("tickets") or []
+    if not tickets:
+        return []
+    parts = [f"{tk['name']} {tk['combo']}k" for tk in tickets]
+    return [SEP, f"🎫 {' · '.join(parts)} ({_tl(k.get('total_cost', 0))})"]
 
 
 def _ayaks(meta, k):
@@ -162,14 +194,11 @@ def _ayaks(meta, k):
 def format_tam_sistem_message(out, hippo, no, t, meta):
     r, k = out["routing"], out["kupon"]
     union = k.get("legs_selected", [])
-    sigs = r["ticket_design_params"]["sigs"]
-    L = [_hdr("🏇", hippo, no, t, f"TAM SİSTEM — {r['reason']}"), _budget_line(k, r.get("budget_band")), SEP]
+    L = [_hdr("🏇", hippo, no, t, f"TAM SİSTEM — {r['reason']}"), _budget_line(k), SEP]
     for ayak in _ayaks(meta, k):
         i = ayak - 1
         sel = union[i] if 0 <= i < len(union) else []
-        s = sigs[i] if 0 <= i < len(sigs) else {}
-        tag = "TEK ⭐" if len(sel) == 1 else ("favori yıkma" if s.get("is_fy") else "")
-        L += _leg_block(meta.get(ayak, {}), ayak, sel, tag)
+        L += _leg_block(meta.get(ayak, {}), ayak, sel)
     L += _ticket_summary(k)
     L.append(_footer())
     return "\n".join(L)
@@ -180,19 +209,13 @@ def format_favori_yikma_message(out, hippo, no, t, meta):
     sigs = r["ticket_design_params"]["sigs"]
     tk = (k.get("tickets") or [{}])[0]
     sel_all = tk.get("legs_selected", [])
-    L = [_hdr("⚔️", hippo, no, t, f"FAVORİ YIKMA — {r['reason']}"), _budget_line(k, r.get("budget_band")), SEP]
+    L = [_hdr("⚔️", hippo, no, t, f"FAVORİ YIKMA — {r['reason']}"), _budget_line(k), SEP]
     for ayak in _ayaks(meta, k):
         i = ayak - 1
         sel = sel_all[i] if 0 <= i < len(sel_all) else []
         s = sigs[i] if 0 <= i < len(sigs) else {}
-        if s.get("is_fy"):
-            ml = meta.get(ayak, {})
-            fav = s.get("fav_number")
-            favnm = (ml.get("h", {}).get(fav, {}).get("name") or "").strip()
-            tag = f"YIKMA — favori #{fav}{(' ' + favnm) if favnm else ''} ❌ (%{s.get('fav_agf', 0):.0f} AGF, FLB-overbet)"
-        else:
-            tag = "sade"
-        L += _leg_block(meta.get(ayak, {}), ayak, sel, tag)
+        fav = s.get("fav_number") if s.get("is_fy") else None
+        L += _leg_block(meta.get(ayak, {}), ayak, sel, fy_fav=fav)
     L += _ticket_summary(k)
     L.append(_footer())
     return "\n".join(L)
@@ -203,18 +226,14 @@ def format_kangal_message(out, hippo, no, t, meta):
     p = r["ticket_design_params"]
     union = k.get("legs_selected", [])
     sigs = p["sigs"]
-    L = [_hdr("🐺", hippo, no, t, f"KANGAL (özel gün) — {r['reason']}"), _budget_line(k, r.get("budget_band")), SEP]
+    L = [_hdr("🐺", hippo, no, t, f"KANGAL — {r['reason']}"), _budget_line(k), SEP]
     for ayak in _ayaks(meta, k):
         i = ayak - 1
         sel = union[i] if 0 <= i < len(union) else []
         s = sigs[i] if 0 <= i < len(sigs) else {}
-        tag = "YIKMA" if s.get("is_fy") else ("banker TEK" if len(sel) == 1 else "")
-        L += _leg_block(meta.get(ayak, {}), ayak, sel, tag)
+        fav = s.get("fav_number") if s.get("is_fy") else None
+        L += _leg_block(meta.get(ayak, {}), ayak, sel, fy_fav=fav)
     L += _ticket_summary(k)
-    L += [SEP, "🐺 KANGAL ŞARTLARI:",
-          f"✓ {p.get('n_fy')} ayakta favori-yıkma (eşik ≥4, nadir)",
-          f"✓ Sürpriz potansiyeli (max {p.get('max_surprise')})",
-          ("✓ Devir günü override" if p.get("carry_day", 0) >= 2 else "✓ Çok-kırılım profili")]
     L.append(_footer())
     return "\n".join(L)
 

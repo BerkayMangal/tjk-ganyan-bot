@@ -2184,6 +2184,19 @@ def _save_live_test_snapshot(result_dict):
     except Exception as e:
         logger.warning(f"[live_test] snapshot save failed: {e}")
 
+    # Phase 7: DB-backed snapshot (Railway ephemeral disk bypass — dosya restart'ta
+    # siliniyordu → retro 'no_snapshot' takılıyordu). event_store kalıcı.
+    try:
+        from event_store import save_daily_snapshot
+        _date_str = date.today().strftime('%Y-%m-%d')
+        db_ok = save_daily_snapshot(_date_str, result_dict)
+        if db_ok:
+            logger.info(f"[live_test] snapshot DB-persisted (event_store) for {_date_str}")
+        else:
+            logger.warning(f"[live_test] DB snapshot no-op (env yok / hata) — sadece dosya")
+    except Exception as _e_dbsnap:
+        logger.warning(f"[live_test] DB snapshot save hatası: {_e_dbsnap}")
+
 
 
 
@@ -2716,12 +2729,13 @@ def run_yerli_pipeline(target_date=None):
                     base_msg = _v9msg
         except Exception as _e_v9live:
             logger.warning(f"[v9] HYBRID_LIVE → V5.1 fallback: {repr(_e_v9live)[:120]}")
-        banner_lines = [LIVE_TEST_DISCLAIMER,
-                        f"📊 Veri kalitesi: {dq_level} (skor {dq_score})"]
+        # Phase 8 UI cleanup: 'CANLI TEST' + 'Bu kayıttır' kalıcı caveat'lar düşürüldü
+        # (footer'da zaten 'payout=PROXY · karar sende' var). Yalnız kalite KÖTÜ ise uyar.
         if dq_level in ("WARNING", "BAD"):
-            banner_lines.append("⚠️ Veri kısmen eksik — güvenilirlik düşük.")
-        banner = "\n".join(banner_lines)
-        telegram_msg = f"{banner}\n\n{base_msg}\n\n🧪 Bu kayıttır, bahis değildir."
+            telegram_msg = (f"⚠️ Veri kalitesi: {dq_level} (skor {dq_score}) — kısmen eksik\n\n"
+                            f"{base_msg}")
+        else:
+            telegram_msg = base_msg
 
         source_tag = 'proper' if use_proper else ('html_only' if not tracks else 'dashboard')
         kupon_status = {'OK': 'PLAYABLE', 'WARNING': 'SMALL_STAKE_ONLY',
@@ -5366,7 +5380,17 @@ def _normalize_hippo_v7(s):
 
 
 def _load_snapshot_v7(date_str):
-    """PATCH_V7_PHASE2_RECAP_v1. Read data/live_tests/<date>.json or return None."""
+    """PATCH_V7_PHASE2_RECAP_v1 + Phase 7. DB-first (event_store kalıcı), dosya fallback.
+    Railway ephemeral disk → eski file-only yaklaşım her restart'ta veriyi kaybediyordu."""
+    # Phase 7: DB-backed snapshot (event_store) → restart'tan etkilenmez
+    try:
+        from event_store import load_daily_snapshot
+        db_snap = load_daily_snapshot(date_str)
+        if db_snap:
+            return db_snap
+    except Exception as _e_dbsnap:
+        logger.warning(f"[recap] DB snapshot load hatası, dosyaya düşülüyor: {_e_dbsnap}")
+    # Fallback: dosya (lokal dev / DB yokken çalışır)
     path = os.path.join(_data_dir_v7("live_tests"), f"{date_str}.json")
     if not os.path.exists(path):
         return None

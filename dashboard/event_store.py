@@ -29,6 +29,7 @@ VALID_EVENT_TYPES = {
     "agf_fetch",
     "pipeline_run",
     "bet_decision",
+    "daily_snapshot",   # Phase 7: snapshot persistence (Railway ephemeral disk fix)
 }
 
 
@@ -143,6 +144,54 @@ def read_events(
     except Exception as e:
         logger.warning("event_store: read_events('%s') failed: %s", event_type, repr(e)[:140])
         return []
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 7 — DAILY SNAPSHOT (retro öğrenme için, ephemeral disk bypass)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def save_daily_snapshot(date_iso: str, payload: dict) -> bool:
+    """Pipeline result dict'ini DB'de sakla (retro için kalıcı). Railway ephemeral disk
+    dosyaları siliyor → DB persistence olmadan retro 'no_snapshot'da takılıyor."""
+    return write_event(event_type="daily_snapshot", payload=payload or {}, event_date=date_iso)
+
+
+def load_daily_snapshot(date_iso: str) -> Optional[dict]:
+    """Bir tarihin en son daily_snapshot event'ini oku. None = yok / DB no-op."""
+    url = _db_url()
+    if not url:
+        return None
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+    except ImportError as e:
+        logger.warning("event_store: psycopg2 missing: %s", e)
+        return None
+    conn = None
+    try:
+        conn = psycopg2.connect(url, connect_timeout=CONNECT_TIMEOUT)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT payload FROM pipeline_events "
+                "WHERE event_type = 'daily_snapshot' AND event_date = %s "
+                "ORDER BY timestamp DESC LIMIT 1",
+                (date_iso,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            pl = row.get("payload")
+            return dict(pl) if pl else None
+    except Exception as e:
+        logger.warning("event_store: load_daily_snapshot('%s') failed: %s",
+                       date_iso, repr(e)[:140])
+        return None
     finally:
         if conn is not None:
             try:
