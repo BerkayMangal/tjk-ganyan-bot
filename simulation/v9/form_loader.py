@@ -39,24 +39,67 @@ def _date_parse(s) -> Optional[date]:
         return None
 
 
+# Phase 11c-B: in-memory cache (pipeline başında bulk-fill). Per-horse DB query yok artık.
+_MEMORY_CACHE = {}
+_MEMORY_CACHE_LOCK = threading.Lock()
+
+
+def warm_in_memory(at_adis: list, max_age_hours: int = 24) -> dict:
+    """Pipeline başında TEK SQL'de N at için derece cache'ini in-memory'e doldur.
+    Eski per-horse DB query (300 query/pipeline) → 1 bulk query. Returns stats."""
+    if not at_adis:
+        return {"filled": 0, "skipped": 0}
+    try:
+        from event_store import bulk_load_horse_derece
+    except ImportError:
+        try:
+            from dashboard.event_store import bulk_load_horse_derece
+        except ImportError:
+            return {"filled": 0, "skipped": len(at_adis), "error": "event_store unreachable"}
+    fresh = bulk_load_horse_derece(list(set(at_adis)), max_age_hours=max_age_hours)
+    filled = 0
+    with _MEMORY_CACHE_LOCK:
+        for at_adi, recs in fresh.items():
+            _MEMORY_CACHE[at_adi] = recs or []
+            if recs:
+                filled += 1
+    return {"filled": filled, "skipped": len(at_adis) - filled}
+
+
 def get_form(at_adi: str, current: Optional[dict] = None) -> dict:
     """Bir at için form feature'larını döner. current = mevcut yarış info
     {sehir, mesafe} (opsiyonel — match metrikleri için).
-    Cache yok / hata → {'available': False}."""
+    Phase 11c-B: in-memory cache (warm_in_memory ile dolu) → DB query yok. Fallback DB."""
     if not at_adi:
         return {"available": False}
+
+    # Phase 11c-B: in-memory cache (bulk-loaded by warm_in_memory)
+    with _MEMORY_CACHE_LOCK:
+        if at_adi in _MEMORY_CACHE:
+            records = _MEMORY_CACHE[at_adi]
+            if not records:
+                return {"available": False}
+            return _compute_features(records, current)
+
+    # Fallback: DB single-query (warm yapılmadıysa veya cache miss)
     try:
         from event_store import load_horse_derece
     except ImportError:
-        # repo root fallback
         try:
             from dashboard.event_store import load_horse_derece
         except ImportError:
             return {"available": False, "error": "event_store unreachable"}
 
     records = load_horse_derece(at_adi)
+    with _MEMORY_CACHE_LOCK:
+        _MEMORY_CACHE[at_adi] = records or []
     if not records:
         return {"available": False}
+    return _compute_features(records, current)
+
+
+def _compute_features(records, current):
+    """Feature hesaplama (eski get_form'un içeriği — şimdi ayrı fn)."""
 
     today = date.today()
     # Tarihe göre desc sırala
@@ -208,12 +251,7 @@ def warm_cache_async(at_adis: list, **kwargs) -> threading.Thread:
 
 
 def is_enabled() -> bool:
-    """Phase 9 DİSABLE — hard-off (production sorun: per-horse DB query × 300 + warm thread
-    Supabase rate-limit/connection overload → pipeline hang → kupon gelmiyor).
-    Bulk-query refactor pending. Re-enable: TJK_FORM_V2_BULK=1 (default off) — kullanıcının
-    mevcut TJK_FORM_ACTIVE=1 env'i tek başına aktive ETMEZ artık (hot-fix)."""
-    if os.getenv("TJK_FORM_ACTIVE", "0") != "1":
-        return False
-    if os.getenv("TJK_FORM_V2_BULK", "0") != "1":
-        return False
-    return True
+    """Phase 11c-B (Berkay emir B): bulk-query refactor DONE → Phase 9 RE-ENABLED.
+    TJK_FORM_ACTIVE=1 → bulk-query warm_in_memory + in-memory cache → güvenli aktivasyon.
+    Eski TJK_FORM_V2_BULK ek-gate'i kaldırıldı (bulk-query artık DEFAULT, güvenli)."""
+    return os.getenv("TJK_FORM_ACTIVE", "0") == "1"

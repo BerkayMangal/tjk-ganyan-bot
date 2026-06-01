@@ -215,6 +215,54 @@ def save_horse_derece(at_adi: str, records: list) -> bool:
                                 "count": len(records or [])})
 
 
+def bulk_load_horse_derece(at_adis: list, max_age_hours: int = 24) -> dict:
+    """Phase 11c-B: TEK SQL'de N at için derece kayıtlarını yükle (per-at-query yerine).
+    Pipeline'da L6 form layer'ı 300 at × DB query yapıyordu → Supabase rate-limit → pipeline hang.
+    Bulk-query bunu 1 SQL'e indirir. Returns {at_adi: records_list_or_empty}."""
+    out = {a: [] for a in (at_adis or [])}
+    if not at_adis:
+        return out
+    url = _db_url()
+    if not url:
+        return out
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+    except ImportError as e:
+        logger.warning("event_store: psycopg2 missing: %s", e)
+        return out
+    conn = None
+    try:
+        conn = psycopg2.connect(url, connect_timeout=CONNECT_TIMEOUT)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT DISTINCT ON (payload->>'at_adi') "
+                "payload->>'at_adi' AS at_adi, payload "
+                "FROM pipeline_events "
+                "WHERE event_type = 'horse_derece' "
+                "AND payload->>'at_adi' = ANY(%s::text[]) "
+                "AND timestamp >= NOW() - (%s || ' hours')::interval "
+                "ORDER BY payload->>'at_adi', timestamp DESC",
+                (list(at_adis), str(max_age_hours)),
+            )
+            for row in cur.fetchall():
+                at_adi = row.get("at_adi")
+                pl = row.get("payload") or {}
+                if at_adi is not None:
+                    out[at_adi] = list(pl.get("records") or [])
+        return out
+    except Exception as e:
+        logger.warning("event_store: bulk_load_horse_derece(%d at) failed: %s",
+                       len(at_adis), repr(e)[:140])
+        return out
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def load_horse_derece(at_adi: str, max_age_hours: int = 24) -> Optional[list]:
     """Bir at için en son cache'lenmiş derece kayıtlarını oku. Cache stale (> max_age_hours)
     veya hiç yok → None. payload.records → list of derece dicts."""

@@ -62,6 +62,19 @@ def profile_for_horse(horse: dict, leg_surprise=None, layers=None,
     raw = horse.get("score")
     if raw is None:
         raw = agf / 100.0          # fallback: agf-implied
+    else:
+        # Phase 11c (Berkay emir A): model trained with form/jockey/idman (Taydex), PROD'da
+        # bunlar EKSIK → distribution shift → extreme model% picks ("saçma atlar"). AGF zaten
+        # kalibre (kalabalığın aklı, Phase 5.2.5'te doğrulu). Blend: w * model + (1-w) * AGF.
+        # Default w=0.3 (model %30 + AGF %70) → model küçük adjuster, AGF dominant.
+        # Phase 5.8 P4: model alpha OOS +0.015 small; AGF zaten ~ground truth.
+        # Env TJK_MODEL_WEIGHT override (0=sadece AGF, 1=sadece model, default 0.3).
+        try:
+            _mw = max(0.0, min(1.0, float(os.getenv("TJK_MODEL_WEIGHT", "0.3"))))
+        except Exception:
+            _mw = 0.3
+        if _mw < 1.0:
+            raw = _mw * raw + (1.0 - _mw) * (agf / 100.0)
     jockey = horse.get("jockey")
     form = horse.get("form_score")  # prior finish ort. (düşük=iyi)
 
@@ -136,9 +149,27 @@ def profile_for_horse(horse: dict, leg_surprise=None, layers=None,
 def aggregate_race(race: dict, carryover_state=None, layers=None) -> dict:
     """race.legs[*].horses → her ata profile ekler; leg'e surprise_prob; özel-gün etiketi.
     layers: None=tümü; ablation için aktif layer seti.
-    Phase 9: leg_info (sehir, mesafe) profile_for_horse'a → L6_CANLI form_loader içeriği için."""
+    Phase 9: leg_info (sehir, mesafe) profile_for_horse'a → L6_CANLI form_loader içeriği için.
+    Phase 11c-B: pipeline başında BULK-QUERY ile tüm runner form cache'i in-memory'e dolar
+    (per-horse DB query × 300 yerine 1 SQL → güvenli prod aktivasyon)."""
     from simulation.v9.surprise_layer import surprise_for_leg
     sehir = race.get("hippodrome")
+
+    # Phase 11c-B: bulk form cache warm (yalnız Phase 9 aktifse). Pipeline başı = tek SQL.
+    try:
+        from simulation.v9 import form_loader as _fl
+        if _fl.is_enabled():
+            _names = []
+            for leg in race.get("legs", []) or []:
+                for h in (leg.get("horses") or []):
+                    n = (h.get("name") or "").strip()
+                    if n:
+                        _names.append(n)
+            if _names:
+                _fl.warm_in_memory(list(set(_names)))
+    except Exception:
+        pass  # cache warm hatası pipeline'ı bloklamaz
+
     out_legs = []
     for leg in race.get("legs", []) or []:
         horses = leg.get("horses") or []
