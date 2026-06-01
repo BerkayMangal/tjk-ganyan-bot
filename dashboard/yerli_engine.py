@@ -2419,20 +2419,37 @@ def _reconcile_hippodromes(all_results):
             if not ls.get("all_horses_with_mp") and ls.get("all_horses"):
                 ls["all_horses_with_mp"] = ls["all_horses"]
 
-    # 1+2) AGF-native (repaired DEĞİL) yarış setleri (venue başına) = güvenilir referans
-    agf_races_by_venue = {}
-    for r in oks:
-        if not _is_repaired(r):
-            agf_races_by_venue.setdefault(_venue(r), []).append(_races(r))
-    # repaired & aynı venue'de AGF ile örtüşen = dup/phantom → düş
+    # Phase 11: Greedy overlap-tabanlı dedup. Eski mantık (sadece REPAIRED'i AGF ile
+    # örtüşürse düşürür) bugün Şanlıurfa AGF-AGF window-offset'ini kaçırdı:
+    # Şanlıurfa#1 [1-6] + #2 [3-8] = 4 race overlap, ikisi de AGF-native, ikisi de gösterildi.
+    # YENİ kural: aynı venue + race-overlap ≥ 3 → dup (kaymış pencere/aynı kart). AGF-native
+    # önce, sonra at sayısı çoktan az'a. Pair kontrolü, kept list'e ekleme.
+    DEDUP_OVERLAP = 3
+    def _sort_key(r):
+        is_rep = _is_repaired(r)
+        has_time = bool((r.get("time") or "").strip())
+        # AGF-native (False) önce, with-time (False=has_time, True=no time) önce, sonra çok atlı.
+        # Time kritik (kullanıcı yarış saatini görmeli) → at sayısından önce gelir.
+        return (is_rep, not has_time, -_nh(r))
+
     survivors = []
-    for r in oks:
-        if _is_repaired(r):
-            rr = _races(r)
-            if rr and any(rr & ag for ag in agf_races_by_venue.get(_venue(r), [])):
-                actions.append(f"{_venue(r)} altılı#{r.get('altili_no')} (repaired, yarış {sorted(rr)}): "
-                               f"AGF altılısıyla örtüşüyor → dup/phantom, düşürüldü")
+    for r in sorted(oks, key=_sort_key):
+        v = _venue(r)
+        rr = _races(r)
+        skip_reason = None
+        for o in survivors:
+            if _venue(o) != v:
                 continue
+            ro = _races(o)
+            overlap = len(rr & ro) if (rr and ro) else 0
+            if overlap >= DEDUP_OVERLAP:
+                skip_reason = (f"venue=={v}, {overlap} yarış paylaşıyor "
+                               f"(bu: {sorted(rr)} | tutulan: {sorted(ro)}) → kaymış pencere/dup")
+                break
+        if skip_reason:
+            actions.append(f"{v} altılı#{r.get('altili_no')} ({len(rr)} race, {_nh(r)} at): "
+                           f"{skip_reason}, düşürüldü")
+            continue
         survivors.append(r)
 
     # 3) aynı-yarış-seti exact-dup tekille → en çok atlıyı tut
