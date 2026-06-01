@@ -5469,6 +5469,24 @@ def _score_altili_v7(snap_alt, official):
         top3_nums = [t.get("number") for t in top3]
         in_top3 = winner_num in top3_nums
 
+        # Phase 11: snapshot all_horses_with_mp'den kazanan zenginleştir (retro display için).
+        # fetch_results sadece horse_number döndürüyor; isim/AGF snapshot'tan look-up.
+        winner_agf = 0
+        winner_agf_rank = None
+        all_horses = ls.get("all_horses_with_mp") or []
+        if all_horses and winner_num is not None:
+            for h in all_horses:
+                if h.get("number") == winner_num:
+                    if not winner_name:
+                        winner_name = h.get("name", "") or ""
+                    winner_agf = h.get("agf_pct", 0) or 0
+                    break
+            agf_ranked = sorted(all_horses, key=lambda x: -(x.get("agf_pct") or 0))
+            for rank, h in enumerate(agf_ranked, 1):
+                if h.get("number") == winner_num:
+                    winner_agf_rank = rank
+                    break
+
         cls_entry = leg_class[i] if i < len(leg_class) else {}
         cls_type = cls_entry.get("type", "?")
 
@@ -5481,11 +5499,19 @@ def _score_altili_v7(snap_alt, official):
         if smart_hit:
             leg_hits += 1
 
+        # Phase 11: pick'e isim de ekle (display için), sel detayını sakla
+        sel_with_names = []
+        if all_horses:
+            num_to_name = {h.get("number"): (h.get("name") or "") for h in all_horses}
+            sel_with_names = [{"number": n, "name": num_to_name.get(n, "")} for n in sel_nums]
+
         leg_results.append({
             "leg_number": gleg.get("leg_number", i+1),
             "race_number": gleg.get("race_number"),
-            "winner": {"number": winner_num, "name": winner_name, "ganyan": winner_ganyan},
+            "winner": {"number": winner_num, "name": winner_name, "ganyan": winner_ganyan,
+                       "agf_pct": winner_agf, "agf_rank": winner_agf_rank},
             "selected_smart": sel_nums,
+            "selected_smart_named": sel_with_names,
             "smart_hit": smart_hit,
             "in_top3_v7": in_top3,
             "leg_class": cls_type,
@@ -5587,96 +5613,111 @@ def _aggregate_totals_v7(per_altili):
     return totals
 
 
+_LEG_EMOJI_RETRO = {1: "1⃣", 2: "2⃣", 3: "3⃣",
+                    4: "4⃣", 5: "5⃣", 6: "6⃣"}
+
+
+def _retro_clean_name(n):
+    """'GUMBURHAN(7)' -> 'GUMBURHAN', truncate 24 chars."""
+    if not n:
+        return ""
+    import re as _re
+    return _re.sub(r"\s*\(\d+\)\s*$", "", str(n)).strip()[:24]
+
+
 def _format_telegram_recap_v7(date_str, per_altili, totals):
-    """PATCH_V7_PHASE2_RECAP_v1. Build Telegram HTML recap body."""
+    """Phase 11 sade retro: jargon-free, isim+numara, kazanan+AGF rank, tek satir per ayak.
+    Eski (PATCH_V7_PHASE2_RECAP_v1) ALPHA/CHAOS/BANKO_like terminoloji user icin
+    anlasilmiyordu (dun retro user'a karisikti). Yeni format Telegram'da net okunur."""
     from html import escape
-    lines = []
-    lines.append(f"\U0001f4ca <b>V7 Recap — {date_str}</b>")
-    lines.append("<i>CANLI TEST — gerçek bahis önerisi değildir</i>")
-    lines.append("")
+    lines = [f"\U0001f4ca <b>RETRO {date_str}</b>", "━" * 18, ""]
+
     for sc in per_altili:
-        hippo = escape(str(sc.get("hippodrome", "?")))
+        hippo = escape(str(sc.get("hippodrome", "?")).upper())
         anum = sc.get("altili_no", "?")
         st = sc.get("status")
+
         if st == "no_result":
-            lines.append(f"\U0001f3c7 <b>{hippo} altılı#{anum}</b>")
-            lines.append("   \u23f3 Sonuçlar alınamadı, değerlendirme beklemede.")
-            lines.append("")
+            lines += [f"\U0001f3c7 <b>{hippo} · {anum}. ALTILI</b>",
+                      "   ⏳ Sonuclar alinamadi, beklemede.", ""]
             continue
         if st == "incomplete_result":
-            lines.append(f"\U0001f3c7 <b>{hippo} altılı#{anum}</b>")
-            lines.append("   \u23f3 Eksik sonuç (6 ayak tamamlanmadı), beklemede.")
-            lines.append("")
+            lines += [f"\U0001f3c7 <b>{hippo} · {anum}. ALTILI</b>",
+                      "   ⏳ Eksik sonuc (6 ayak gelmedi), beklemede.", ""]
             continue
+
         n_hit = sc.get("leg_hits", 0)
         full = sc.get("full_ticket_hit")
-        emoji_full = "\U0001f3af" if full else "\u274c"
-        lines.append(
-            f"\U0001f3c7 <b>{hippo} altılı#{anum}</b>: "
-            f"{n_hit}/6 ayak tuttu  {emoji_full}"
-        )
-        per_leg = []
-        for lr in sc.get("leg_results", []):
-            per_leg.append("\u2713" if lr.get("smart_hit") else "\u2717")
-        if per_leg:
-            lines.append(f"   Ayaklar: {' '.join(per_leg)}")
-        for sg in sc.get("single_log", []):
-            ln = sg.get("leg_number")
-            name = escape(str(sg.get("primary_name") or sg.get("primary_pick") or "?"))
-            verdict = sg.get("verdict_v7") or "?"
-            mark = "\u2705 HIT" if sg.get("hit") else "\u274c MISS"
-            verdict_short = verdict.replace("clean_", "").replace("_single", "")
-            lines.append(f"   Single ayak{ln}: {name} ({verdict_short}) → {mark}")
-        alpha = sc.get("alpha_legs", [])
-        if alpha:
-            a_hit = sum(1 for a in alpha if a.get("smart_hit"))
-            lines.append(f"   ALPHA ayaklar: {a_hit}/{len(alpha)} tuttu")
-        chaos = sc.get("chaos_legs", [])
-        if chaos:
-            c_hit = sum(1 for c in chaos if c.get("smart_hit"))
-            blow = sum(1 for c in chaos if c.get("blowup"))
-            cl = f"   CHAOS ayaklar: {c_hit}/{len(chaos)} tuttu"
-            if blow:
-                cl += f" — {blow} top3 dışı (patladı)"
-            lines.append(cl)
-        lines.append(f"   Full kupon: {'HIT' if full else 'MISS'}")
-        lines.append("")
-    if totals.get("altili_evaluated", 0) > 0:
-        lines.append("\U0001f4c8 <b>Bugün toplam</b>")
-        suffix = ""
-        if totals.get("altili_incomplete"):
-            suffix = f", {totals['altili_incomplete']} eksik"
-        lines.append(
-            f"   Altılı: {totals['altili_count']} "
-            f"({totals['altili_evaluated']} değerlendirildi, "
-            f"{totals['altili_pending']} beklemede{suffix})"
-        )
-        thbc = totals["ticket_hits_by_count"]
-        dist = [f"{k}/6:{thbc.get(k,0)}" for k in (6,5,4,3,2,1,0) if thbc.get(k,0)]
-        if dist:
-            lines.append(f"   Dağılım: {' · '.join(dist)}")
-        if totals["full_ticket_hits"]:
-            lines.append(f"   \U0001f3af Full kupon: {totals['full_ticket_hits']}")
-        if totals["alpha_legs_total"]:
-            lines.append(
-                f"   ALPHA leg: {totals['alpha_legs_hit']}/{totals['alpha_legs_total']}"
-            )
-        if totals["chaos_legs_total"]:
-            cl = (f"   CHAOS leg: {totals['chaos_legs_hit']}"
-                  f"/{totals['chaos_legs_total']}")
-            if totals["chaos_blowups"]:
-                cl += f" — {totals['chaos_blowups']} patladı (top3 dışı)"
-            lines.append(cl)
-        if totals["single_total"]:
-            lines.append(f"   Singles: {totals['single_hit']}/{totals['single_total']}")
-            for vk in ("clean_safe_single", "clean_alpha_single",
-                       "suspect_kept", "forbidden_would_widen",
-                       "forbidden_widened"):
-                stats = totals["singles_by_verdict"][vk]
-                if stats["total"]:
-                    lines.append(f"     • {vk}: {stats['hit']}/{stats['total']}")
-    return "\n".join(lines)
+        mark = "\U0001f3af" if full else ("✅" if n_hit >= 3 else "❌")
+        lines.append(f"\U0001f3c7 <b>{hippo} · {anum}. ALTILI</b> — {n_hit}/6 {mark}")
 
+        for lr in sc.get("leg_results", []):
+            ln = lr.get("leg_number", 0)
+            ayak = _LEG_EMOJI_RETRO.get(ln, f"{ln})")
+            win = lr.get("winner", {}) or {}
+            win_num = win.get("number")
+            win_name = escape(_retro_clean_name(win.get("name")) or "?")
+            agf_rank = win.get("agf_rank")
+            sel_named = lr.get("selected_smart_named") or []
+            sel_count = len(sel_named)
+            hit = lr.get("smart_hit")
+            in_top3 = lr.get("in_top3_v7")
+
+            if sel_count == 1:
+                n = sel_named[0]
+                pick_txt = f"#{n['number']} {escape(_retro_clean_name(n.get('name', '')))} (tek)"
+            elif sel_count <= 3:
+                pick_txt = "/".join(f"#{n['number']}" for n in sel_named) + f" ({sel_count}'lu)"
+            elif sel_count <= 6:
+                pick_txt = f"{sel_count}'li kapsama"
+            else:
+                pick_txt = "genis kapsama"
+
+            if hit:
+                if sel_count == 1:
+                    lines.append(f"  {ayak} ✓ {pick_txt}")
+                else:
+                    lines.append(f"  {ayak} ✓ {pick_txt} → #{win_num} {win_name}")
+            else:
+                annot = ""
+                if not in_top3:
+                    annot = " · top3 disi"
+                elif agf_rank and agf_rank >= 4:
+                    annot = f" · AGF #{agf_rank}"
+                lines.append(f"  {ayak} ✗ {pick_txt} → kazanan #{win_num} {win_name}{annot}")
+        lines.append("")
+
+    # ozet
+    if totals.get("altili_evaluated", 0) > 0:
+        n_alt = totals["altili_evaluated"]
+        total_legs = n_alt * 6
+        thbc = totals.get("ticket_hits_by_count", {}) or {}
+        total_hits = sum(int(k) * int(v) for k, v in thbc.items()
+                         if str(k).isdigit() and int(k) > 0)
+        pct = round(100 * total_hits / max(1, total_legs))
+        lines += ["━" * 18, "\U0001f4c8 <b>GUN OZETI</b>"]
+        lines.append(f"   {n_alt} altili · <b>{total_hits}/{total_legs}</b> ayak ({pct}%)")
+
+        sing_h = totals.get("single_hit", 0)
+        sing_t = totals.get("single_total", 0)
+        if sing_t:
+            sp = round(100 * sing_h / sing_t)
+            sing_note = " — model cok guveniyor, cogu kacti" if sp < 30 else ""
+            lines.append(f"   Tek-pick (banker): {sing_h}/{sing_t} ({sp}%){sing_note}")
+
+        chaos_t = totals.get("chaos_legs_total", 0)
+        chaos_blow = totals.get("chaos_blowups", 0)
+        if chaos_t and chaos_blow:
+            lines.append(f"   Top3 disi surpriz: {chaos_blow}/{chaos_t} ayakta (yuksek-surpriz gun)")
+
+        if totals.get("full_ticket_hits"):
+            lines.append(f"   \U0001f3af <b>FULL KUPON: {totals['full_ticket_hits']}</b>")
+
+        dist = [f"{k}/6:{thbc.get(k, 0)}" for k in (6, 5, 4, 3, 2, 1, 0) if thbc.get(k, 0)]
+        if dist:
+            lines.append(f"   Dagilim: {' · '.join(dist)}")
+
+    return "\n".join(lines)
 
 def _save_recap_files_v7(date_str, raw_results, recap):
     """PATCH_V7_PHASE2_RECAP_v1. Persist live_results and daily_recaps JSONs."""
