@@ -1069,6 +1069,26 @@ def _run_model_on_repaired_legs(result, programme_data, target_date):
             except Exception as _e_proba:
                 logger.warning(f"[v3.1] {hippo} race {race_no} predict_proba failed: {_e_proba}")
                 pn = None
+            # ── V3 LIVE override + audit log ──
+            try:
+                from dashboard.v3_live import (
+                    predict_v3 as _v3_predict, log_prediction as _v3_log,
+                    is_enabled as _v3_on, is_ready as _v3_ok,
+                )
+                if _v3_on() and _v3_ok():
+                    _v3r = _v3_predict(keep_horses, breed, hippo, race_no, target_date)
+                    if _v3r:
+                        pn = _np_local.array(_v3r['probs'])  # V3 isotonic prob (renormalize)
+                        _hnames = [hi_item.get('horse_name', '') for hi_item in hi]
+                        _agfs = [next((a.get('agf_pct') for a in agf_data
+                                       if a.get('horse_number') == hn), None)
+                                 for hn in keep_horses]
+                        _v5p = (probs.tolist() if (pn is not None and 'probs' in dir(_v3r))
+                                else None)
+                        _v3_log(target_date, hippo, race_no, keep_horses, _hnames, _agfs,
+                                breed, _v3r, v5_probs=_v5p, altili_no=result.get('altili_no'))
+            except Exception as _v3e:
+                logger.debug(f"[v3.1] v3_live override failed: {_v3e}")
         except Exception as _e_predict:
             logger.warning(f"[v3.1] {hippo} race {race_no} predict failed: {_e_predict}")
             continue
@@ -3187,6 +3207,28 @@ def _model_predict_legs(legs, hippo, target_date):
             scores = _MODEL.predict(matrix, breed=breed)
             try:
                 probs = _MODEL.predict_proba(matrix, breed=breed)
+                # ── V3 LIVE override + audit log (model_prob = V3 isotonic) ──
+                try:
+                    from dashboard.v3_live import (
+                        predict_v3 as _v3_predict, log_prediction as _v3_log,
+                        is_enabled as _v3_on, is_ready as _v3_ok,
+                    )
+                    if _v3_on() and _v3_ok():
+                        _horse_nums = [int(t[2]) for t in leg['horses'][:len(probs)]
+                                       if t[2] is not None]
+                        _race_no = leg.get('race_number') or leg.get('ayak')
+                        _v3r = _v3_predict(_horse_nums, breed, hippo, _race_no, target_date)
+                        if _v3r:
+                            v5_probs = probs.tolist()
+                            probs = np.array(_v3r['probs_raw'])
+                            _hnames = [str(t[0]) for t in leg['horses'][:len(probs)]]
+                            _agfs = [next((a.get('agf_pct') for a in (agf_data or [])
+                                           if a.get('horse_number') == int(t[2])), None)
+                                     for t in leg['horses'][:len(probs)]]
+                            _v3_log(target_date, hippo, _race_no, _horse_nums,
+                                    _hnames, _agfs, breed, _v3r, v5_probs=v5_probs)
+                except Exception as _v3e:
+                    logger.debug(f"  Leg {i+1} v3_live override: {_v3e}")
                 ps = probs.sum()
                 pn = probs / ps if ps > 0 else probs
                 for j in range(len(pn)):
@@ -5915,6 +5957,19 @@ def run_daily_recap(target_date_str=None, send_telegram=False):
 
         _save_recap_files_v7(target_date_str, raw_results, recap)
         _update_cumulative_stats_v7(target_date_str, recap)
+
+        # ── V3 LIVE retro update → audit/logs/v3_retro.jsonl ──
+        try:
+            from dashboard.v3_live import update_retro_for_date as _v3_retro_update, is_enabled as _v3_on
+            if _v3_on():
+                _v3retro = _v3_retro_update(target_dt)
+                recap['v3_retro'] = _v3retro
+                logger.info(f"[recap] v3 retro: predictions={_v3retro.get('predictions',0)} "
+                            f"with_outcome={_v3retro.get('with_outcome',0)} "
+                            f"top1_hits={_v3retro.get('top1_hits',0)} "
+                            f"top3_hits={_v3retro.get('top3_hits',0)}")
+        except Exception as _v3rete:
+            logger.warning(f"[recap] v3 retro failed: {_v3rete}")
 
         tg_body = _format_telegram_recap_v7(target_date_str, per_altili, totals)
         # Phase 6 P3: results boşsa sessizce "evaluation_pending" GÖSTERME yerine sistemsel

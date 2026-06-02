@@ -1,0 +1,80 @@
+{
+  "trained_at": "2026-06-02T15:41:29.001844",
+  "version": "v3",
+  "label_method": "exponential",
+  "test_ratio": 0.2,
+  "n_features": 177,
+  "breeds": {
+    "arab": {
+      "split_date": "2025-05-24",
+      "train_records": 84987,
+      "test_records": 30879,
+      "eval": {
+        "xgb": {
+          "ndcg1": 0.6265930293843089,
+          "ndcg3": 0.7271105773722265,
+          "top1_accuracy": 0.27123107307439104,
+          "top3_accuracy": 0.6036866359447005,
+          "n_races": 3038
+        },
+        "lgbm": {
+          "ndcg1": 0.6293731259845325,
+          "ndcg3": 0.7306188440317974,
+          "top1_accuracy": 0.27978933508887427,
+          "top3_accuracy": 0.608953258722844,
+          "n_races": 3038
+        },
+        "cb": {
+          "ndcg1": 0.6293849413935281,
+          "ndcg3": 0.7294264314450045,
+          "top1_accuracy": 0.27518104015799866,
+          "top3_accuracy": 0.6092824226464779,
+          "n_races": 3038
+        },
+        "ensemble": {
+          "ndcg1": 0.636715687674123,
+          "ndcg3": 0.7367335847292827,
+          "top1_accuracy": 0.2876892692560895,
+          "top3_accuracy": 0.6181698485845951,
+          "n_races": 3038
+        }
+      }
+    },
+    "english": {
+      "split_date": "2025-05-24",
+      "train_records": 94869,
+      "test_records": 33493,
+      "eval": {
+        "xgb": {
+          "ndcg1": 0.6542303109557839,
+          "ndcg3": 0.7562204554778846,
+          "top1_accuracy": 0.3094656902630865,
+          "top3_accuracy": 0.660699755899105,
+          "n_races": 3687
+        },
+        "lgbm": {
+          "ndcg1": 0.646673684636481,
+          "ndcg3": 0.751862369106285,
+          "top1_accuracy": 0.2986167615947925,
+          "top3_accuracy": 0.6544616219148359,
+          "n_races": 3687
+        },
+        "cb": {
+          "ndcg1": 0.6537156524047325,
+          "ndcg3": 0.7575566120903916,
+          "top1_accuracy": 0.30458367236235423,
+          "top3_accuracy": 0.6620558719826417,
+          "n_races": 3687
+        },
+        "ensemble": {
+          "ndcg1": 0.6555544446913101,
+          "ndcg3": 0.7603522564352674,
+          "top1_accuracy": 0.30621101166259834,
+          "top3_accuracy": 0.666124220233252,
+          "n_races": 3687
+        }
+      }
+    }
+  },
+  "csv_source": "/Users/berkay/projects/tjk-ganyan-bot/data/training_v3/races_v3.csv"
+}
