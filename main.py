@@ -354,8 +354,26 @@ def _model_predict_legs(agf_legs, agf_alt, model, fb, hippo, target_date):
 
 
 def _fetch_program_data(target_date):
-    """HTML → PDF fallback chain."""
-    # Try HTML scraper first (richest data: pedigree, trainer, form, everything)
+    """Program kaynağı: TAYDEX_DB=1 → DB primary, fallback scraper chain.
+    DB kapalıysa veya boş dönerse HTML → PDF zinciri korunur (geri-uyumlu)."""
+    import os
+    # PRIMARY: taydex DB (kill-switch, default off)
+    if os.environ.get("TAYDEX_DB", "0") == "1":
+        try:
+            from scraper.taydex_source import get_todays_races_db, is_available
+            if is_available():
+                db_data = get_todays_races_db(target_date)
+                if db_data:
+                    logger.info(f"Program data from TAYDEX DB: {len(db_data)} hipodrom")
+                    return db_data
+                else:
+                    logger.warning("TAYDEX_DB=1 ama DB boş döndü, scraper fallback...")
+            else:
+                logger.warning("TAYDEX_DB=1 ama tünel kapalı (127.0.0.1:6543 erişilemez), scraper fallback...")
+        except Exception as e:
+            logger.warning(f"TAYDEX DB hatası, scraper fallback: {e!r}")
+
+    # FALLBACK 1: HTML scraper (zengin: pedigree, trainer, form)
     try:
         html_data = get_todays_races_html(target_date)
         if html_data:
@@ -364,7 +382,7 @@ def _fetch_program_data(target_date):
     except Exception as e:
         logger.warning(f"HTML scraper failed: {e}")
 
-    # Fallback to PDF
+    # FALLBACK 2: PDF
     logger.info("Falling back to PDF parser...")
     try:
         return get_pdf_races(target_date) or []
