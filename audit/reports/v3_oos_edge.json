@@ -1,0 +1,33 @@
+{
+  "discrimination": {
+    "auc_v3": 0.7500919606989014,
+    "auc_agf": 0.774818556240075,
+    "edge_auc": -0.024726595541173624,
+    "brier_v3": 0.08472939478788016,
+    "brier_agf": 0.08257565649955075,
+    "ece_v3": 0.007256853683482181,
+    "ece_agf": 0.003847549762196939,
+    "v3_beats_agf": false
+  },
+  "coupon_backtest_rois": {
+    "old_AGF": -0.7195434110257309,
+    "old_V3": -0.8113032189887083,
+    "v2_always_AGF": -0.6868724868695517,
+    "v2_always_V3": -0.17291197124688967,
+    "v2_gated_V3": 0
+  },
+  "coupon_backtest_hits": {
+    "old_AGF": 0.11864406779661017,
+    "v2_always_AGF": 0.19491525423728814,
+    "v2_always_V3": 0.11864406779661017
+  },
+  "v2_gated_active_rate": 0.0,
+  "chosen": "v2_always_V3",
+  "chosen_roi": -0.17291197124688967,
+  "prob_source": "V3",
+  "default_on": true,
+  "verdict_text": "V2 allocator EDGE \u2014 'v2_always_V3' ROI -17.3% vs eski (AGF) -72.0%. V3 prob kayna\u011f\u0131 kullan\u0131l\u0131yor. V3 vs AGF discrimination: V3 AUC 0.750 < AGF AUC 0.775 (\u0394 -0.025) \u2014 V3 piyasay\u0131 YENM\u0130YOR. Kazan\u00e7 kayna\u011f\u0131: V2 allocator'\u0131n de\u011fi\u015fken-geni\u015flik da\u011f\u0131l\u0131m\u0131 (banko/spread).",
+  "oos_n_total": 118,
+  "oos_n_v3_ok": 118,
+  "oos_skipped_no_v3": 0
+}

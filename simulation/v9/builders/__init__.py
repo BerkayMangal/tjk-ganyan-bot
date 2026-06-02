@@ -86,9 +86,12 @@ def finalize(strategy, tickets, signal_summary):
 
 
 def build_for_strategy(strategy, aggregated, routing):
-    # TJK_COUPON_V2=1 → Coupon V2 (değişken genişlik greedy) tüm builder modlarında devreye girer.
-    # Default OFF (backtest: holdout ROI yeni -69% vs eski -39% → eski üstün). Kod gelir, env=1 ile aç.
-    use_v2 = os.environ.get("TJK_COUPON_V2", "0") == "1"
+    # TJK_COUPON_V2 — Coupon V2 (değişken genişlik greedy allocator).
+    # DEFAULT ON (=1) — audit/13_v3_oos_edge backtest: V3 prob ile V2_always_V3 ROI -17.3%
+    # vs eski AGF -72.0% (118 altılı OOS, 2025-05-24 → 2026-03-23, 4x kayıp azalması).
+    # V3 alpha source DEĞİL (AUC 0.750 < AGF 0.775); kazanç V2 allocator'ın değişken-genişlik
+    # dağılımından (banko/spread cost-optimal). Geri-al: Railway env TJK_COUPON_V2=0.
+    use_v2 = os.environ.get("TJK_COUPON_V2", "1") == "1"
     if strategy == "tam_sistem":
         if use_v2:
             from simulation.v9.builders.coupon_v2 import build as build_v2
