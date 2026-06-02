@@ -86,11 +86,23 @@ def finalize(strategy, tickets, signal_summary):
 
 
 def build_for_strategy(strategy, aggregated, routing):
+    # TJK_COUPON_V2=1 → Coupon V2 (değişken genişlik greedy) tüm builder modlarında devreye girer.
+    # Default OFF (backtest: holdout ROI yeni -69% vs eski -39% → eski üstün). Kod gelir, env=1 ile aç.
+    use_v2 = os.environ.get("TJK_COUPON_V2", "0") == "1"
     if strategy == "tam_sistem":
+        if use_v2:
+            from simulation.v9.builders.coupon_v2 import build as build_v2
+            return build_v2(aggregated, routing)
         from simulation.v9.builders.tam_sistem_builder import build
     elif strategy == "favori_yikma":
+        if use_v2:
+            from simulation.v9.builders.coupon_v2 import build as build_v2
+            return build_v2(aggregated, routing)
         from simulation.v9.builders.favori_yikma_builder import build
     elif strategy == "kangal":
+        if use_v2:
+            from simulation.v9.builders.coupon_v2 import build as build_v2
+            return build_v2(aggregated, routing)
         from simulation.v9.builders.kangal_builder import build
     else:
         return {"strategy": "pas", "tickets": [], "total_cost": 0.0, "total_combo": 0,

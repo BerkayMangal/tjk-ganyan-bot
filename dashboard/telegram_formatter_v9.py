@@ -250,9 +250,68 @@ def format_pas_message(out, hippo, no, t, meta):
     return "\n".join(L)
 
 
+def format_v2_message(out, hippo, no, t, meta):
+    """Coupon V2 sade format: per-ayak BANKO / N AT / SPREAD; combo matematiği gizli; gerçek TL.
+
+    Aktivasyon: env TJK_COUPON_V2=1 (build_for_strategy V2 builder seçer → strategy='tam_sistem_v2').
+    """
+    r, k = out["routing"], out["kupon"]
+    union = k.get("legs_selected", [])
+    cost = k.get("total_cost", 0)
+    p_hit = k.get("p_hit") or 0
+    e_pay = k.get("e_payout") or 0
+    ev = k.get("ev") or 0
+    base_st = r.get("strategy", "?").replace("_v2", "").upper().replace("_", " ")
+    h_clean = (hippo or "?").replace(" Hipodromu", "").replace(" Hipodrom", "").upper()
+    head = (f"🏇 {h_clean}{(' — ' + t) if t else ''} · {no}. ALTILI\n"
+            f"🎯 {base_st} · Toplam: {_tl(cost)}")
+    L = [head, SEP]
+    for ayak in _ayaks(meta, k):
+        i = ayak - 1
+        sel = union[i] if 0 <= i < len(union) else []
+        ml = meta.get(ayak, {})
+        h_map = ml.get("h", {}) if ml else {}
+        order = ml.get("order", []) if ml else []
+        n_pick = len(sel)
+        if n_pick == 0:
+            L.append(f"{_D.get(ayak, ayak)}  (seçim yok)")
+            continue
+        # Mark + label
+        if n_pick == 1:
+            hn = sel[0]
+            d = h_map.get(hn, {})
+            nm = (d.get("name") or "").strip()
+            mp = d.get("mp", 0)
+            tag = "BANKO ⭐"
+            body = f"#{hn} {nm}".strip() + (f"  ·  model %{mp:.0f}" if mp else "")
+        elif n_pick == 2:
+            tag = "2 AT"
+            body = " · ".join(f"#{h}" for h in sel)
+            # +çekişme etiketi (top2 prob farkı küçükse)
+            if len(order) >= 2:
+                p1 = h_map.get(order[0], {}).get("mp", 0)
+                p2 = h_map.get(order[1], {}).get("mp", 0)
+                if p1 and p2 and abs(p1 - p2) < 10:
+                    body += "  ·  çekişme"
+        else:
+            tag = "SPREAD"
+            body = " · ".join(f"#{h}" for h in sel)
+        # Per-ayak gerekçe (signal_summary varsa)
+        L.append(f"{_D.get(ayak, ayak)} {tag}  {body}")
+    L.append(SEP)
+    L.append(f"💰 Maliyet: {_tl(cost)}  ·  isabet ihtimali: %{p_hit*100:.2f}")
+    if e_pay:
+        L.append(f"📈 Beklenen ödeme (havuz tahmini): {_tl(e_pay)}  ·  EV: {_tl(ev)}")
+    L.append(_footer())
+    return "\n".join(L)
+
+
 def format_message(out, hippo, no, t, meta=None):
     meta = meta or {}
     st = out.get("routing", {}).get("strategy", "pas")
+    # V2 — sade per-ayak format (env TJK_COUPON_V2=1 build_for_strategy ile aktive)
+    if st.endswith("_v2") or st == "tam_sistem_v2":
+        return format_v2_message(out, hippo, no, t, meta)
     fn = {"tam_sistem": format_tam_sistem_message, "favori_yikma": format_favori_yikma_message,
           "kangal": format_kangal_message, "pas": format_pas_message}.get(st, format_pas_message)
     return fn(out, hippo, no, t, meta)

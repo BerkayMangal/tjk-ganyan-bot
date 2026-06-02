@@ -1,0 +1,122 @@
+{
+  "dilution": {
+    "a": 13.664945575305453,
+    "b": -0.2933141898309638,
+    "rmse": 1.046025326532708,
+    "n": 2553,
+    "hippo_offset": {
+      "Adana Ye\u015filoba Hipodromu": -0.39724002718225027,
+      "Ankara 75. Y\u0131l Hipodromu": -0.1646537065094824,
+      "Bursa Osmangazi Hipodromu": -0.37691608560197665,
+      "Diyarbak\u0131r Hipodromu": 1.2574840676113643,
+      "Elaz\u0131\u011f Hipodromu": 1.3778985346178638,
+      "Kocaeli Kartepe Hipodromu": -0.2780946475897217,
+      "\u0130stanbul Veliefendi Hipodromu": -0.16817606898179438,
+      "\u0130zmir \u015eirinyer Hipodromu": -0.42313657314138986,
+      "\u015eanl\u0131urfa Hipodromu": 1.6993703187928686
+    },
+    "overall_median_log": 7.258440319212652
+  },
+  "split": {
+    "train_n": 2553,
+    "holdout_n": 639
+  },
+  "backtest": {
+    "old_train": {
+      "name": "old_tam_sistem",
+      "n_total": 2553,
+      "n_active": 2553,
+      "n_hit": 235,
+      "hit_rate": 0.09204857030943987,
+      "total_cost": 2442542.5,
+      "total_payout": 47442.35,
+      "total_pnl": -2395100.15,
+      "roi": -0.9805766532209776,
+      "avg_cost": 956.7342342342342,
+      "avg_payout_per_hit": 201.8823404255319,
+      "pas_rate": 0.0
+    },
+    "old_holdout": {
+      "name": "old_tam_sistem",
+      "n_total": 639,
+      "n_active": 639,
+      "n_hit": 68,
+      "hit_rate": 0.10641627543035993,
+      "total_cost": 598874.5,
+      "total_payout": 364507.92,
+      "total_pnl": -234366.58000000005,
+      "roi": -0.3913450647840241,
+      "avg_cost": 937.2057902973396,
+      "avg_payout_per_hit": 5360.410588235294,
+      "pas_rate": 0.0
+    },
+    "v2_always_train": {
+      "name": "v2_always",
+      "n_total": 2553,
+      "n_active": 2553,
+      "n_hit": 398,
+      "hit_rate": 0.15589502546024286,
+      "total_cost": 3909913.0,
+      "total_payout": 106590.16999999998,
+      "total_pnl": -3803322.83,
+      "roi": -0.9727384803702793,
+      "avg_cost": 1531.4974539757147,
+      "avg_payout_per_hit": 267.81449748743717,
+      "pas_rate": 0.0
+    },
+    "v2_always_holdout": {
+      "name": "v2_always",
+      "n_total": 639,
+      "n_active": 639,
+      "n_hit": 104,
+      "hit_rate": 0.162754303599374,
+      "total_cost": 974210.25,
+      "total_payout": 300604.00999999995,
+      "total_pnl": -673606.24,
+      "roi": -0.6914382598622834,
+      "avg_cost": 1524.5856807511736,
+      "avg_payout_per_hit": 2890.4231730769225,
+      "pas_rate": 0.0
+    },
+    "v2_gated_train": {
+      "name": "v2_gated",
+      "n_total": 2553,
+      "n_active": 0,
+      "n_hit": 0,
+      "hit_rate": 0,
+      "total_cost": 0.0,
+      "total_payout": 0.0,
+      "total_pnl": 0.0,
+      "roi": 0,
+      "avg_cost": 0,
+      "avg_payout_per_hit": 0,
+      "pas_rate": 1.0
+    },
+    "v2_gated_holdout": {
+      "name": "v2_gated",
+      "n_total": 639,
+      "n_active": 0,
+      "n_hit": 0,
+      "hit_rate": 0,
+      "total_cost": 0.0,
+      "total_payout": 0.0,
+      "total_pnl": 0.0,
+      "roi": 0,
+      "avg_cost": 0,
+      "avg_payout_per_hit": 0,
+      "pas_rate": 1.0
+    }
+  },
+  "decision": {
+    "roi_new_a_holdout": -0.6914382598622834,
+    "hit_new_a_holdout": 0.162754303599374,
+    "roi_new_b_holdout": 0,
+    "hit_new_b_holdout": 0,
+    "pas_b_holdout": 1.0,
+    "roi_old_holdout": -0.3913450647840241,
+    "hit_old_holdout": 0.10641627543035993,
+    "chosen": null,
+    "default_on": false,
+    "verdict": "V2 yetersiz \u2014 A:-69.1% B:0.0% vs eski -39.1% \u2014 default OFF"
+  }
+}
