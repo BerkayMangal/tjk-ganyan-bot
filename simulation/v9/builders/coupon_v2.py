@@ -40,7 +40,8 @@ def bf_for_hippo(hippo: str) -> float:
 
 
 def _enabled() -> bool:
-    return os.environ.get('TJK_COUPON_V2', '0') == '1'
+    """Default ON (=1). Geri-al: env TJK_COUPON_V2=0."""
+    return os.environ.get('TJK_COUPON_V2', '1') == '1'
 
 
 # Dilution modeli (audit/12_couponv2_design.py train sonucu, 2016-2021)
