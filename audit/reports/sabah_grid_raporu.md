@@ -115,13 +115,24 @@ V3 OOS (2025-05-24 → 2026-06-02) 9k yarış için V3 predict + market backtest
 
 `TJK_EDGE_BET` ENV-FLAG kurulmadı çünkü kanıt yetersiz. Edge stratejisi (AGF > market_implied + 0.07) MANUEL test için açık — Berkay isterse 1-2 ay canlı dener, gerçek ROI birikir.
 
+## ⚠ BUG UYARILARI
+
+### audit/15_v3_market_grid.py (background)
+V3 OOS prob ile market backtest çalıştırıldı **AMA** `IntCastingNaNError` ile her strateji fail etti (4500 race ml_features fetch OK, sonra strateji apply'da NaN). Sonuç yazılmadı — sabah fix gerekir (`horse_number.astype(int)` öncesi NaN dropla).
+
+### audit/18_extra_markets.py — SAHTE ROI sonuçları (5'Lİ/4'LÜ/ÇİFTE)
+Bu script multi-leg market'leri (5'Lİ GANYAN = 5 ardışık koşu) tek-koşu stratejisiyle test etti — semantik yanlış. "winner[0] match" durumunda **tüm 5-leg payout** kazanan say'a → +300,000% sahte ROI. **Bu sonuçlar İGNORE.** `extra_leaderboard.jsonl` arşivde kalır (debug), `sabah_grid_raporu.md` verdict'inde DİKKATE ALINMADI.
+
 ## NEVER-STOP backlog (sabah devam)
 
-- V3 market grid (background buu/15) — V3 prob ile divergence stratejisi
+- audit/15 (V3 market grid) NaN bug fix + rerun
+- audit/18 multi-leg market'leri için doğru semantic (ardışık koşu sıralı winner-set match)
 - Top-N classifier retrain (place / show hedefli) — yeni model
-- 7'Lİ PLASE backtest (4,394 yarış, max payout 810k)
+- 7'Lİ PLASE doğru backtest (7 ardışık koşu, her birinde top-3)
 - Çok-ayak SİB kombinasyonu (fixed_odds genelleşince)
 - Sample biriktikçe edge stratejisinin canlı ROI'sini izle (1-2 ay bet_diary)
+- Edge stratejisi finer slicing (hipodrom × distance × class)
+- Year-by-year stability (2018, 2020, 2022 edge ROI değişiyor mu?)
 
 ---
 
