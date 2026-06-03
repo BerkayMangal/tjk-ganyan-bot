@@ -2917,6 +2917,35 @@ def _process_proper_altili(agf_alt, program_data, target_date, model_ok):
     except Exception as _e_bd:
         logger.warning(f"  Bet diary write failed: {_e_bd}")
 
+    # Analiz toolu v1: per-leg analysis (AGF Harville + Surprise + bucket).
+    # Çıktı leg['analysis'] + result['analysis'] (formatter okur). Disclaimer var.
+    try:
+        from dashboard.analysis_runner import analyze_leg
+        leg_analyses = []
+        for ls in (result.get("legs_summary") or []):
+            try:
+                leg_meta = {
+                    'agf_data': [{'horse_number': h.get('number'),
+                                  'agf_pct': h.get('agf_pct', 0) or 0}
+                                 for h in (ls.get('all_horses_with_mp') or [])],
+                    'group_name': ls.get('group_name', '') or '',
+                    'distance': ls.get('distance', 1400) or 1400,
+                    'track_type': ls.get('track_type', 'dirt') or 'dirt',
+                }
+                ls['analysis'] = analyze_leg(leg_meta, hippo, target_date)
+                leg_analyses.append(ls['analysis'])
+            except Exception:
+                ls['analysis'] = {'disclaimer': 'analiz amaçlıdır'}
+        # En yüksek-surprise + en güçlü-bucket leg-summary
+        result['analysis'] = {
+            'leg_count': len(leg_analyses),
+            'max_surprise': max((a.get('surprise', {}).get('score', 0)
+                                 for a in leg_analyses), default=0),
+            'disclaimer': 'analiz amaçlıdır, +EV garantisi değil',
+        }
+    except Exception as _e_an:
+        logger.warning(f"  analysis_runner failed: {_e_an}")
+
     return result
 
 
