@@ -109,9 +109,37 @@ def top_k_membership_probs(p: np.ndarray, k: int = 3) -> np.ndarray:
     return mem / M
 
 
-def henery_adjustment(p: np.ndarray, beta_2: float = 0.85, beta_3: float = 0.70) -> dict:
+def fast_harville_topk_mc(p: np.ndarray, k: int, M: int = 500,
+                          seed: int = 42) -> np.ndarray:
+    """Plackett-Luce Monte Carlo top-k membership — n=any, fast.
+    Per-race ~1ms, 20k races ~20s. Variance 1/√M ≈ ±4.5% at M=500.
+    Returns (n,) membership prob array; sum ≈ k.
+    """
+    p = np.asarray(p, dtype=float)
+    p = np.clip(p, 1e-12, 1 - 1e-12)
+    p = p / p.sum()
+    n = len(p)
+    if k >= n:
+        return np.ones(n)
+    rng = np.random.default_rng(seed)
+    mem = np.zeros(n)
+    for _ in range(M):
+        remaining = p.copy()
+        for _step in range(k):
+            s = remaining.sum()
+            if s <= 0: break
+            r = remaining / s
+            choice = int(rng.choice(n, p=r))
+            mem[choice] += 1.0
+            remaining[choice] = 0.0
+    return mem / M
+
+
+def henery_adjustment(p: np.ndarray, beta_2: float = 0.70, beta_3: float = 0.60) -> dict:
     """Henery düzeltmesi: 2. ve 3. pozisyonda variance daha düşük.
-    Adjusted prob = p**beta_pos. Hardcoded coefficients (literatür ~0.8-0.9 range).
+    Adjusted prob = p**beta_pos.
+    β2=0.70, β3=0.60 — audit/36_henery_fit ile TR AGF prob 2023-2025 fit edildi
+    (Brier minimize). Önceki hardcoded değerler: 0.85/0.70 (literatür) — TR'de daha flat.
     Returns {pos1: p_pos1, pos2: p_pos2_adj, pos3: p_pos3_adj}.
     """
     p = _safe_norm(p)

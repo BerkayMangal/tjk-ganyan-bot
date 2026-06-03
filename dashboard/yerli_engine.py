@@ -2917,30 +2917,41 @@ def _process_proper_altili(agf_alt, program_data, target_date, model_ok):
     except Exception as _e_bd:
         logger.warning(f"  Bet diary write failed: {_e_bd}")
 
-    # Analiz toolu v1: per-leg analysis (AGF Harville + Surprise + bucket).
-    # Çıktı leg['analysis'] + result['analysis'] (formatter okur). Disclaimer var.
+    # Analiz toolu v2: per-leg analiz (GERÇEK model prob top-3/4 + AGF Harville + radar + surprise).
+    # Çıktı leg['analysis'] + result['analysis'] (formatter okur). Disclaimer.
     try:
         from dashboard.analysis_runner import analyze_leg
         leg_analyses = []
         for ls in (result.get("legs_summary") or []):
             try:
+                horses = ls.get('all_horses_with_mp') or []
+                # race_horse_id leg'de var mı? (taydex_source'tan gelmiyor; DB lookup gerek)
+                rh_ids = [h.get('race_horse_id') for h in horses]
                 leg_meta = {
                     'agf_data': [{'horse_number': h.get('number'),
-                                  'agf_pct': h.get('agf_pct', 0) or 0}
-                                 for h in (ls.get('all_horses_with_mp') or [])],
+                                  'agf_pct': h.get('agf_pct', 0) or 0,
+                                  'name': h.get('name', '')}
+                                 for h in horses],
+                    'race_horse_ids': rh_ids if all(rh_ids) else [],
                     'group_name': ls.get('group_name', '') or '',
                     'distance': ls.get('distance', 1400) or 1400,
                     'track_type': ls.get('track_type', 'dirt') or 'dirt',
                 }
                 ls['analysis'] = analyze_leg(leg_meta, hippo, target_date)
                 leg_analyses.append(ls['analysis'])
-            except Exception:
-                ls['analysis'] = {'disclaimer': 'analiz amaçlıdır'}
-        # En yüksek-surprise + en güçlü-bucket leg-summary
+            except Exception as _e_leg:
+                ls['analysis'] = {'disclaimer': 'analiz amaçlıdır', 'error': repr(_e_leg)[:100]}
+        # Toplam: en yüksek surprise + radar flag sayısı + flag özet
+        all_flags = []
+        for a in leg_analyses:
+            for fl in (a.get('radar_flags') or []):
+                all_flags.append(fl)
         result['analysis'] = {
             'leg_count': len(leg_analyses),
             'max_surprise': max((a.get('surprise', {}).get('score', 0)
                                  for a in leg_analyses), default=0),
+            'radar_flag_count': len(all_flags),
+            'radar_flags': all_flags[:10],   # top flag özeti
             'disclaimer': 'analiz amaçlıdır, +EV garantisi değil',
         }
     except Exception as _e_an:
