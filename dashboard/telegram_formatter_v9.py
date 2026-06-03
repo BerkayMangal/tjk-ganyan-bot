@@ -159,7 +159,32 @@ def _leg_block(ml, ayak, sel_nums=None, tag="", fy_fav=None):
 
 
 def _footer():
-    return f"{SEP}\nℹ️ payout=PROXY · model kalibre değil · karar sende"
+    return f"{SEP}\nℹ️ analiz amaçlıdır, +EV garantisi değil · karar sende"
+
+
+def _radar_block(radar_flags: list) -> list:
+    """RADAR bloğu — top-5 model >> AGF divergence flag'leri.
+    Sadece extreme (>=0.40 div) gösterilir (audit/28 lift pozitif eşiği)."""
+    if not radar_flags:
+        return []
+    out = [SEP, "📡 RADAR — model uçukları (analiz)"]
+    for f in radar_flags[:5]:
+        out.append(f"  #{f['horse_number']} {f['horse_name'][:20]}  "
+                   f"{f['target']} %{int(f['model_prob']*100)} (AGF %{int(f['agf_implied']*100)}) "
+                   f"· uçuk +{int(f['divergence']*100)}pp")
+    return out
+
+
+def _surprise_block(surprise: dict) -> list:
+    """SÜRPRİZ bloğu — composite skor + neden."""
+    if not surprise:
+        return []
+    sc = surprise.get('score', 0)
+    verdict = surprise.get('verdict', '')
+    out = [SEP, f"🎲 SÜRPRİZ: {sc:.2f} — {verdict}"]
+    for n in surprise.get('nedenler', [])[:3]:
+        out.append(f"  • {n}")
+    return out
 
 
 def _hdr(emoji, hippo, no, t, line2):
@@ -302,6 +327,13 @@ def format_v2_message(out, hippo, no, t, meta):
     L.append(f"💰 Maliyet: {_tl(cost)}  ·  isabet ihtimali: %{p_hit*100:.2f}")
     if e_pay:
         L.append(f"📈 Beklenen ödeme (havuz tahmini): {_tl(e_pay)}  ·  EV: {_tl(ev)}")
+    # Radar + Sürpriz blokları (opsiyonel, meta'dan gelir)
+    radar = (out.get('analysis') or {}).get('radar_flags') if isinstance(out, dict) else None
+    if radar:
+        L += _radar_block(radar)
+    surprise = (out.get('analysis') or {}).get('surprise') if isinstance(out, dict) else None
+    if surprise:
+        L += _surprise_block(surprise)
     L.append(_footer())
     return "\n".join(L)
 
