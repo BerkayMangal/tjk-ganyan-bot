@@ -162,14 +162,15 @@ def analyze_leg(leg: Dict, hippo: str, target_date) -> Dict:
             # Divergence: model − AGF Harville
             div3 = p3 - agf_h3
             div4 = p4 - agf_h4
-            # Flag: extreme positive divergence (top-3/4 niş — board-finish)
-            # Önceki radar hit-rate analizi top-5 için 0.40; top-3/4 daha tight
-            # Pragmatik eşik: 0.20 (analiz amaçlı yumuşak)
+            # Radar eşik: audit/39 lift validation (top-3 +10.9pp / top-4 +5.4pp @ 0.30).
+            # Düşük (0.05-0.20) NEGATİF lift (noise). 0.30 = strong sinyal.
+            # 0.40 daha güçlü ama daha az flag (~2.7k vs 5.2k).
+            RADAR_THR = 0.30
             flags = []
             for i in range(len(horse_nums)):
                 d3 = float(div3[i]); d4 = float(div4[i])
                 m3 = float(p3[i]); m4 = float(p4[i])
-                if d3 >= 0.20 or d4 >= 0.20:
+                if d3 >= RADAR_THR or d4 >= RADAR_THR:
                     target = 'top3' if d3 >= d4 else 'top4'
                     d = max(d3, d4)
                     mp = m3 if target == 'top3' else m4

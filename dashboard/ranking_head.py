@@ -77,28 +77,28 @@ def tabela_prob_unordered(p: np.ndarray, four_set: List[int]) -> float:
 
 
 def top_k_membership_probs(p: np.ndarray, k: int = 3) -> np.ndarray:
-    """Per-at: P(at i top-k içinde). Harville sum:
-    P(i ∈ top-k) ≈ p_i × Σ_{j≠i} p_j/(1-p_i) × ... (PL marginal).
-    Pragmatik: tüm k-permütasyonlar üzerinden i'nin geçtiği yerleri topla.
-    Küçük field için exact; büyük için Monte Carlo.
+    """Per-at: P(at i ∈ top-k) — Plackett-Luce.
+    EXACT için tüm k-permütasyonlar topla. n=18, k=4 → 73k perm/race ≈ 0.5s — kabul edilebilir.
+    Çok büyük (n>16 + k>4) Monte Carlo M=20000 fallback.
     """
     p = _safe_norm(p)
     n = len(p)
-    if n <= 8 or k <= 4:
-        # exact: tüm permütasyonlar
+    if n <= k:
+        return np.ones(n)
+    # Exact: O(n! / (n-k)!) per call. n=14 k=4 → 24024 perm. n=18 k=4 → 73440.
+    # Bu hızlı (Python loop ile race başına 50ms-500ms).
+    if n <= 18 and k <= 4:
         mem = np.zeros(n)
         for perm in permutations(range(n), k):
             prob = plackett_luce_sequence_prob(p, list(perm))
             for idx in perm:
                 mem[idx] += prob
         return mem
-    # Monte Carlo n>8, k>4
+    # Fallback Monte Carlo for very large k
     rng = np.random.default_rng(42)
-    M = 50000
+    M = 20000
     mem = np.zeros(n)
-    cumsum = np.cumsum(p)
     for _ in range(M):
-        # PL sampling without replacement
         remaining = list(range(n))
         for _step in range(k):
             r_p = np.array([p[r] for r in remaining])
