@@ -34,11 +34,17 @@ except ImportError:
     from feature_pipeline import build_X_from_db
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# v3 (audit/37): dead drop + retrain — v2 ile EŞIT (max |ΔAUC|=0.002) + %53 küçük + hızlı.
-# Fallback: v3 yoksa v2.
+# v4 (audit/42): dead _enc drop (audit/41 SHAP) — v3 ile perf eşit (max |ΔAUC|=0.003).
+# v3 → v2 fallback chain.
+_V4_PATH = os.path.join(ROOT, 'model', 'trained_targets_v4')
 _V3_PATH = os.path.join(ROOT, 'model', 'trained_targets_v3')
 _V2_PATH = os.path.join(ROOT, 'model', 'trained_targets_v2')
-MODELS_V2 = _V3_PATH if os.path.exists(os.path.join(_V3_PATH, 'feature_columns.json')) else _V2_PATH
+if os.path.exists(os.path.join(_V4_PATH, 'feature_columns.json')):
+    MODELS_V2 = _V4_PATH
+elif os.path.exists(os.path.join(_V3_PATH, 'feature_columns.json')):
+    MODELS_V2 = _V3_PATH
+else:
+    MODELS_V2 = _V2_PATH
 BUCKETS_FILE = os.path.join(ROOT, 'data', 'surprise', 'historical_buckets.json')
 
 _MODELS = None
