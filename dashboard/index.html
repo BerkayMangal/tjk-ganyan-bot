@@ -63,7 +63,6 @@ input:focus{outline:1px solid #333}input[type=number]{-moz-appearance:textfield}
       <button class="tab-btn active" onclick="switchView('races')">YARISLAR</button>
       <button class="tab-btn" onclick="switchView('dutch')">DUTCH</button>
       <button class="tab-btn" onclick="switchView('yerli')">YERLI KUPON</button>
-      <button class="tab-btn" onclick="switchView('hybrid')">HIBRIT KUPON</button>
       <button class="tab-btn" onclick="switchView('strategy')">STRATEJI</button>
     </div>
   </div>
@@ -222,7 +221,7 @@ function getDemoData(){return{timestamp:new Date().toISOString(),source:"demo",t
 ]}}
 
 // ─── RENDER ───
-function render(){if(!D)return;let m=document.getElementById("main");if(view==="races")renderRaces(m);else if(view==="dutch")renderDutch(m);else if(view==="yerli")renderYerli(m);else if(view==="hybrid")renderHybrid(m);else renderStrategy(m)}
+function render(){if(!D)return;let m=document.getElementById("main");if(view==="races")renderRaces(m);else if(view==="dutch")renderDutch(m);else if(view==="yerli")renderYerli(m);else renderStrategy(m)}
 
 function renderRaces(el){
   let tracks=region==="ALL"?D.tracks:D.tracks.filter(t=>t.country===region);
@@ -400,9 +399,9 @@ function calcDutch(){
 
 
 
-// ─── HIBRIT KUPON (Public AGF + Model tier + sürpriz özet) ───
-// Endpoint: /api/smart_coupon/all/<date> · audit/73 hybrid mode
-function renderHybrid(el){
+// ─── YERLI KUPON (HİBRİT: Public AGF + Model tier_score + sürpriz özet) ───
+// Endpoint: /api/smart_coupon/all/<date> · audit/73 hybrid mode (Berkay direktif 2026-06-04)
+function renderYerli(el){
   el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">Hibrit kupon (Public + Model tier) hazırlanıyor...</div>';
   let today = new Date();
   let dateStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
@@ -411,25 +410,31 @@ function renderHybrid(el){
     .then(data => {
       let hippos = data.hippos || [];
       if(!hippos.length){
-        el.innerHTML = `<div style="text-align:center;padding:60px;color:var(--text4)">Bugün hibrit kupon hazırlanamadı<br><span style="font-size:11px;color:var(--text4)">Yarış programı yok veya AGF/veri eksik. Tarih: ${dateStr}</span></div>`;
+        el.innerHTML = `<div style="text-align:center;padding:60px;color:var(--text4)">Bugün kupon hazırlanamadı<br><span style="font-size:11px;color:var(--text4)">Yarış programı yok veya AGF/veri eksik · Tarih: ${dateStr}</span></div>`;
         return;
       }
       let okHippos = hippos.filter(h => h.status === 'ok');
+      if(!okHippos.length){
+        let err0 = (hippos[0]||{}).reason || 'bilinmiyor';
+        el.innerHTML = `<div style="text-align:center;padding:60px;color:var(--red)">Kupon üretilemedi<br><span style="font-size:11px;color:var(--text4)">Hata: ${err0}</span></div>`;
+        return;
+      }
       let modeBadge = '<span class="badge" style="background:rgba(167,139,250,.1);color:var(--purple);border:1px solid rgba(167,139,250,.2)">HIBRIT MOD</span>';
       let h = `<div style="max-width:1100px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
           <div>
-            <div style="font-size:20px;font-weight:800;color:#fff">HİBRİT 6'LI KUPONLAR</div>
-            <div style="font-size:11px;color:var(--text3);margin-top:3px">${dateStr} · ${okHippos.length} hipodrom · Public AGF + Model tier filtre</div>
+            <div style="font-size:20px;font-weight:800;color:#fff">YERLİ KUPONLAR — HİBRİT</div>
+            <div style="font-size:11px;color:var(--text3);margin-top:3px">${dateStr} · ${okHippos.length} hipodrom · Public AGF + Model tier filtre + sürpriz özet</div>
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
             ${modeBadge}
-            <button onclick="renderHybrid(document.getElementById('main'))" style="background:var(--border);border:1px solid var(--border2);color:var(--text2);padding:4px 10px;border-radius:3px;font-size:10px;cursor:pointer;font-family:var(--sans)">YENILE</button>
+            <button onclick="renderYerli(document.getElementById('main'))" style="background:var(--border);border:1px solid var(--border2);color:var(--text2);padding:4px 10px;border-radius:3px;font-size:10px;cursor:pointer;font-family:var(--sans)">YENILE</button>
+            <button onclick="if(confirm('TÜM hipodrom kuponlarını Telegram\\'a yolla?')){fetch('/api/smart_coupon/all/${dateStr}?send=1').then(r=>r.json()).then(d=>{let ok=(d.hippos||[]).filter(h=>h.telegram&&h.telegram.sent).length;alert('Telegram\\'a yollandı: '+ok+' kupon');})}" style="background:rgba(59,159,255,.1);border:1px solid rgba(59,159,255,.2);color:var(--blue);padding:4px 10px;border-radius:3px;font-size:10px;cursor:pointer;font-family:var(--sans)">TELEGRAM</button>
           </div>
         </div>
         <div style="background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:11px;color:var(--text2);line-height:1.6">
           ⚠ <b>ANALIZ ARACI</b> — TR pari-mutuel piyasası yapısal −EV (audit/67 gerçek payout backtest).
-          Berkay karar verir. Tier: ⭐≥0.65 · ◇≥0.40 · ⚠≥0.20 · ✗<0.20. Sürpriz-gebe ayak geniş, sağlam ayak dar.
+          Berkay karar verir · Tier: ⭐≥0.65 · ◇≥0.40 · ⚠≥0.20 · ✗<0.20 · Sürpriz-gebe ayak geniş, sağlam ayak dar.
         </div>`;
       okHippos.forEach(hippo => {
         let costTL = hippo.cost_tl || 0;
@@ -439,7 +444,6 @@ function renderHybrid(el){
         let costColor = costTL < 1000 ? 'var(--green)' : costTL < 3000 ? 'var(--yellow)' : 'var(--red)';
         let bankerStr = bankerCount > 0 ? `<span style="color:var(--blue)">🔒 ${bankerCount} banker</span>` : '';
         let modelFailStr = modelFailed > 0 ? `<span style="color:var(--yellow)">⚠ ${modelFailed}/6 ayakta model veri yok</span>` : '';
-        // Escape HTML for <pre> content + convert Telegram tags to span
         let textHtml = (hippo.text || '')
           .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
           .replace(/&lt;b&gt;/g,'<b>').replace(/&lt;\/b&gt;/g,'</b>')
@@ -448,7 +452,7 @@ function renderHybrid(el){
           <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
             <div>
               <div style="font-size:16px;font-weight:700;color:#fff">📍 ${hippo.hippo}</div>
-              <div style="font-size:11px;color:var(--text3);margin-top:2px">rank_score ${(hippo.rank_score||0).toFixed(2)} · ${hippo.n_legs} ayak · ${bankerStr} ${modelFailStr}</div>
+              <div style="font-size:11px;color:var(--text3);margin-top:2px">rank ${(hippo.rank_score||0).toFixed(2)} · ${hippo.n_legs} ayak · ${bankerStr} ${modelFailStr}</div>
             </div>
             <div style="text-align:right">
               <div style="font-size:18px;font-weight:800;font-family:var(--mono);color:${costColor}">${costTL.toFixed(2)} TL</div>
@@ -462,15 +466,15 @@ function renderHybrid(el){
       el.innerHTML = h;
     })
     .catch(err => {
-      el.innerHTML = `<div style="text-align:center;padding:60px;color:var(--red)">Hibrit kupon yüklenemedi: ${err.message}<br><span style="font-size:11px;color:var(--text4)">/api/smart_coupon/all endpoint kontrol edin</span></div>`;
+      el.innerHTML = `<div style="text-align:center;padding:60px;color:var(--red)">Kupon yüklenemedi: ${err.message}<br><span style="font-size:11px;color:var(--text4)">/api/smart_coupon/all endpoint kontrol edin</span></div>`;
     });
 }
 
 
-// ─── YERLI KUPON (MODEL + AGF + KONSENSUS) ───
-function renderYerli(el){
+// ─── ESKİ YERLI KUPON (V5.1 pipeline, DEPRECATED — referans için renderYerli_legacy) ───
+function renderYerli_legacy(el){
   el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">Model + AGF pipeline calisiyor...</div>';
-  
+
   fetch("/api/yerli_kupon")
     .then(r => r.json())
     .then(data => {
@@ -478,7 +482,7 @@ function renderYerli(el){
         el.innerHTML = '<div style="text-align:center;padding:60px;color:var(--text4)">Bugun yerli yaris yok veya AGF henuz acilmadi</div>';
         return;
       }
-      
+
       let dateStr = data.date || new Date().toLocaleDateString("tr-TR",{day:"2-digit",month:"2-digit",year:"numeric"});
       let modelBadge = data.model_ok
         ? '<span class="badge" style="background:rgba(0,230,138,.1);color:var(--green);border:1px solid rgba(0,230,138,.2)">MODEL AKTIF</span>'
@@ -487,17 +491,17 @@ function renderYerli(el){
       if(data.source === 'html_only') sourceBadge = '<span class="badge" style="background:rgba(255,59,59,.1);color:var(--red);border:1px solid rgba(255,59,59,.2)">AGF 403 — HTML MOD</span>';
       else if(data.source === 'dashboard') sourceBadge = '<span class="badge" style="background:rgba(59,159,255,.1);color:var(--blue);border:1px solid rgba(59,159,255,.2)">DASHBOARD</span>';
       else if(data.source === 'proper') sourceBadge = '<span class="badge" style="background:rgba(0,230,138,.1);color:var(--green);border:1px solid rgba(0,230,138,.2)">PROPER AGF</span>';
-      
+
       let h = `<div style="max-width:1000px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
           <div>
-            <div style="font-size:20px;font-weight:800;color:#fff">6'LI GANYAN KUPON</div>
+            <div style="font-size:20px;font-weight:800;color:#fff">6'LI GANYAN KUPON (LEGACY V5.1)</div>
             <div style="font-size:12px;color:var(--text3);margin-top:4px">${dateStr} | ${data.hippodromes.length} Altili Dizi</div>
           </div>
           <div style="display:flex;gap:6px;align-items:center">
             ${modelBadge}
             ${sourceBadge}
-            <button onclick="fetch('/api/yerli_kupon/refresh').then(()=>renderYerli(document.getElementById('main')))" style="background:var(--border);border:1px solid var(--border2);color:var(--text2);padding:4px 10px;border-radius:3px;font-size:10px;cursor:pointer;font-family:var(--sans)">YENILE</button>
+            <button onclick="fetch('/api/yerli_kupon/refresh').then(()=>renderYerli_legacy(document.getElementById('main')))" style="background:var(--border);border:1px solid var(--border2);color:var(--text2);padding:4px 10px;border-radius:3px;font-size:10px;cursor:pointer;font-family:var(--sans)">YENILE</button>
             <button onclick="fetch('/api/yerli_kupon/telegram').then(r=>r.json()).then(d=>alert(d.ok?'Telegram gonderildi!':'Hata: '+(d.error||'?')))" style="background:rgba(59,159,255,.1);border:1px solid rgba(59,159,255,.2);color:var(--blue);padding:4px 10px;border-radius:3px;font-size:10px;cursor:pointer;font-family:var(--sans)">TELEGRAM</button>
           </div>
         </div>`;
@@ -695,7 +699,7 @@ Birden fazla kaynak: en yuksek ref_norm</pre></div>
 
 // ─── UI ───
 function switchView(v){view=v;document.querySelectorAll('.tab-btn').forEach(b=>{
-  let match=v==='races'?'YARIS':v==='dutch'?'DUTCH':v==='yerli'?'YERLI':v==='hybrid'?'HIBRIT':'STRAT';
+  let match=v==='races'?'YARIS':v==='dutch'?'DUTCH':v==='yerli'?'YERLI':'STRAT';
   b.classList.toggle('active',b.textContent.includes(match))});render()}
 function setRegion(r){region=r;document.querySelectorAll('.region-btn').forEach(b=>b.classList.toggle('active',b.dataset.region===r));render()}
 
