@@ -187,7 +187,7 @@ async function fetchData(){
   document.getElementById("srcBadge").textContent=D.source==="live"?"CANLI":"DEMO";
   document.getElementById("srcBadge").style.color=D.source==="live"?"var(--green)":"var(--text3)";
   document.getElementById("srcBadge").style.borderColor=D.source==="live"?"var(--green)":"var(--border2)";
-  document.getElementById("footNote").textContent=D.source==="live"?"CANLI VERI - "+new Date(D.timestamp).toLocaleTimeString("tr-TR"):"DEMO VERI";
+  document.getElementById("footNote").textContent=(D&&D.source==="live")?"CANLI VERI - "+new Date(D.timestamp).toLocaleTimeString("tr-TR"):(D?"DEMO VERI":"VERI YOK");
   render()
 }
 
@@ -432,9 +432,13 @@ function renderHybrid(el){
           Berkay karar verir. Tier: ⭐≥0.65 · ◇≥0.40 · ⚠≥0.20 · ✗<0.20. Sürpriz-gebe ayak geniş, sağlam ayak dar.
         </div>`;
       okHippos.forEach(hippo => {
-        let costColor = hippo.cost_tl < 1000 ? 'var(--green)' : hippo.cost_tl < 3000 ? 'var(--yellow)' : 'var(--red)';
-        let bankerStr = hippo.banker_count > 0 ? `<span style="color:var(--blue)">🔒 ${hippo.banker_count} banker</span>` : '';
-        let modelFailStr = hippo.model_failed > 0 ? `<span style="color:var(--yellow)">⚠ ${hippo.model_failed}/6 ayakta model veri yok</span>` : '';
+        let costTL = hippo.cost_tl || 0;
+        let combos = hippo.combos || 0;
+        let bankerCount = hippo.banker_count || 0;
+        let modelFailed = hippo.model_failed || 0;
+        let costColor = costTL < 1000 ? 'var(--green)' : costTL < 3000 ? 'var(--yellow)' : 'var(--red)';
+        let bankerStr = bankerCount > 0 ? `<span style="color:var(--blue)">🔒 ${bankerCount} banker</span>` : '';
+        let modelFailStr = modelFailed > 0 ? `<span style="color:var(--yellow)">⚠ ${modelFailed}/6 ayakta model veri yok</span>` : '';
         // Escape HTML for <pre> content + convert Telegram tags to span
         let textHtml = (hippo.text || '')
           .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
@@ -447,8 +451,8 @@ function renderHybrid(el){
               <div style="font-size:11px;color:var(--text3);margin-top:2px">rank_score ${(hippo.rank_score||0).toFixed(2)} · ${hippo.n_legs} ayak · ${bankerStr} ${modelFailStr}</div>
             </div>
             <div style="text-align:right">
-              <div style="font-size:18px;font-weight:800;font-family:var(--mono);color:${costColor}">${hippo.cost_tl.toFixed(2)} TL</div>
-              <div style="font-size:10px;color:var(--text3);font-family:var(--mono)">${hippo.combos.toLocaleString()} kombi</div>
+              <div style="font-size:18px;font-weight:800;font-family:var(--mono);color:${costColor}">${costTL.toFixed(2)} TL</div>
+              <div style="font-size:10px;color:var(--text3);font-family:var(--mono)">${combos.toLocaleString()} kombi</div>
             </div>
           </div>
           <pre style="margin:0;padding:14px 16px;font-family:var(--mono);font-size:11px;color:var(--text2);line-height:1.55;white-space:pre-wrap;background:var(--bg2);overflow-x:auto">${textHtml}</pre>
