@@ -45,8 +45,104 @@ def _load_engine():
     return _load_audit(_A73_PATH, '_a73_mod'), 'hybrid'
 
 
+def _yerli_pipeline_to_audit73_legs(hippodrome_dict, target_date, engine):
+    """Yerli pipeline çıktısının bir hippodrome dict'ini audit/73 race_legs formatına dönüştür.
+
+    Pipeline output (per hippodrome):
+      hippodrome: str, legs_summary: list of {ayak, race_number, distance, track_type,
+                                                group_name, all_horses_with_mp: [{number,name,agf_pct,model_prob,...}]}
+
+    audit/73 expects: list of (list of horse dicts with horse_number, horse_name, agf_value,
+      agf_rank, race_number, start_time, distance, track_type, group_name, race_date, hippo,
+      will_not_run, model_top3, model_top4, model_prob, tier_score, breed, tier_mark)
+    """
+    from datetime import time as _time
+    legs_summary = hippodrome_dict.get('legs_summary') or []
+    hippo_name = hippodrome_dict.get('hippodrome', '?')
+    race_legs = []
+    model_failed = 0
+    for leg in legs_summary:
+        ayak = leg.get('ayak')
+        rn = leg.get('race_number') or ayak or 0
+        dist = leg.get('distance') or 1400
+        try:
+            dist = int(str(dist).replace('m','').strip() or 1400)
+        except Exception:
+            dist = 1400
+        tt = leg.get('track_type') or 'dirt'
+        grp = leg.get('group_name') or ''
+        horses_raw = leg.get('all_horses_with_mp') or leg.get('all_horses') or []
+        if len(horses_raw) < 3: continue
+        # Sort by agf desc for rank
+        sorted_by_agf = sorted(horses_raw, key=lambda h: -(h.get('agf_pct') or 0))
+        rank_map = {h.get('number'): i+1 for i, h in enumerate(sorted_by_agf)}
+        # Breed detect
+        g_lower = grp.lower()
+        breed = 'arab' if 'arap' in g_lower else 'english'
+        year = target_date.year
+        # Check if model prob present
+        any_model = any((h.get('model_prob') or 0) > 0 for h in horses_raw)
+        if not any_model: model_failed += 1
+        horses_out = []
+        for h in horses_raw:
+            hno = h.get('number')
+            agf = float(h.get('agf_pct') or 0)
+            mp = float(h.get('model_prob') or 0)
+            # Pipeline'da top3/top4 ayrı yok; tek model_prob var. İkisini de aynı yap.
+            mt3, mt4 = mp, mp * 0.7
+            # tier_score
+            ts = engine.tier_score_continuous(breed, year, mp, agf) if any_model else 0.5
+            horses_out.append({
+                'horse_number': hno, 'horse_name': h.get('name', f'#{hno}'),
+                'agf_value': agf, 'agf_rank': rank_map.get(hno, 0),
+                'race_number': rn, 'start_time': _time(0,0),
+                'distance': dist, 'track_type': tt, 'group_name': grp,
+                'race_date': target_date, 'hippo': hippo_name,
+                'will_not_run': False, 'fixed_odds': None,
+                'model_top3': mt3, 'model_top4': mt4, 'model_prob': mp,
+                'tier_score': ts, 'tier_mark': engine.tier_marker(ts),
+                'breed': breed,
+            })
+        race_legs.append(horses_out)
+    return race_legs, model_failed
+
+
+def _all_hippo_candidates_from_pipeline(target_date, engine):
+    """Yerli pipeline çağır, audit/73 race_legs formatında candidates döner."""
+    try:
+        from dashboard.yerli_engine import run_yerli_pipeline
+    except Exception as e:
+        return [], {}, str(e)
+    try:
+        with open(engine.BUCKETS_FILE) as f: buckets_data = json.load(f)
+    except Exception:
+        buckets_data = {'baseline':{'fav_top1':0.33}, 'buckets':{}}
+    try:
+        result = run_yerli_pipeline(target_date)
+    except Exception as e:
+        return [], buckets_data, f"pipeline_error: {repr(e)[:200]}"
+    hippodromes = (result or {}).get('hippodromes') or []
+    cands = []
+    for hippo in hippodromes:
+        if hippo.get('error'): continue
+        race_legs, model_failed = _yerli_pipeline_to_audit73_legs(hippo, target_date, engine)
+        if len(race_legs) < 4: continue
+        scores = [engine.score_leg(legs, buckets_data) for legs in race_legs]
+        rank_score = engine.hippo_score(race_legs)
+        cands.append({'hippo': hippo.get('hippodrome', '?'), 'race_legs': race_legs,
+                      'scores': scores, 'rank_score': rank_score,
+                      'model_failed': model_failed})
+    cands.sort(key=lambda c: -c['rank_score'])
+    return cands, buckets_data, None
+
+
 def _all_hippo_candidates(target_date, engine, mode):
-    """Tüm hipodromlar için enrich+score (engine = audit/51, 57 veya 73)."""
+    """Tüm hipodromlar için enrich+score (engine = audit/51, 57 veya 73).
+    Hybrid: önce yerli pipeline (Railway'de çalışır), DB fallback değil."""
+    if mode == 'hybrid':
+        cands, buckets, err = _all_hippo_candidates_from_pipeline(target_date, engine)
+        if cands or err:   # pipeline result varsa kullan
+            return cands, buckets
     try:
         with open(engine.BUCKETS_FILE) as f: buckets_data = json.load(f)
     except Exception:
