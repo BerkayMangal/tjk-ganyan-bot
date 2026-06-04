@@ -1,0 +1,32 @@
+[2026-06-02T21:16:40.411790] Loading horses.csv...
+[2026-06-02T21:16:42.845872]   rows: 454,477 | races: 56,929
+[2026-06-02T21:16:42.847476]   dates: 2016-01-01 → 2026-06-02
+[2026-06-02T21:16:42.847545] Loading bettings.csv...
+[2026-06-02T21:16:42.916174]   GANYAN: 39,113 races with payout
+[2026-06-02T21:16:42.948541]   PLASE: 43,423 (race,horse) payouts
+[2026-06-02T21:16:42.959765]   GANYAN market races: 39,113
+[2026-06-02T21:16:42.959972]   PLASE market races: 21,687
+[2026-06-02T21:16:43.079159]   h with GANYAN market: 381,199
+[2026-06-02T21:16:43.079525]   h with PLASE market: 250,845
+[2026-06-02T21:16:43.135576] Split: train_val n=367,318 (47,826 races) | HOLDOUT n=87,159 (9,103 races)
+[2026-06-02T21:16:43.135765] [in_sample] start (n=367,318)
+[2026-06-02T21:16:43.988213] [in_sample] slice=all done. cumulative configs: 52 (1s)
+[2026-06-02T21:16:44.645957] [in_sample] slice=buyuk done. cumulative configs: 104 (2s)
+[2026-06-02T21:16:44.906800] [in_sample] slice=kucuk done. cumulative configs: 156 (2s)
+[2026-06-02T21:16:45.354479] [in_sample] slice=AR done. cumulative configs: 208 (2s)
+[2026-06-02T21:16:45.832905] [in_sample] slice=TB done. cumulative configs: 260 (3s)
+[2026-06-02T21:16:46.094862] [in_sample] slice=field_small done. cumulative configs: 310 (3s)
+[2026-06-02T21:16:46.521883] [in_sample] slice=field_med done. cumulative configs: 362 (3s)
+[2026-06-02T21:16:46.819213] [in_sample] slice=field_large done. cumulative configs: 414 (4s)
+[2026-06-02T21:16:46.819278] [in_sample] DONE — 414 configs in 4s
+[2026-06-02T21:16:46.828152] [holdout] start (n=87,159)
+[2026-06-02T21:16:47.061147] [holdout] slice=all done. cumulative configs: 52 (0s)
+[2026-06-02T21:16:47.246853] [holdout] slice=buyuk done. cumulative configs: 104 (0s)
+[2026-06-02T21:16:47.313225] [holdout] slice=kucuk done. cumulative configs: 155 (0s)
+[2026-06-02T21:16:47.440310] [holdout] slice=AR done. cumulative configs: 207 (1s)
+[2026-06-02T21:16:47.573805] [holdout] slice=TB done. cumulative configs: 259 (1s)
+[2026-06-02T21:16:47.664612] [holdout] slice=field_small done. cumulative configs: 310 (1s)
+[2026-06-02T21:16:47.792767] [holdout] slice=field_med done. cumulative configs: 362 (1s)
+[2026-06-02T21:16:47.879442] [holdout] slice=field_large done. cumulative configs: 412 (1s)
+[2026-06-02T21:16:47.879500] [holdout] DONE — 412 configs in 1s
+[2026-06-02T21:16:47.881945] ALL DONE.

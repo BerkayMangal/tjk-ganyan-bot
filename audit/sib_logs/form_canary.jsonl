@@ -1,0 +1,8 @@
+{"feature": "avg_finish_last3", "n_non_null": 417237, "n_total": 417779, "mean": 5.711611146662449, "median": 5.333333333333333}
+{"feature": "avg_finish_last5", "n_non_null": 417532, "n_total": 417779, "mean": 5.702680273607771, "median": 5.4}
+{"feature": "win_rate_last10", "n_non_null": 417649, "n_total": 417779, "mean": 0.10629280123466629, "median": 0.1}
+{"feature": "top3_rate_last10", "n_non_null": 417649, "n_total": 417779, "mean": 0.3191540348284408, "median": 0.3}
+{"feature": "days_since_last_race", "n_non_null": 391134, "n_total": 417779, "mean": 27.728200565535086, "median": 15.0}
+{"feature": "races_in_last_180d", "n_non_null": 417779, "n_total": 417779, "mean": 6.017734256628504, "median": 6.0}
+{"breed": "arab", "target": "top1", "auc_agf": 0.7124867098575356, "auc_model_baseline": 0.6763086007007371, "auc_model_with_form": 0.6995472231600693, "delta_form": 0.02323862245933228, "delta_vs_agf_baseline": -0.03617810915679853, "delta_vs_agf_with_form": -0.012939486697466251, "verdict": "OK (form AGF ye yaklastirdi)"}
+{"breed": "english", "target": "top1", "auc_agf": 0.7253452343709847, "auc_model_baseline": 0.6983233035536506, "auc_model_with_form": 0.7230818835408328, "delta_form": 0.024758579987182228, "delta_vs_agf_baseline": -0.027021930817334172, "delta_vs_agf_with_form": -0.0022633508301519445, "verdict": "OK (form AGF ye yaklastirdi)"}

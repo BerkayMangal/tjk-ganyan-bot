@@ -1,0 +1,12 @@
+{"year": 2025, "breed": "arab", "target": "top2", "n": 30403, "auc_model": 0.7131841985574052, "auc_agf_rank": 0.7024604988587468, "auc_agf_harville": 0.6008802237574781, "d_vs_harville": 0.11230397479992715}
+{"year": 2025, "breed": "arab", "target": "top3", "n": 30403, "auc_model": 0.7174894169168065, "auc_agf_rank": 0.6967710413884701, "auc_agf_harville": 0.6117746013168386, "d_vs_harville": 0.10571481559996787}
+{"year": 2025, "breed": "arab", "target": "top4", "n": 30403, "auc_model": 0.7269537321736617, "auc_agf_rank": 0.6958305667419614, "auc_agf_harville": 0.626437143995294, "d_vs_harville": 0.10051658817836762}
+{"year": 2025, "breed": "english", "target": "top2", "n": 32862, "auc_model": 0.7283485596902473, "auc_agf_rank": 0.7118997456000979, "auc_agf_harville": 0.6036702106673577, "d_vs_harville": 0.12467834902288955}
+{"year": 2025, "breed": "english", "target": "top3", "n": 32862, "auc_model": 0.7344550581306741, "auc_agf_rank": 0.7111775901379256, "auc_agf_harville": 0.6218682254697778, "d_vs_harville": 0.11258683266089631}
+{"year": 2025, "breed": "english", "target": "top4", "n": 32862, "auc_model": 0.7526594278556658, "auc_agf_rank": 0.7151942123659318, "auc_agf_harville": 0.64199470252532, "d_vs_harville": 0.11066472533034577}
+{"year": 2026, "breed": "arab", "target": "top2", "n": 11597, "auc_model": 0.6980284105050923, "auc_agf_rank": 0.7204707490572155, "auc_agf_harville": 0.6189544784127687, "d_vs_harville": 0.0790739320923236}
+{"year": 2026, "breed": "arab", "target": "top3", "n": 11597, "auc_model": 0.707793380477574, "auc_agf_rank": 0.7209083276839874, "auc_agf_harville": 0.631852842184309, "d_vs_harville": 0.07594053829326497}
+{"year": 2026, "breed": "arab", "target": "top4", "n": 11597, "auc_model": 0.7140316369961083, "auc_agf_rank": 0.7189014016246522, "auc_agf_harville": 0.6424259406538216, "d_vs_harville": 0.07160569634228664}
+{"year": 2026, "breed": "english", "target": "top2", "n": 12711, "auc_model": 0.7276381988606734, "auc_agf_rank": 0.7330573830080009, "auc_agf_harville": 0.6274998888171247, "d_vs_harville": 0.10013831004354867}
+{"year": 2026, "breed": "english", "target": "top3", "n": 12711, "auc_model": 0.7308616519609057, "auc_agf_rank": 0.7278367784364537, "auc_agf_harville": 0.6453351517594004, "d_vs_harville": 0.08552650020150532}
+{"year": 2026, "breed": "english", "target": "top4", "n": 12711, "auc_model": 0.7457737049926185, "auc_agf_rank": 0.7312902644418703, "auc_agf_harville": 0.6660417444168547, "d_vs_harville": 0.07973196057576382}

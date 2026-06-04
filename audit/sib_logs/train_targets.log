@@ -1,0 +1,36 @@
+[2026-06-03T08:05:08.489629] Loading dataset...
+[2026-06-03T08:05:12.849464]   rows: 244,228 | breed: AR=115,866 TB=128,362
+[2026-06-03T08:05:12.908337]   split: train n=116,779  val n=39,876  test n=87,573
+[2026-06-03T08:05:12.955041]   breed=arab: train 54,807 | val 19,059 | test 42,000
+[2026-06-03T08:05:14.236142]   target=top1 breed=arab (pos_rate train=0.096)
+[2026-06-03T08:05:18.766388]     top1/arab: AUC 0.6982 Brier 0.0869 LogLoss 0.3048
+[2026-06-03T08:05:18.880362]     [HOLDOUT] AUC 0.6762 Brier 0.0851
+[2026-06-03T08:05:18.890393]   target=top2 breed=arab (pos_rate train=0.192)
+[2026-06-03T08:05:23.233742]     top2/arab: AUC 0.6986 Brier 0.1480 LogLoss 0.4613
+[2026-06-03T08:05:23.335251]     [HOLDOUT] AUC 0.6859 Brier 0.1467
+[2026-06-03T08:05:23.345044]   target=top3 breed=arab (pos_rate train=0.289)
+[2026-06-03T08:05:27.739820]     top3/arab: AUC 0.7078 Brier 0.1875 LogLoss 0.5532
+[2026-06-03T08:05:27.848604]     [HOLDOUT] AUC 0.6932 Brier 0.1880
+[2026-06-03T08:05:27.858585]   target=top4 breed=arab (pos_rate train=0.386)
+[2026-06-03T08:05:32.141170]     top4/arab: AUC 0.7184 Brier 0.2066 LogLoss 0.5977
+[2026-06-03T08:05:32.244600]     [HOLDOUT] AUC 0.7026 Brier 0.2116
+[2026-06-03T08:05:32.255225]   target=top5 breed=arab (pos_rate train=0.482)
+[2026-06-03T08:05:36.460394]     top5/arab: AUC 0.7291 Brier 0.2093 LogLoss 0.6037
+[2026-06-03T08:05:36.561895]     [HOLDOUT] AUC 0.7234 Brier 0.2126
+[2026-06-03T08:05:36.705311]   breed=english: train 61,972 | val 20,817 | test 45,573
+[2026-06-03T08:05:38.244053]   target=top1 breed=english (pos_rate train=0.109)
+[2026-06-03T08:05:42.774728]     top1/english: AUC 0.7029 Brier 0.0964 LogLoss 0.3298
+[2026-06-03T08:05:42.902329]     [HOLDOUT] AUC 0.6993 Brier 0.0920
+[2026-06-03T08:05:42.912240]   target=top2 breed=english (pos_rate train=0.219)
+[2026-06-03T08:05:47.388452]     top2/english: AUC 0.7039 Brier 0.1610 LogLoss 0.4919
+[2026-06-03T08:05:47.503610]     [HOLDOUT] AUC 0.7077 Brier 0.1542
+[2026-06-03T08:05:47.514039]   target=top3 breed=english (pos_rate train=0.329)
+[2026-06-03T08:05:52.191090]     top3/english: AUC 0.7136 Brier 0.1978 LogLoss 0.5777
+[2026-06-03T08:05:52.301184]     [HOLDOUT] AUC 0.7135 Brier 0.1925
+[2026-06-03T08:05:52.312044]   target=top4 breed=english (pos_rate train=0.440)
+[2026-06-03T08:05:56.946485]     top4/english: AUC 0.7284 Brier 0.2093 LogLoss 0.6046
+[2026-06-03T08:05:57.070088]     [HOLDOUT] AUC 0.7331 Brier 0.2058
+[2026-06-03T08:05:57.079331]   target=top5 breed=english (pos_rate train=0.549)
+[2026-06-03T08:06:02.051772]     top5/english: AUC 0.7512 Brier 0.1970 LogLoss 0.5743
+[2026-06-03T08:06:02.233298]     [HOLDOUT] AUC 0.7560 Brier 0.1999
+[2026-06-03T08:06:02.246156] DONE — model/trained_targets/

@@ -5933,10 +5933,31 @@ def run_daily_recap(target_date_str=None, send_telegram=False):
 
         snap = _load_snapshot_v7(target_date_str)
         if snap is None:
+            # Snapshot yok (DB Supabase boş veya file ephemeral) — yine de SONUÇLAR'ı çek
+            # ve sade retro mesajı gönder. Berkay en azından "bugün ne çıktı"yı görsün.
+            try:
+                from audit import _recap_v2_helpers as _r2
+            except Exception:
+                _r2 = None
+            if _r2 is None:
+                # Inline import (audit script doğrudan)
+                import importlib.util as _ilu
+                _spec = _ilu.spec_from_file_location(
+                    "_r2_inline",
+                    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                 "audit", "47_recap_v2.py"))
+                _r2 = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_r2)
+            rows_, bets_ = _r2.fetch_results(target_dt)
+            msg_ = _r2.build_recap_message(target_dt, rows_, bets_)
+            telegram_sent = False
+            if send_telegram:
+                telegram_sent = _r2.send_telegram(msg_, dry_run=False)
             return {
-                "status": "no_snapshot",
+                "status": "no_snapshot_fallback_results",
                 "date": target_date_str,
-                "message": "Bu tarih için kupon snapshot'ı yok.",
+                "result_rows": len(rows_) if rows_ else 0,
+                "telegram_sent": telegram_sent,
+                "message": msg_,
             }
 
         raw_results = []

@@ -1,0 +1,18 @@
+{"analysis": "intra_day_drift", "n": 12096, "changed_count": 12060, "changed_pct": 0.9970238095238095, "drift_mean": 23.226133432539683, "drift_median": 11.0, "drift_std": 27.197512897959903}
+{"analysis": "sib_vs_pari", "n_valid_pari": 9223, "stale_low_count": 24, "stale_high_count": 9198, "gap_mean": -0.8418547179163248, "gap_median": -0.9078341013824884}
+{"analysis": "overround", "first_mean": 11.33351150081237, "first_median": 10.0, "last_mean": 0.6782775209284375, "last_median": 0.3702777777777777, "n_races": 973}
+{"analysis": "odds_band_calib", "lo": 1.0, "hi": 1.5, "n": 11986, "hit_rate": 0.08026030368763558, "implied": 0.999980746768666, "roi": -0.9197396963123644, "ci_low": -0.9246621057900885, "ci_high": -0.9147338561655265}
+{"analysis": "odds_band_calib", "lo": 1.5, "hi": 2.0, "n": 6, "hit_rate": 0.6666666666666666, "implied": 0.581994473835081, "roi": 0.14166666666666683, "ci_low": -0.4583333333333333, "ci_high": 0.7416666666666667}
+{"analysis": "odds_band_calib", "lo": 2.0, "hi": 3.0, "n": 4, "hit_rate": 0.5, "implied": 0.3924358527806804, "roi": 0.17500000000000004, "ci_low": -1.0, "ci_high": 1.35}
+{"analysis": "odds_band_calib", "lo": 3.0, "hi": 5.0, "n": 14, "hit_rate": 0.07142857142857142, "implied": 0.28428454715219426, "roi": -0.7428571428571429, "ci_low": -1.0, "ci_high": -0.22857142857142856}
+{"analysis": "odds_band_calib", "lo": 5.0, "hi": 10.0, "n": 17, "hit_rate": 0.17647058823529413, "implied": 0.13885922804607925, "roi": 0.0, "ci_low": -1.0, "ci_high": 1.1183823529411658}
+{"analysis": "odds_band_calib", "lo": 10.0, "hi": 30.0, "n": 38, "hit_rate": 0.02631578947368421, "implied": 0.07228487886382623, "roi": -0.736842105263158, "ci_low": -1.0, "ci_high": -0.21052631578947367}
+{"analysis": "odds_band_calib", "lo": 30.0, "hi": 200.0, "n": 31, "hit_rate": 0.0, "implied": 0.018978494623655914, "roi": -1.0, "ci_low": -1.0, "ci_high": -1.0}
+{"analysis": "stale_magnitude", "lo": 0, "hi": 0.5, "n": 8658, "hit_rate": 0.06976206976206976, "roi": -0.9280434280434281, "ci_low": -0.9342226842226842, "ci_high": -0.9215176715176715}
+{"analysis": "stale_magnitude", "lo": 0.5, "hi": 0.8, "n": 400, "hit_rate": 0.2675, "roi": -0.716, "ci_low": -0.7659999999999999, "ci_high": -0.6615000000000001}
+{"analysis": "stale_magnitude", "lo": 0.8, "hi": 0.95, "n": 74, "hit_rate": 0.24324324324324326, "roi": -0.7567567567567568, "ci_low": -0.8513513513513513, "ci_high": -0.6621621621621622}
+{"analysis": "stale_magnitude", "lo": 0.95, "hi": 1.05, "n": 68, "hit_rate": 0.27941176470588236, "roi": -0.7205882352941176, "ci_low": -0.8235294117647058, "ci_high": -0.6176470588235294}
+{"analysis": "power", "target_roi": 0.05, "sd_assumed": 0.5267234511439209, "n_required": 872}
+{"analysis": "power", "target_roi": 0.1, "sd_assumed": 0.5267234511439209, "n_required": 218}
+{"analysis": "power", "target_roi": 0.2, "sd_assumed": 0.5267234511439209, "n_required": 55}
+{"analysis": "candidate_profile_v1", "desc": "stale>1.05 & sib 2-10", "n": 6, "hit_rate": 0.16666666666666666, "roi": -0.6333333333333333, "ci_low": -1.0, "ci_high": 0.10000000000000009}

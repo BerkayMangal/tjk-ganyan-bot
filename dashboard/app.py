@@ -384,6 +384,54 @@ try:
     scheduler.add_job(_scheduled_v7_recap, 'cron',
                       hour=RECAP_HOUR, minute=RECAP_MINUTE,
                       id='v7_daily_recap', replace_existing=True)
+    # SIRA 5 — Smart coupon scheduler (env TJK_SMART_COUPON_AUTO=1 ile aktif).
+    # Her 15 dakikada bir audit/52_hourly_refresh çalışır; T-60/-30/-15'te kupon
+    # alır/karşılaştırır, değişiklik varsa Telegram'a yollar.
+    if os.environ.get("TJK_SMART_COUPON_AUTO", "0") == "1":
+        def _scheduled_smart_coupon():
+            try:
+                import subprocess
+                root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                subprocess.run(["python3", os.path.join(root, "audit", "52_hourly_refresh.py")],
+                               cwd=root, timeout=300, check=False)
+            except Exception as e:
+                app.logger.warning(f"[smart_coupon] scheduled fail: {e}")
+        scheduler.add_job(_scheduled_smart_coupon, 'cron', minute='*/15',
+                          id='smart_coupon_hourly', replace_existing=True)
+        app.logger.info("⏰ Smart coupon hourly aktif (TJK_SMART_COUPON_AUTO=1)")
+
+    # Sabah günlük altılı analizi (audit/57 Public-based, env TJK_DAILY_COUPON=1, default ON)
+    if os.environ.get("TJK_DAILY_COUPON", "1") == "1":
+        DAILY_HOUR = int(os.environ.get("TJK_DAILY_COUPON_HOUR", "9"))
+        DAILY_MIN = int(os.environ.get("TJK_DAILY_COUPON_MINUTE", "0"))
+        def _scheduled_daily_coupon():
+            try:
+                from datetime import date as _date
+                from dashboard.smart_coupon_service import build_all_hippos, send_telegram
+                today = _date.today()
+                # Berkay direktif: TÜM hipodromlar → her birine 1 kupon
+                all_results = build_all_hippos(today)
+                ok_count = sum(1 for r in all_results if r.get('status') == 'ok')
+                if ok_count == 0:
+                    app.logger.warning(f"[daily_coupon] no hippo coupons built")
+                    return
+                # Tek genel header + her hippo için ayrı mesaj
+                header_text = (f"📊 <b>GÜNLÜK ANALİZ — {today}</b>\n"
+                               f"{ok_count} hipodrom · her birine 1 kupon · HİBRİT mod\n"
+                               f"⚠ Analiz aracı, Berkay karar verir.")
+                send_telegram(header_text)
+                for r in all_results:
+                    if r.get('status') != 'ok': continue
+                    tg = send_telegram(r['text'])
+                    app.logger.info(f"[daily_coupon] {r['hippo']} · {r['combos']:,} kombi · "
+                                    f"{r['cost_tl']:.0f} TL · model_fail={r.get('model_failed',0)} · "
+                                    f"TG={tg.get('sent')}")
+            except Exception as e:
+                app.logger.warning(f"[daily_coupon] fail: {e}")
+        scheduler.add_job(_scheduled_daily_coupon, 'cron',
+                          hour=DAILY_HOUR, minute=DAILY_MIN,
+                          id='daily_smart_coupon', replace_existing=True)
+        app.logger.info(f"⏰ Daily smart coupon aktif — {DAILY_HOUR:02d}:{DAILY_MIN:02d} İstanbul")
     scheduler.start()
     SCHEDULER_OK = True
     app.logger.info(
@@ -649,6 +697,85 @@ def refresh_yerli():
         _yerli_cache['data'] = None
         _yerli_cache['ts'] = None
     return get_yerli_kupon()
+
+
+# SIRA 5 — Smart coupon endpoint (audit/51 wrapper via smart_coupon_service)
+@app.route("/api/smart_coupon")
+@app.route("/api/smart_coupon/<date_str>")
+def get_smart_coupon(date_str=None):
+    from datetime import date as _date
+    from flask import request as _req
+    try:
+        target = _date.fromisoformat(date_str) if date_str else _date.today()
+    except Exception:
+        return jsonify({'status':'bad_date', 'date': date_str}), 400
+    try:
+        from dashboard.smart_coupon_service import build_single_coupon, send_telegram
+    except Exception as e:
+        return jsonify({'status':'import_error', 'reason': repr(e)[:200]}), 500
+    result = build_single_coupon(target)
+    if _req.args.get('send') == '1' and result.get('status') == 'ok':
+        tg = send_telegram(result.get('text', ''))
+        result['telegram'] = tg
+    # text uzun; eğer ?text=0 ise çıkar
+    if _req.args.get('text') == '0' and 'text' in result:
+        del result['text']
+    return jsonify(result)
+
+
+@app.route("/api/foreign_races")
+def get_foreign_races():
+    """Placeholder for dashboard/index.html yabancı yarış paneli.
+    audit/64 status: TJK SPA + AGF yok yabancı için. Betfair API gerek.
+    Şu an: tjk_foreign.fetch_foreign_races() çağırır; eğer veri yoksa info mesajı.
+    """
+    try:
+        from scrapers.tjk_foreign import fetch_foreign_races
+        from datetime import datetime as _dt
+        tarih = _dt.now().strftime("%d/%m/%Y")
+        tracks = fetch_foreign_races(tarih) or []
+    except Exception as e:
+        tracks = []
+        err = repr(e)[:200]
+    else:
+        err = None
+    if not tracks:
+        return jsonify({
+            'status': 'no_data',
+            'tracks': [],
+            'message': ('TJK yabancı yarış endpoint SPA (audit/64 status raporu). '
+                         'Betfair Exchange API entegrasyonu gerek. '
+                         'Detay: audit/reports/HTML_INVENTORY.md'),
+            'error': err,
+        })
+    return jsonify({'status': 'ok', 'tracks': tracks})
+
+
+@app.route("/api/smart_coupon/all/<date_str>")
+def get_smart_coupon_all(date_str):
+    from datetime import date as _date
+    from flask import request as _req
+    try:
+        target = _date.fromisoformat(date_str)
+    except Exception:
+        return jsonify({'status':'bad_date'}), 400
+    try:
+        from dashboard.smart_coupon_service import build_all_hippos, send_telegram
+    except Exception as e:
+        return jsonify({'status':'import_error', 'reason': repr(e)[:200]}), 500
+    hippos = build_all_hippos(target)
+    # ?send=1 → her hipodrom için ayrı Telegram mesajı
+    if _req.args.get('send') == '1':
+        ok = sum(1 for r in hippos if r.get('status') == 'ok')
+        header = (f"📊 <b>GÜNLÜK ANALİZ — {date_str}</b>\n"
+                  f"{ok} hipodrom · her birine 1 kupon · HİBRİT mod\n"
+                  f"⚠ Analiz aracı, Berkay karar verir.")
+        send_telegram(header)
+        for r in hippos:
+            if r.get('status') == 'ok':
+                tg = send_telegram(r.get('text', ''))
+                r['telegram'] = tg
+    return jsonify({'date': date_str, 'hippos': hippos})
 
 @app.route("/api/yerli_kupon/telegram")
 def send_yerli_telegram():
