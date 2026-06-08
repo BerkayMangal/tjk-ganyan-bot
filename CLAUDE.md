@@ -257,3 +257,74 @@ Audit dizini: `audit/01_data_quality_report.py`, `audit/02_prod_db_audit.py`,
 - Önce plan, sonra kod. Plan onayı olmadan dosya yazma.
 - Soru sor, varsayım yapma. Belirsizse dur, kullanıcıya danış.
 - Yeni dosya `audit/` klasörü altında: `audit/01_*.py`, `audit/reports/*.md`
+
+---
+
+## 2026-06 — HİBRİT KUPON PROD (yeni)
+
+**Berkay direktifi (2026-06-04):** YERLI KUPON sekmesi canlı hibrit'e dönüştürüldü.
+audit/73_hybrid_smart_coupon.py prod'da default mode. Public AGF top-k seçim + Model
+tier_score etiket/filter + sürpriz-gebe özet.
+
+### Aktif Akış
+- **09:00 İst** → tüm hipodromlar için ayrı kupon Telegram (audit/73 + smart_coupon_service)
+- **22:00 İst** → run_daily_recap retro Telegram
+- **HTML YERLI KUPON sekmesi** → /api/smart_coupon/all/<date> hibrit kart
+- **TELEGRAM butonu** → ?send=1 ile tüm hipodromlar Telegram'a
+
+### Kanıtlanmış Sonuçlar (kalıcı kayıt)
+- **TR pari-mutuel YAPISAL -EV** (audit/67 gerçek payout, tüm bahis tipleri)
+- **HK pari-mutuel da YAPISAL -EV** (audit/71 eprochasson HK 2016-2018)
+- **Model AGF Public'i geçemiyor** (audit/56 paired McNemar, her segment p<0.0001)
+- **Plase reverse strategy ÇÜRÜTÜLDÜ** (audit/74, tüm rank -EV)
+- **fixed_odds (SIB) yetersiz** (audit/16, %31 dolu, edge ölçülemez)
+- **F bug yanlış alarm** (audit/reports/F_BUG_FALSE_ALARM.md, AGF kaynakları aslında uyumlu)
+
+### Çürütülen Hipotezler (DEPRECATED — tekrar deneme)
+- audit/60 plase proxy → audit/66'da çürütüldü
+- audit/65 plase tool → audit/60'a bağlı yanılgı
+- audit/62 V3 mikro altılı +%472 → proxy varsayım, gerçek ölçüm yok
+- audit/67 ÜÇLÜ +%292 → match logic bug (sıralı/sırasız)
+
+### Tek Geriye Kalan Upside Yolu
+**Betfair Exchange API** (Berkay account/key alacak):
+- Bookmaker exchange odds (AGF-bypass, pari-mutuel duvarı yok)
+- Takeout %2-5 (TR/HK %17-22 yerine)
+- Cross-market arbitrage Telegram alarm (otomatik bahis YOK, decision support)
+- audit/72 framework hazır (audit/71'i adapte ederiz)
+
+### Env Variables (Railway)
+```
+TJK_COUPON_MODE=hybrid           # default; public/model override mümkün
+TJK_DAILY_COUPON=1               # default ON
+TJK_DAILY_COUPON_HOUR=9          # sabah kupon
+V7_RECAP_HOUR=22                 # akşam retro
+TJK_SMART_COUPON_AUTO=0          # T-5/15/30/60 hourly refresh (opsiyonel)
+TJK_MEASURE_DB_URL=<supabase>    # snapshot persistence (Phase 1A.5 migration apply gerek)
+TELEGRAM_BOT_TOKEN=<x>
+TELEGRAM_CHAT_ID=<y>
+```
+
+### Yeni Audit Dosyaları (47-75)
+- 47-50: recap/v2 fallback, kupon cards iteration
+- 51: single smart coupon (model-based, deprecated)
+- 52: hourly refresh T-60/-30/-15/-5
+- 53: continuous tier_score (audit/53)
+- 54: smart coupon backtest (proxy)
+- 56: model vs public vs random paired (audit/56 — kritik)
+- 57: public smart coupon (model-disabled, mevcut altılı)
+- 58: tarihsel sürpriz haritası
+- 59: public backtest (n=850 altılı, %33 hit)
+- 60: plase surprise (DEPRECATED, F bug)
+- 61: carryover (data yetersiz)
+- 62: small budget (proxy)
+- 63: mix band profile (proxy)
+- 65: plase tool (DEPRECATED)
+- 66: plase REAL payout (-22% ROI)
+- 67: combo real payout (tüm -EV)
+- 67b: ÜÇLÜ sanity check (bug bulmuş)
+- 70/71: HK Benter feasibility
+- 73: **HİBRİT smart coupon** (prod default)
+- 74: plase reverse (çürütüldü)
+- 75 (pending): alpha hunt 10 signal
+- 76 (pending): live signal applicator

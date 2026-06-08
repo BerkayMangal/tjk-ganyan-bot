@@ -22,6 +22,15 @@ logger = logging.getLogger(__name__)
 
 ENV_DB_URL = "TJK_MEASURE_DB_URL"
 CONNECT_TIMEOUT = 10
+_FAIL_WARNED = set()   # log spam azalt: aynı hata türü için sadece 1 kez warn
+
+
+def _warn_once(key: str, msg: str, *args) -> None:
+    if key in _FAIL_WARNED: return
+    _FAIL_WARNED.add(key)
+    logger.warning(msg, *args)
+
+
 VALID_EVENT_TYPES = {
     "kupon_generated",
     "shadow_validation",
@@ -70,7 +79,7 @@ def write_event(
     """
     url = _db_url()
     if not url:
-        logger.warning("event_store: %s not set — write_event('%s') no-op", ENV_DB_URL, event_type)
+        _warn_once("no_url_write", "event_store: %s not set — write_event('%s') no-op (subsequent silenced)", ENV_DB_URL, event_type)
         return False
 
     if event_type not in VALID_EVENT_TYPES:
@@ -81,7 +90,7 @@ def write_event(
         import psycopg2
         from psycopg2.extras import Json
     except ImportError as e:
-        logger.warning("event_store: psycopg2 missing: %s", e)
+        _warn_once("psycopg2_missing", "event_store: psycopg2 missing: %s", e)
         return False
 
     conn = None
@@ -97,7 +106,9 @@ def write_event(
             )
         return True
     except Exception as e:
-        logger.warning("event_store: write_event('%s') failed: %s", event_type, repr(e)[:140])
+        _warn_once(f"write_event:{event_type}",
+                   "event_store: write_event('%s') failed: %s (subsequent identical errors silenced)",
+                   event_type, repr(e)[:140])
         return False
     finally:
         if conn is not None:
@@ -115,14 +126,14 @@ def read_events(
     """Read recent events of a type (newest first). Returns [] on no-op/failure."""
     url = _db_url()
     if not url:
-        logger.warning("event_store: %s not set — read_events('%s') → []", ENV_DB_URL, event_type)
+        _warn_once("no_url_read", "event_store: %s not set — read_events('%s') → [] (subsequent silenced)", ENV_DB_URL, event_type)
         return []
 
     try:
         import psycopg2
         from psycopg2.extras import RealDictCursor
     except ImportError as e:
-        logger.warning("event_store: psycopg2 missing: %s", e)
+        _warn_once("psycopg2_missing", "event_store: psycopg2 missing: %s", e)
         return []
 
     conn = None
@@ -143,7 +154,7 @@ def read_events(
                 )
             return [dict(r) for r in cur.fetchall()]
     except Exception as e:
-        logger.warning("event_store: read_events('%s') failed: %s", event_type, repr(e)[:140])
+        _warn_once(f"read_events:{event_type}", "event_store: read_events('%s') failed: %s (subsequent silenced)", event_type, repr(e)[:140])
         return []
     finally:
         if conn is not None:
@@ -172,7 +183,7 @@ def load_daily_snapshot(date_iso: str) -> Optional[dict]:
         import psycopg2
         from psycopg2.extras import RealDictCursor
     except ImportError as e:
-        logger.warning("event_store: psycopg2 missing: %s", e)
+        _warn_once("psycopg2_missing", "event_store: psycopg2 missing: %s", e)
         return None
     conn = None
     try:
@@ -190,8 +201,9 @@ def load_daily_snapshot(date_iso: str) -> Optional[dict]:
             pl = row.get("payload")
             return dict(pl) if pl else None
     except Exception as e:
-        logger.warning("event_store: load_daily_snapshot('%s') failed: %s",
-                       date_iso, repr(e)[:140])
+        _warn_once("load_daily_snapshot",
+                   "event_store: load_daily_snapshot('%s') failed: %s (subsequent silenced)",
+                   date_iso, repr(e)[:140])
         return None
     finally:
         if conn is not None:
@@ -229,7 +241,7 @@ def bulk_load_horse_derece(at_adis: list, max_age_hours: int = 24) -> dict:
         import psycopg2
         from psycopg2.extras import RealDictCursor
     except ImportError as e:
-        logger.warning("event_store: psycopg2 missing: %s", e)
+        _warn_once("psycopg2_missing", "event_store: psycopg2 missing: %s", e)
         return out
     conn = None
     try:
@@ -275,7 +287,7 @@ def load_horse_derece(at_adi: str, max_age_hours: int = 24) -> Optional[list]:
         import psycopg2
         from psycopg2.extras import RealDictCursor
     except ImportError as e:
-        logger.warning("event_store: psycopg2 missing: %s", e)
+        _warn_once("psycopg2_missing", "event_store: psycopg2 missing: %s", e)
         return None
     conn = None
     try:

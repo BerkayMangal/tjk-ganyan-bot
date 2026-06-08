@@ -27,3 +27,6 @@ audit/logs/
 .DS_Store
 Thumbs.db
 catboost_info/
+review/
+review.zip
+/tmp_*
