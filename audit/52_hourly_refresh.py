@@ -26,7 +26,7 @@ from collections import defaultdict
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-REFRESH_POINTS_MIN = [60, 30, 15]   # T-60, T-30, T-15
+REFRESH_POINTS_MIN = [60, 30, 15, 5]   # T-60, T-30, T-15, T-5 (closing)
 TOL_MIN = 7                          # ±7 dk tolerans (15dk cron çakıştırması için yeterli)
 SNAPSHOT_DIR = os.path.join(ROOT, 'data', 'coupons')
 
@@ -83,7 +83,27 @@ def matches_refresh_point(first_start_time, now_dt):
 
 
 def take_snapshot(target_date, hippo_like):
-    """audit/51 mantığı ile snapshot al."""
+    """smart_coupon_service (hibrit mode default) ile snapshot al. Hipodrom filter."""
+    from dashboard.smart_coupon_service import build_all_hippos
+    all_results = build_all_hippos(target_date)
+    # Hipodrom filter
+    hippo_lower = hippo_like.lower()
+    matched = [r for r in all_results
+               if r.get('status') == 'ok' and hippo_lower in r.get('hippo','').lower()]
+    if not matched: return None
+    r = matched[0]
+    return {
+        'ts_utc': datetime.utcnow().isoformat(),
+        'date': str(target_date), 'hippo': r.get('hippo'),
+        'combos': r.get('combos'), 'cost_tl': r.get('cost_tl'),
+        'mode': r.get('mode'), 'n_legs': r.get('n_legs'),
+        'banker_count': r.get('banker_count'), 'model_failed': r.get('model_failed'),
+        'text': r.get('text', '')[:5000],   # Truncate
+    }
+
+
+def _take_snapshot_legacy(target_date, hippo_like):
+    """ESKİ audit/51 mantığı (yedek, kullanılmıyor)."""
     sys.path.insert(0, os.path.join(ROOT, 'audit'))
     import importlib.util
     spec = importlib.util.spec_from_file_location("a51",
@@ -139,7 +159,35 @@ def take_snapshot(target_date, hippo_like):
 
 
 def diff_snapshots(old, new):
-    """İki snapshot karşılaştır → değişiklik listesi."""
+    """İki snapshot karşılaştır → değişiklik listesi (yeni format: text + meta)."""
+    if old is None:
+        return ["📍 İlk snapshot — diff yok"]
+    diffs = []
+    if old.get('combos') != new.get('combos'):
+        diffs.append(f"💰 Kombi değişti: {old.get('combos',0):,} → {new.get('combos',0):,} "
+                     f"({old.get('cost_tl', 0):.2f} → {new.get('cost_tl', 0):.2f} TL)")
+    if (old.get('banker_count', 0) != new.get('banker_count', 0)):
+        diffs.append(f"🔒 Banker sayısı: {old.get('banker_count',0)} → {new.get('banker_count',0)}")
+    if (old.get('model_failed', 0) != new.get('model_failed', 0)):
+        diffs.append(f"⚠ Model fail ayak: {old.get('model_failed',0)} → {new.get('model_failed',0)}")
+    # Text farkı satır bazlı
+    old_text = old.get('text', '')
+    new_text = new.get('text', '')
+    if old_text != new_text:
+        old_lines = set(old_text.split('\n'))
+        new_lines = set(new_text.split('\n'))
+        added = new_lines - old_lines
+        removed = old_lines - new_lines
+        # Sadece at içeren satırlara bak (filter)
+        at_added = [l for l in added if '#' in l and 'AGF' in l]
+        at_removed = [l for l in removed if '#' in l and 'AGF' in l]
+        if at_added or at_removed:
+            diffs.append(f"🔀 At değişikliği: +{len(at_added)} -{len(at_removed)}")
+    return diffs if diffs else ["✓ Hiç değişiklik yok (state stable)"]
+
+
+def _diff_snapshots_legacy(old, new):
+    """Eski format diff (legs detayı)."""
     if old is None:
         return ["📍 İlk snapshot — diff yok"]
     diffs = []
