@@ -87,10 +87,14 @@ def _yerli_pipeline_to_audit73_legs(hippodrome_dict, target_date, engine):
         for h in horses_raw:
             hno = h.get('number')
             agf = float(h.get('agf_pct') or 0)
-            mp = float(h.get('model_prob') or 0)
-            # Pipeline'da top3/top4 ayrı yok; tek model_prob var. İkisini de aynı yap.
-            mt3, mt4 = mp, mp * 0.7
-            # tier_score
+            # Pipeline model_prob YÜZDE (0-100, race-sum≈100). audit/73 render() ve
+            # tier_score_continuous 0-1 olasılık bekliyor → 100'e böl.
+            mp_pct = float(h.get('model_prob') or 0)
+            mp = mp_pct / 100.0 if mp_pct > 1.0 else mp_pct
+            # NOT: pipeline'da yalnızca model_prob (top-1) var. Gerçek top3/top4 modelleri
+            # (model/trained_targets_v4/top{3,4}/) Taydex features bekliyor — Railway'de
+            # data yok. mt3/mt4 alanlarını model_prob ile DOLDURMUYORUZ (sahte olmasın);
+            # İLK 3 / İLK 4 mesajı render()'da model_prob rank top-K ile üretilir.
             ts = engine.tier_score_continuous(breed, year, mp, agf) if any_model else 0.5
             horses_out.append({
                 'horse_number': hno, 'horse_name': h.get('name', f'#{hno}'),
@@ -99,7 +103,7 @@ def _yerli_pipeline_to_audit73_legs(hippodrome_dict, target_date, engine):
                 'distance': dist, 'track_type': tt, 'group_name': grp,
                 'race_date': target_date, 'hippo': hippo_name,
                 'will_not_run': False, 'fixed_odds': None,
-                'model_top3': mt3, 'model_top4': mt4, 'model_prob': mp,
+                'model_top3': None, 'model_top4': None, 'model_prob': mp,
                 'tier_score': ts, 'tier_mark': engine.tier_marker(ts),
                 'breed': breed,
             })
