@@ -335,18 +335,6 @@ def render(hippo, race_legs, scores, selections, combos, n_per_leg, initial,
             mp = h.get('model_prob', 0)
             mp_str = f"mdl %{int(mp*100)}" if mp > 0 else "mdl —"
             L.append(f"   {tm} #{h.get('horse_number')} {name}  (AGF %{agf_pct} rank{rank}) {mp_str} tier {ts:.2f}")
-        # İLK 3 + İLK 4 — race'in tüm atları model_prob'a göre sıralı (varsa)
-        ranked = sorted(horses, key=lambda h: -(h.get('model_prob') or 0))
-        any_model = any((h.get('model_prob') or 0) > 0 for h in ranked)
-        if any_model:
-            t3 = ranked[:3]
-            t4 = ranked[:4]
-            t3_str = ", ".join(f"#{h.get('horse_number')}({(h.get('horse_name') or '?').strip()[:10]})"
-                                for h in t3)
-            t4_str = ", ".join(f"#{h.get('horse_number')}({(h.get('horse_name') or '?').strip()[:10]})"
-                                for h in t4)
-            L.append(f"   📌 İLK 3: {t3_str}")
-            L.append(f"   📌 İLK 4: {t4_str}")
         L.append("")
     L.append("─" * 30)
     L.append("ℹ️ <i>analiz amaçlıdır, +EV garantisi YOK</i>")
