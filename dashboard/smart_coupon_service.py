@@ -87,10 +87,16 @@ def _yerli_pipeline_to_audit73_legs(hippodrome_dict, target_date, engine):
         for h in horses_raw:
             hno = h.get('number')
             agf = float(h.get('agf_pct') or 0)
-            mp = float(h.get('model_prob') or 0)
-            # Pipeline'da top3/top4 ayrı yok; tek model_prob var. İkisini de aynı yap.
-            mt3, mt4 = mp, mp * 0.7
-            # tier_score
+            # Pipeline model_prob YÜZDE (0-100). audit/73 ve tier 0-1 bekliyor → normalize.
+            mp_pct = float(h.get('model_prob') or 0)
+            mp = mp_pct / 100.0 if mp_pct > 1.0 else mp_pct
+            # GERÇEK top3/top4 modelleri (yerli_engine analiz path'inde rh_id lookup ile
+            # analysis_runner.predict_topk_for_race üzerinden hesaplandıysa) ata. Aksi halde
+            # None — sahte üretmeyiz (render'da "—" gösterir veya satır atlar).
+            mt3 = h.get('model_top3')
+            mt4 = h.get('model_top4')
+            if mt3 is not None: mt3 = float(mt3)
+            if mt4 is not None: mt4 = float(mt4)
             ts = engine.tier_score_continuous(breed, year, mp, agf) if any_model else 0.5
             horses_out.append({
                 'horse_number': hno, 'horse_name': h.get('name', f'#{hno}'),

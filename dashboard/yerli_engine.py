@@ -15,6 +15,41 @@ logger = logging.getLogger(__name__)
 LIVE_TEST_DISCLAIMER = "🧪 CANLI TEST — gerçek bahis önerisi değildir"
 
 
+def _lookup_race_horse_ids(target_date, hippo_name: str, race_number: int,
+                            horse_numbers: list) -> dict:
+    """Taydex DB → (race_date+hippo+race_no+horse_no) → race_horse_id map.
+
+    Yerli pipeline at_no veriyor ama race_horse_id yok; gerçek top3/top4 modelleri
+    (model/trained_targets_v4/top{3,4}/) ml_features.race_horse_id JOIN istiyor.
+    Bu lookup eksik bağlantıyı kuruyor. Tüm hatalar boş dict döner (graceful).
+    """
+    if not horse_numbers or not hippo_name or not race_number:
+        return {}
+    try:
+        from scraper.taydex_source import _dsn
+        import psycopg2
+        conn = psycopg2.connect(_dsn(), connect_timeout=5)
+        conn.set_session(readonly=True, autocommit=True)
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT rh.horse_number, rh.id
+            FROM race_horses rh
+            JOIN races r ON r.id = rh.race_id
+            JOIN program_results pr ON pr.id = r.program_result_id
+            JOIN hippodromes h ON h.id = pr.hippodrome_id
+            WHERE pr.race_date = %s
+              AND (h.name = %s OR h.name ILIKE %s)
+              AND r.race_number = %s
+              AND rh.horse_number = ANY(%s)
+        """, (target_date, hippo_name, f"%{hippo_name}%",
+              int(race_number), list(horse_numbers)))
+        rows = cur.fetchall()
+        conn.close()
+        return {int(hno): int(rhid) for hno, rhid in rows if hno is not None and rhid is not None}
+    except Exception:
+        return {}
+
+
 def _compute_data_quality(all_results):
     """Return (score, level, notes). No re-scraping; pure function of pipeline output.
 
@@ -2919,14 +2954,29 @@ def _process_proper_altili(agf_alt, program_data, target_date, model_ok):
 
     # Analiz toolu v2: per-leg analiz (GERÇEK model prob top-3/4 + AGF Harville + radar + surprise).
     # Çıktı leg['analysis'] + result['analysis'] (formatter okur). Disclaimer.
+    # race_horse_id eksikse Taydex DB lookup ile doldur — gerçek top3/top4 modelleri prod'da
+    # ÇALIŞIR (kod path mevcut; sadece rh_id eşleşmesi bug'dı).
     try:
         from dashboard.analysis_runner import analyze_leg
         leg_analyses = []
         for ls in (result.get("legs_summary") or []):
             try:
                 horses = ls.get('all_horses_with_mp') or []
-                # race_horse_id leg'de var mı? (taydex_source'tan gelmiyor; DB lookup gerek)
+                # race_horse_id leg'de yoksa DB-lookup (race_date+hippo+race_no+horse_no)
                 rh_ids = [h.get('race_horse_id') for h in horses]
+                if horses and not all(rh_ids):
+                    try:
+                        rno = ls.get('race_number') or ls.get('ayak') or 0
+                        hnos = [h.get('number') for h in horses if h.get('number') is not None]
+                        rhid_map = _lookup_race_horse_ids(target_date, hippo, int(rno), hnos)
+                        if rhid_map:
+                            for h in horses:
+                                hn = h.get('number')
+                                if hn in rhid_map:
+                                    h['race_horse_id'] = rhid_map[hn]
+                            rh_ids = [h.get('race_horse_id') for h in horses]
+                    except Exception:
+                        pass
                 leg_meta = {
                     'agf_data': [{'horse_number': h.get('number'),
                                   'agf_pct': h.get('agf_pct', 0) or 0,
@@ -2938,6 +2988,13 @@ def _process_proper_altili(agf_alt, program_data, target_date, model_ok):
                     'track_type': ls.get('track_type', 'dirt') or 'dirt',
                 }
                 ls['analysis'] = analyze_leg(leg_meta, hippo, target_date)
+                # Gerçek model_probs.top3/top4 → her at'a yay (formatter okur)
+                mp = (ls['analysis'] or {}).get('model_probs') or {}
+                p3 = mp.get('top3'); p4 = mp.get('top4')
+                if p3 and p4 and len(p3) == len(horses) and len(p4) == len(horses):
+                    for i, h in enumerate(horses):
+                        h['model_top3'] = float(p3[i])
+                        h['model_top4'] = float(p4[i])
                 leg_analyses.append(ls['analysis'])
             except Exception as _e_leg:
                 ls['analysis'] = {'disclaimer': 'analiz amaçlıdır', 'error': repr(_e_leg)[:100]}

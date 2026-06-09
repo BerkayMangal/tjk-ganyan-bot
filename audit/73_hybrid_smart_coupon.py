@@ -335,6 +335,24 @@ def render(hippo, race_legs, scores, selections, combos, n_per_leg, initial,
             mp = h.get('model_prob', 0)
             mp_str = f"mdl %{int(mp*100)}" if mp > 0 else "mdl —"
             L.append(f"   {tm} #{h.get('horse_number')} {name}  (AGF %{agf_pct} rank{rank}) {mp_str} tier {ts:.2f}")
+        # GERÇEK top3/top4 modelleri (model/trained_targets_v4/top{3,4}/) çıktısı varsa
+        # her ayak için İLK 3 / İLK 4 sıralaması. Yoksa sahte üretmeyiz, satır yok.
+        has_t3 = any(h.get('model_top3') is not None for h in horses)
+        has_t4 = any(h.get('model_top4') is not None for h in horses)
+        if has_t3:
+            ranked3 = sorted([h for h in horses if h.get('model_top3') is not None],
+                              key=lambda h: -h.get('model_top3'))[:3]
+            t3_str = ", ".join(
+                f"#{h.get('horse_number')}({(h.get('horse_name') or '?').strip()[:10]} %{int((h.get('model_top3') or 0)*100)})"
+                for h in ranked3)
+            L.append(f"   📌 İLK 3 (model): {t3_str}")
+        if has_t4:
+            ranked4 = sorted([h for h in horses if h.get('model_top4') is not None],
+                              key=lambda h: -h.get('model_top4'))[:4]
+            t4_str = ", ".join(
+                f"#{h.get('horse_number')}({(h.get('horse_name') or '?').strip()[:10]} %{int((h.get('model_top4') or 0)*100)})"
+                for h in ranked4)
+            L.append(f"   📌 İLK 4 (model): {t4_str}")
         L.append("")
     L.append("─" * 30)
     L.append("ℹ️ <i>analiz amaçlıdır, +EV garantisi YOK</i>")
