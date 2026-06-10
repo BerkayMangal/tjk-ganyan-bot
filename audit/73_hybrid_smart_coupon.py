@@ -36,12 +36,18 @@ BUCKETS_FILE = os.path.join(ROOT, 'data', 'surprise', 'historical_buckets.json')
 UNIT_TL = 0.25
 HARD_MAX_TL = 4500.0
 HARD_MAX_COMBOS = int(HARD_MAX_TL / UNIT_TL)
-TARGET_MIN_COMBOS = 8000
-TARGET_MAX_COMBOS = 14000
+# audit/84 grid (768 konfig × 122 altılı): (6000,10000) + floor-3 eğri + banker-off
+# prod'u HER İKİ eksende dominate etti (hit6 24>23, ort maliyet 2285<3017 TL).
+# n=122 → winner's-curse payı var; ama banker-zararı FLB ile bağımsız örtüşüyor.
+TARGET_MIN_COMBOS = 6000
+TARGET_MAX_COMBOS = 10000
 L2_NEG = -0.05; L2_POS = 0.10
 W_L1 = 0.50; W_L2 = 0.50
-N_MAX_GLOBAL = 8
-BANKER_AGF_MIN = 35
+N_MAX_GLOBAL = 6
+# Banker KAPALI (999): AGF≥30 favoriler yapısal overbet (Phase 5.2.5 FLB ×0.51,
+# 50%+ dahil) + audit/84'te verimlilik cephesinin tamamı banker-off. Tek-at ayak
+# 6-bacak parlayda en kırılgan nokta — mekanizma korunuyor, doğal tetiklenmez.
+BANKER_AGF_MIN = 999
 BANKER_LAYER1_MAX = 0.30
 BANKER_BUCKET_TOL = 0.02
 SURPRISE_GEBE_THRESHOLD = 0.40
@@ -179,9 +185,10 @@ def score_leg(horses, buckets_data):
 
 def cap_floor(combined, n_field, is_banker):
     if is_banker: return (1, 1, 1)
-    floor = 2 + int(round(combined * 2))
-    cap = 4 + int(round(combined * 4))
-    target = 3 + int(round(combined * 4))
+    # audit/84 Pareto eğrisi (3,2,5,4,4,4): taban genişlik +1 (floor 3, cap 5, target 4)
+    floor = 3 + int(round(combined * 2))
+    cap = 5 + int(round(combined * 4))
+    target = 4 + int(round(combined * 4))
     floor = min(floor, n_field)
     cap = min(cap, n_field, N_MAX_GLOBAL)
     target = min(max(target, floor), cap)
