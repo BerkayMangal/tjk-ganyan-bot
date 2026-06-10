@@ -16,6 +16,7 @@ audit/reports/data_quality_*.md
 audit/reports/prod_db_audit_*.md
 audit/reports/validator_shadow_2*.md
 audit/reports/bet_diary_2*.md
+audit/reports/coupon_param_grid_*.md
 # Shadow log (büyüyen veri)
 audit/reports/*.jsonl
 # V3 live runtime log'ları (büyüyen veri, ignore)
