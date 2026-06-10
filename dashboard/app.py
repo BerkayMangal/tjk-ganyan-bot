@@ -417,7 +417,7 @@ try:
                     return
                 # Tek genel header + her hippo için ayrı mesaj
                 header_text = (f"📊 <b>GÜNLÜK ANALİZ — {today}</b>\n"
-                               f"{ok_count} hipodrom · her birine 1 kupon · HİBRİT mod\n"
+                               f"{ok_count} kupon (çifte altılı günleri hipodrom başına 2)\n"
                                f"⚠ Analiz aracı, Berkay karar verir.")
                 send_telegram(header_text)
                 for r in all_results:

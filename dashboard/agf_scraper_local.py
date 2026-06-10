@@ -8,13 +8,51 @@ import requests
 import re
 import logging
 import unicodedata
-from datetime import date
+from datetime import date, datetime
 from bs4 import BeautifulSoup
 from typing import List, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
 AGF_URL = "https://www.agftablosu.com/agf-tablosu"
+
+# Türkçe ay adı → ay no ("9 Haziran 2026 Salı" başlık tarihi için)
+_TR_AYLAR = {
+    'ocak': 1, 'şubat': 2, 'subat': 2, 'mart': 3, 'nisan': 4,
+    'mayıs': 5, 'mayis': 5, 'haziran': 6, 'temmuz': 7,
+    'ağustos': 8, 'agustos': 8, 'eylül': 9, 'eylul': 9,
+    'ekim': 10, 'kasım': 11, 'kasim': 11, 'aralık': 12, 'aralik': 12,
+}
+
+
+def _parse_tr_header_date(date_str: str) -> Optional[date]:
+    """'9 Haziran 2026 Salı' → date(2026, 6, 9). Parse edilemezse None."""
+    try:
+        m = re.search(r'(\d{1,2})\s+([A-Za-zÇĞİÖŞÜçğıöşü]+)\s+(\d{4})', date_str or '')
+        if not m:
+            return None
+        mon = _TR_AYLAR.get(m.group(2).lower())
+        if not mon:
+            return None
+        return date(int(m.group(3)), mon, int(m.group(1)))
+    except Exception:
+        return None
+
+
+def _resolve_target_date(target_date) -> Optional[date]:
+    """date/str/None → date. None → İstanbul saatiyle bugün."""
+    if isinstance(target_date, date):
+        return target_date
+    if isinstance(target_date, str):
+        try:
+            return datetime.strptime(target_date[:10], '%Y-%m-%d').date()
+        except Exception:
+            return None
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo('Europe/Istanbul')).date()
+    except Exception:
+        return date.today()
 
 TURKIYE_HIPODROMLARI = {
     'bursa', 'istanbul', 'ankara', 'izmir', 'adana',
@@ -144,9 +182,11 @@ def _normalize_hippodrome(raw_name: str) -> str:
     return name
 
 
-def parse_agf_page(html: str) -> List[Dict]:
+def parse_agf_page(html: str, target_date=None) -> List[Dict]:
     soup = BeautifulSoup(html, 'html.parser')
     altilis = []
+    want_date = _resolve_target_date(target_date)
+    stale_skipped = 0
 
     headers = soup.find_all('h3')
     for header in headers:
@@ -156,6 +196,15 @@ def parse_agf_page(html: str) -> List[Dict]:
 
         parsed = _parse_header(header_text)
         if not parsed:
+            continue
+
+        # ── TARİH DOĞRULAMA: bayat (dünkü) sayfa penceresini reddet ──
+        hdr_date = _parse_tr_header_date(parsed.get('date_str', ''))
+        if want_date and hdr_date and hdr_date != want_date:
+            stale_skipped += 1
+            logger.warning(
+                f"AGF tarih uyuşmazlığı: sayfa '{parsed['date_str']}' ({hdr_date}) "
+                f"≠ istenen {want_date} — pencere atlandı: {parsed['hippodrome_raw']}")
             continue
 
         hippo = parsed['hippodrome_raw']
@@ -205,6 +254,10 @@ def parse_agf_page(html: str) -> List[Dict]:
         logger.info(f"AGF: {hippo_clean} {parsed['altili_no']}. altili — {len(legs)} ayak, favoriler: {fav_pcts}")
         altilis.append(altili)
 
+    if stale_skipped and not altilis:
+        logger.error(
+            f"AGF sayfası BAYAT görünüyor: {stale_skipped} pencere tarih uyuşmazlığıyla "
+            f"atlandı, 0 geçerli altılı (istenen: {want_date}).")
     logger.info(f"AGF parse complete: {len(altilis)} Turkiye altilisi")
     return altilis
 
@@ -217,7 +270,7 @@ def get_todays_agf(target_date: Optional[date] = None) -> List[Dict]:
     html = fetch_agf_page()
     if not html:
         return []
-    return parse_agf_page(html)
+    return parse_agf_page(html, target_date=target_date)
 
 
 def agf_to_legs(agf_altili: Dict) -> List[Dict]:
@@ -329,6 +382,7 @@ def enrich_legs_from_pdf(legs: List[Dict], pdf_races: List[Dict]) -> List[Dict]:
         leg['group_name'] = pdf_race.get('group_name', '') or leg.get('group_name', '')
         leg['first_prize'] = pdf_race.get('prize', 0) or leg.get('first_prize', 0)
         leg['race_number'] = pdf_race.get('race_number', rn)
+        leg['race_time'] = pdf_race.get('time', '') or leg.get('race_time', '')
 
         group = leg.get('group_name', '')
         leg['is_arab'] = 'Arap' in group

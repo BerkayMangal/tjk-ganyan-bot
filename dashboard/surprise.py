@@ -134,6 +134,18 @@ def compute_surprise(race_info: Dict) -> Dict:
     }
 
 
+def _fold_track_type(track) -> str:
+    """Pipeline Türkçe verir ('Çim'/'Kum'/'Sentetik'), bucket key'leri İngilizce
+    ('turf'/'dirt'/'synthetic') — katlanmazsa lookup HEP kaçırır (L2 hep 0.5)."""
+    t = str(track or '').strip().lower()
+    t = t.replace('ç', 'c').replace('ı', 'i').replace('ş', 's')
+    if 'cim' in t or 'turf' in t or 'grass' in t:
+        return 'turf'
+    if 'sentetik' in t or 'synth' in t:
+        return 'synthetic'
+    return 'dirt'
+
+
 def historical_bucket_lookup(race_info: Dict, bucket_db: Dict) -> Optional[Dict]:
     """Tarihsel bucket (sınıf×mesafe×pist×saha×hipodrom) favori-tutma vs genel.
 
@@ -141,8 +153,11 @@ def historical_bucket_lookup(race_info: Dict, bucket_db: Dict) -> Optional[Dict]
     İyi-doldurulmuş bucket (n>=100). Thin-N olanlar None.
     """
     # Bucket key: simplified
-    distance_bucket = (int(race_info.get('distance', 1400)) // 200) * 200
-    track = race_info.get('track_type', 'dirt')
+    try:
+        distance_bucket = (int(float(str(race_info.get('distance', 1400)).replace('m', '').strip() or 1400)) // 200) * 200
+    except Exception:
+        distance_bucket = 1400
+    track = _fold_track_type(race_info.get('track_type', 'dirt'))
     field = race_info.get('field_size', 10)
     field_bucket = 'small' if field <= 8 else ('med' if field <= 12 else 'large')
     is_maiden = 'maiden' in str(race_info.get('group_name', '')).lower()

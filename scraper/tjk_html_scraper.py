@@ -28,14 +28,25 @@ SESSION.headers.update({
 })
 
 
-# PATCH_FAZ2_TR_WHITELIST_v1: Turkish hippodrome whitelist (BUG 1)
+# Turkish hippodrome whitelist (foreign leak koruması)
 _TR_HIPPODROMES_WHITELIST = frozenset({
     'istanbul', 'ankara', 'izmir', 'adana', 'bursa',
-    'şanlıurfa', 'sanliurfa', 'şanliurfa', 'sanlıurfa', 'urfa',
-    'diyarbakır', 'diyarbakir',
-    'elazığ', 'elazig',
-    'kocaeli',
+    'sanliurfa', 'urfa', 'diyarbakir', 'elazig', 'kocaeli',
+    'antalya', 'mahmudiye',
 })
+
+# Dotless ı (U+0131) NFKD'de decompose OLMAZ → ascii-ignore SİLER
+# ('Elazığ'→'elazg') → whitelist kaçırır, venue programdan düşer.
+_TR_FOLD_MAP = str.maketrans({
+    'ı': 'i', 'İ': 'i', 'ğ': 'g', 'Ğ': 'g', 'ş': 's', 'Ş': 's',
+    'ç': 'c', 'Ç': 'c', 'ö': 'o', 'Ö': 'o', 'ü': 'u', 'Ü': 'u',
+})
+
+
+def _tr_fold(name):
+    import unicodedata as _ud
+    s = str(name or '').translate(_TR_FOLD_MAP).lower()
+    return _ud.normalize('NFKD', s).encode('ascii', 'ignore').decode('ascii')
 
 
 def _discover_hippodromes(target_date):
@@ -52,17 +63,7 @@ def _discover_hippodromes(target_date):
             if 'SehirId=' not in href:
                 continue
             text = link.get_text(strip=True)
-            # PATCH_FAZ2_TR_WHITELIST_v1: WHITELIST Turkish hippodromes (BUG 1)
-            # PATCH_TR_LOWERCASE_FIX_v1: Turkish İ.lower() = 'i̇' (with combining
-            # dot above) which breaks "istanbul" substring match. Normalize to
-            # plain ASCII first so İstanbul→istanbul, Şanlıurfa→sanliurfa, etc.
-            import unicodedata as _ud
-            text_lower = (
-                _ud.normalize("NFKD", text)
-                .encode("ascii", "ignore")
-                .decode("ascii")
-                .lower()
-            )
+            text_lower = _tr_fold(text)
             if not any(t in text_lower for t in _TR_HIPPODROMES_WHITELIST):
                 continue
             sm = re.search(r'SehirId=(\d+)', href)

@@ -4,8 +4,11 @@ __pycache__/
 *.pyo
 .env
 
-# Data (büyük dosyalar)
-data/
+# Data (büyük dosyalar) — dizin değil içerik ignore'lu ki istisna işlesin
+data/*
+# İSTİSNA: sürpriz bucket'ları küçük (~7KB) ve prod kupon L2 katmanı için GEREKLİ
+# (Railway'de data/ yoktu → bucket lookup hep ıskalar → L2=0.5 nötr kalıyordu)
+!data/surprise/
 *.csv
 
 # Audit — üretilen tarihli raporlar (regenerable, tracked DEĞİL)

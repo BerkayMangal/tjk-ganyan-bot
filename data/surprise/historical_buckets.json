@@ -1,0 +1,224 @@
+{
+  "baseline": {
+    "fav_top1": 0.33581427444794953,
+    "fav_top3": 0.6675867507886435
+  },
+  "buckets": {
+    "1000_dirt_small_open": {
+      "n": 186,
+      "fav_top1_rate": 0.41935483870967744,
+      "fav_top3_rate": 0.7204301075268817,
+      "fav_agf_mean": 38.53169398907104
+    },
+    "1000_turf_small_open": {
+      "n": 123,
+      "fav_top1_rate": 0.42276422764227645,
+      "fav_top3_rate": 0.6991869918699187,
+      "fav_agf_mean": 37.697033898305094
+    },
+    "1200_dirt_small_open": {
+      "n": 1679,
+      "fav_top1_rate": 0.33114949374627756,
+      "fav_top3_rate": 0.6736152471709351,
+      "fav_agf_mean": 34.95429265330905
+    },
+    "1200_dirt_med_open": {
+      "n": 934,
+      "fav_top1_rate": 0.3094218415417559,
+      "fav_top3_rate": 0.6413276231263383,
+      "fav_agf_mean": 31.45120042872454
+    },
+    "1200_dirt_large_open": {
+      "n": 384,
+      "fav_top1_rate": 0.203125,
+      "fav_top3_rate": 0.4661458333333333,
+      "fav_agf_mean": 26.706536458333336
+    },
+    "1200_synthetic_small_open": {
+      "n": 281,
+      "fav_top1_rate": 0.39501779359430605,
+      "fav_top3_rate": 0.7437722419928826,
+      "fav_agf_mean": 36.36116788321168
+    },
+    "1200_synthetic_med_open": {
+      "n": 163,
+      "fav_top1_rate": 0.3312883435582822,
+      "fav_top3_rate": 0.656441717791411,
+      "fav_agf_mean": 30.983006134969322
+    },
+    "1200_turf_small_open": {
+      "n": 1098,
+      "fav_top1_rate": 0.3460837887067395,
+      "fav_top3_rate": 0.7076502732240437,
+      "fav_agf_mean": 36.25371673003803
+    },
+    "1200_turf_med_open": {
+      "n": 564,
+      "fav_top1_rate": 0.31382978723404253,
+      "fav_top3_rate": 0.6347517730496454,
+      "fav_agf_mean": 31.349485815602836
+    },
+    "1200_turf_large_open": {
+      "n": 239,
+      "fav_top1_rate": 0.2719665271966527,
+      "fav_top3_rate": 0.5523012552301255,
+      "fav_agf_mean": 26.97845188284519
+    },
+    "1400_dirt_small_open": {
+      "n": 1874,
+      "fav_top1_rate": 0.3874066168623266,
+      "fav_top3_rate": 0.7193169690501601,
+      "fav_agf_mean": 37.461698421339136
+    },
+    "1400_dirt_med_open": {
+      "n": 972,
+      "fav_top1_rate": 0.3333333333333333,
+      "fav_top3_rate": 0.6419753086419753,
+      "fav_agf_mean": 31.31497942386831
+    },
+    "1400_dirt_large_open": {
+      "n": 342,
+      "fav_top1_rate": 0.28362573099415206,
+      "fav_top3_rate": 0.5730994152046783,
+      "fav_agf_mean": 26.201081871345032
+    },
+    "1400_synthetic_small_open": {
+      "n": 567,
+      "fav_top1_rate": 0.37213403880070545,
+      "fav_top3_rate": 0.7019400352733686,
+      "fav_agf_mean": 35.779510869565215
+    },
+    "1400_synthetic_med_open": {
+      "n": 315,
+      "fav_top1_rate": 0.34285714285714286,
+      "fav_top3_rate": 0.6793650793650794,
+      "fav_agf_mean": 31.53771428571429
+    },
+    "1400_synthetic_large_open": {
+      "n": 129,
+      "fav_top1_rate": 0.26356589147286824,
+      "fav_top3_rate": 0.5271317829457365,
+      "fav_agf_mean": 27.459844961240307
+    },
+    "1400_turf_small_open": {
+      "n": 525,
+      "fav_top1_rate": 0.3238095238095238,
+      "fav_top3_rate": 0.68,
+      "fav_agf_mean": 34.07207436399217
+    },
+    "1400_turf_med_open": {
+      "n": 212,
+      "fav_top1_rate": 0.3443396226415094,
+      "fav_top3_rate": 0.6698113207547169,
+      "fav_agf_mean": 32.70066666666666
+    },
+    "1600_dirt_small_open": {
+      "n": 582,
+      "fav_top1_rate": 0.3333333333333333,
+      "fav_top3_rate": 0.6426116838487973,
+      "fav_agf_mean": 33.65543859649122
+    },
+    "1600_dirt_med_open": {
+      "n": 306,
+      "fav_top1_rate": 0.30392156862745096,
+      "fav_top3_rate": 0.5849673202614379,
+      "fav_agf_mean": 29.10192810457516
+    },
+    "1600_dirt_large_open": {
+      "n": 161,
+      "fav_top1_rate": 0.2111801242236025,
+      "fav_top3_rate": 0.4658385093167702,
+      "fav_agf_mean": 23.042173913043477
+    },
+    "1600_turf_small_open": {
+      "n": 372,
+      "fav_top1_rate": 0.32526881720430106,
+      "fav_top3_rate": 0.6854838709677419,
+      "fav_agf_mean": 34.02491666666666
+    },
+    "1600_turf_med_open": {
+      "n": 173,
+      "fav_top1_rate": 0.3468208092485549,
+      "fav_top3_rate": 0.6473988439306358,
+      "fav_agf_mean": 30.453604651162788
+    },
+    "1800_dirt_small_open": {
+      "n": 988,
+      "fav_top1_rate": 0.36133603238866396,
+      "fav_top3_rate": 0.6993927125506073,
+      "fav_agf_mean": 35.696783144912644
+    },
+    "1800_dirt_med_open": {
+      "n": 573,
+      "fav_top1_rate": 0.268760907504363,
+      "fav_top3_rate": 0.6143106457242583,
+      "fav_agf_mean": 28.616975524475524
+    },
+    "1800_dirt_large_open": {
+      "n": 186,
+      "fav_top1_rate": 0.3118279569892473,
+      "fav_top3_rate": 0.5752688172043011,
+      "fav_agf_mean": 22.456881720430104
+    },
+    "1800_turf_small_open": {
+      "n": 520,
+      "fav_top1_rate": 0.35192307692307695,
+      "fav_top3_rate": 0.6903846153846154,
+      "fav_agf_mean": 33.015100806451606
+    },
+    "1800_turf_med_open": {
+      "n": 245,
+      "fav_top1_rate": 0.3020408163265306,
+      "fav_top3_rate": 0.6081632653061224,
+      "fav_agf_mean": 29.453551020408167
+    },
+    "2000_dirt_small_open": {
+      "n": 944,
+      "fav_top1_rate": 0.3516949152542373,
+      "fav_top3_rate": 0.736228813559322,
+      "fav_agf_mean": 36.67118085106383
+    },
+    "2000_dirt_med_open": {
+      "n": 474,
+      "fav_top1_rate": 0.3143459915611814,
+      "fav_top3_rate": 0.609704641350211,
+      "fav_agf_mean": 29.401940928270044
+    },
+    "2000_dirt_large_open": {
+      "n": 109,
+      "fav_top1_rate": 0.25688073394495414,
+      "fav_top3_rate": 0.5504587155963303,
+      "fav_agf_mean": 22.40678899082568
+    },
+    "2000_synthetic_small_open": {
+      "n": 430,
+      "fav_top1_rate": 0.39069767441860465,
+      "fav_top3_rate": 0.7558139534883721,
+      "fav_agf_mean": 36.36849765258216
+    },
+    "2000_synthetic_med_open": {
+      "n": 207,
+      "fav_top1_rate": 0.32367149758454106,
+      "fav_top3_rate": 0.6811594202898551,
+      "fav_agf_mean": 31.02565217391304
+    },
+    "2000_turf_small_open": {
+      "n": 277,
+      "fav_top1_rate": 0.34296028880866425,
+      "fav_top3_rate": 0.7111913357400722,
+      "fav_agf_mean": 34.70325842696629
+    },
+    "2000_turf_med_open": {
+      "n": 130,
+      "fav_top1_rate": 0.36923076923076925,
+      "fav_top3_rate": 0.6461538461538462,
+      "fav_agf_mean": 29.598384615384614
+    },
+    "2200_turf_small_open": {
+      "n": 182,
+      "fav_top1_rate": 0.3626373626373626,
+      "fav_top3_rate": 0.7142857142857143,
+      "fav_agf_mean": 35.531777777777776
+    }
+  }
+}

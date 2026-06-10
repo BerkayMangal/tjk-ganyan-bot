@@ -4,10 +4,52 @@ TJK Scraper v6 — agftahmin.com
 Turkce karakter fix, yerli/yabanci ayrim, AGF eslestirme iyilestirildi.
 """
 import requests, re, logging
+from datetime import date, datetime
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 BASE = "https://www.agftahmin.com"
+
+# Türkçe ay adı → ay no ("9 Haziran 2026 Salı ..." başlık tarihi için)
+_TR_AYLAR = {
+    'ocak': 1, 'şubat': 2, 'subat': 2, 'mart': 3, 'nisan': 4,
+    'mayıs': 5, 'mayis': 5, 'haziran': 6, 'temmuz': 7,
+    'ağustos': 8, 'agustos': 8, 'eylül': 9, 'eylul': 9,
+    'ekim': 10, 'kasım': 11, 'kasim': 11, 'aralık': 12, 'aralik': 12,
+}
+
+
+def _parse_tr_header_date(s):
+    """'9 Haziran 2026 Salı 14:00 ...' veya '2026-06-10 - 14:00 ...' → date. Yoksa None."""
+    try:
+        m = re.search(r'(\d{4})-(\d{2})-(\d{2})', s or '')
+        if m:
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        m = re.search(r'(\d{1,2})\s+([A-Za-zÇĞİÖŞÜçğıöşü]+)\s+(\d{4})', s or '')
+        if not m:
+            return None
+        mon = _TR_AYLAR.get(m.group(2).lower())
+        if not mon:
+            return None
+        return date(int(m.group(3)), mon, int(m.group(1)))
+    except Exception:
+        return None
+
+
+def _resolve_target_date(tarih):
+    """date/str/None → date. None → İstanbul saatiyle bugün."""
+    if isinstance(tarih, date):
+        return tarih
+    if isinstance(tarih, str):
+        try:
+            return datetime.strptime(tarih[:10], '%Y-%m-%d').date()
+        except Exception:
+            return None
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo('Europe/Istanbul')).date()
+    except Exception:
+        return date.today()
 HDR = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
        "Accept": "text/html,application/xhtml+xml", "Accept-Language": "tr-TR,tr;q=0.9"}
 
@@ -104,16 +146,26 @@ def fetch_agf_page():
         return None
 
 
-def parse_agf_page(html):
+def parse_agf_page(html, tarih=None):
     """H3 basliklarindan hipodromlar + AGF yuzdeleri.
-    V7 fix: find_all('table') ile TUM tablolari topla (6 ayak fix)."""
+    V7 fix: find_all('table') ile TUM tablolari topla (6 ayak fix).
+    Tarih dogrulama: baslik tarihi istenen gunle uyusmayan pencere ATLANIR
+    (sayfa sabah erken saatte hala DUNU gosterebiliyor)."""
     soup = BeautifulSoup(html, "html.parser")
     entries = []
+    want_date = _resolve_target_date(tarih)
+    stale_skipped = 0
 
     for h3 in soup.find_all("h3"):
         title = h3.get_text(strip=True)
         m = re.search(r"(\d{2}[:.]\d{2})\s+(.+?)\s+AGF", title)
         if not m: continue
+
+        hdr_date = _parse_tr_header_date(title)
+        if want_date and hdr_date and hdr_date != want_date:
+            stale_skipped += 1
+            logger.warning(f"AGF tarih uyusmazligi: sayfa {hdr_date} != istenen {want_date} — atlandi: {title[:60]}")
+            continue
 
         time_str = m.group(1).replace(".", ":")
         hip_name = m.group(2).strip()
@@ -153,6 +205,8 @@ def parse_agf_page(html):
             entries.append({"name": hip_name, "time": time_str, "altili": altili, "legs": legs})
             logger.info(f"  {hip_name} a#{altili}: {len(legs)} ayak, yerli={is_domestic(hip_name)}")
 
+    if stale_skipped and not entries:
+        logger.error(f"AGF sayfasi BAYAT gorunuyor: {stale_skipped} pencere tarih uyusmazligiyla atlandi (istenen: {want_date})")
     logger.info(f"Toplam: {len(entries)} altili")
     return entries
 
@@ -265,7 +319,7 @@ def fetch_foreign_races(tarih=None):
     logger.info("=== YABANCI YARIS ===")
     html = fetch_agf_page()
     if not html: return []
-    entries = parse_agf_page(html)
+    entries = parse_agf_page(html, tarih=tarih)
     if not entries: return []
     return build_tracks(entries, domestic_only=False)
 
@@ -274,7 +328,7 @@ def fetch_domestic_races(tarih=None):
     logger.info("=== YERLI YARIS ===")
     html = fetch_agf_page()
     if not html: return []
-    entries = parse_agf_page(html)
+    entries = parse_agf_page(html, tarih=tarih)
     if not entries: return []
     return build_tracks(entries, domestic_only=True)
 
@@ -283,7 +337,7 @@ def fetch_all_races(tarih=None):
     logger.info("=== TUM YARISLAR ===")
     html = fetch_agf_page()
     if not html: return {"foreign":[], "domestic":[]}
-    entries = parse_agf_page(html)
+    entries = parse_agf_page(html, tarih=tarih)
     if not entries: return {"foreign":[], "domestic":[]}
     return {
         "foreign": build_tracks(entries, domestic_only=False),

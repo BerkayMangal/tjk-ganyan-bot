@@ -142,6 +142,7 @@ def enrich_race_with_model(horses, year):
 def score_leg(horses, buckets_data):
     ri = horses[0]
     agf_arr = np.array([h.get('agf_value', 0) or 0 for h in horses], dtype=float)
+    nedenler = []
     try:
         sd = compute_surprise({
             'agf_pcts': agf_arr.tolist(), 'field_size': len(horses),
@@ -149,6 +150,7 @@ def score_leg(horses, buckets_data):
             'track_condition': '', 'distance': ri.get('distance', 1400),
         })
         layer1 = float(sd.get('score', 0.5))
+        nedenler = sd.get('nedenler', []) or []
     except Exception:
         layer1 = 0.5
     bucket = historical_bucket_lookup({
@@ -170,7 +172,7 @@ def score_leg(horses, buckets_data):
     is_banker = (agf_top_val >= BANKER_AGF_MIN and layer1 < BANKER_LAYER1_MAX and bucket_supports)
     return {'layer1': layer1, 'layer2': layer2, 'combined': combined,
             'is_banker': bool(is_banker), 'bucket_fav': bucket_fav, 'baseline': baseline,
-            'agf_top_val': agf_top_val,
+            'agf_top_val': agf_top_val, 'nedenler': nedenler,
             'is_surprise_gebe': combined >= SURPRISE_GEBE_THRESHOLD,
             'is_saglam': combined < SAGLAM_THRESHOLD}
 
@@ -256,17 +258,21 @@ def optimize_budget(race_legs, scores):
 
 
 def _h_clean(s): return (s or '').replace(' Hipodromu','').replace(' Hipodrom','').strip()
+def _name_clean(s):
+    """TJK adı 'SEHHAR(2)' gelir — (start boks) ekini display'de at."""
+    import re as _re
+    return _re.sub(r'\s*\(\d+\)\s*$', '', str(s or '')).strip()
 def _grp_short(s):
     if not s: return ''
-    return str(s).split('\n')[0].strip()[:36]
+    return str(s).split('\n')[0].strip()[:36].rstrip(' ,·/')
 def _track_tr(t): return {'dirt':'Kum','turf':'Çim','synthetic':'Sentetik'}.get(t or '', t or '')
 
 
 def leg_tag(s, current_banker=None):
     is_b = current_banker if current_banker is not None else s['is_banker']
-    if is_b: return '🔒 BANKER'
-    if s['is_surprise_gebe']: return '🌐 SÜRPRİZ-GEBE'
-    if s['is_saglam']: return '◇ SAĞLAM'
+    if is_b: return '🔒 TEK AT'
+    if s['is_surprise_gebe']: return '🌐 SÜRPRİZE AÇIK'
+    if s['is_saglam']: return '✅ SAĞLAM'
     return '◆ ORTA'
 
 
@@ -280,84 +286,101 @@ def hippo_score(race_legs):
 
 
 def render_surprise_summary(race_legs, scores):
-    """Üstte kutu: sürpriz-gebe ayaklar."""
-    surps = [(i+1, s) for i, s in enumerate(scores) if s['is_surprise_gebe']]
-    sags = [(i+1, s) for i, s in enumerate(scores) if s['is_saglam']]
+    """Üst kutu: hangi ayak sürprize açık, hangisi sağlam — düz Türkçe."""
+    surps = [str(i+1) for i, s in enumerate(scores) if s['is_surprise_gebe']]
+    sags = [str(i+1) for i, s in enumerate(scores) if s['is_saglam']]
     if not surps and not sags:
         return ""
-    L = ["🎯 <b>AYAK PROFİLİ ÖZETİ</b>"]
+    L = ["🎯 <b>GÜNÜN OKUMASI</b>"]
     if surps:
-        L.append(f"🌐 Sürpriz-gebe (geniş geç): " +
-                 ", ".join(f"K{i} (unc {s['combined']:.2f})" for i, s in surps))
+        L.append(f"🌐 Sürprize açık ayak{'lar' if len(surps) > 1 else ''}: "
+                 f"<b>{', '.join(surps)}</b> → çok at yazdık")
     if sags:
-        L.append(f"◇ Sağlam (dar geç): " +
-                 ", ".join(f"K{i} (unc {s['combined']:.2f})" for i, s in sags))
+        L.append(f"✅ Sağlam ayak{'lar' if len(sags) > 1 else ''}: "
+                 f"<b>{', '.join(sags)}</b> → az at yeter")
     return "\n".join(L) + "\n"
+
+
+def _leg_why(s, cb, broken):
+    """Ayak gerekçesi — düz Türkçe, jargonsuz."""
+    if cb:
+        return f"Halkın %{s['agf_top_val']:.0f}'i tek atta birleşmiş → tek geçiyoruz"
+    parts = []
+    if broken:
+        parts.append("Tek geçilebilirdi ama garanti için yanına at ekledik")
+    elif s['is_surprise_gebe']:
+        ned = [n.split('—')[-1].strip() for n in (s.get('nedenler') or [])[:2]]
+        why = "Sürpriz çıkabilir" + (f" ({', '.join(ned)})" if ned else "")
+        parts.append(why + " → geniş tuttuk")
+    elif s['is_saglam']:
+        parts.append("Beklenen sonuç — favoriler güçlü → dar tuttuk")
+    bf = s.get('bucket_fav')
+    if bf is not None and bf < s['baseline'] - 0.02:
+        parts.append(f"bu tip yarışta favori sık kaybediyor (geçmişte %{bf*100:.0f} kazanmış)")
+    elif bf is not None and bf > s['baseline'] + 0.02:
+        parts.append(f"bu tip yarışta favori güvenilir (geçmişte %{bf*100:.0f} kazanmış)")
+    return " · ".join(parts) if parts else ""
 
 
 def render(hippo, race_legs, scores, selections, combos, n_per_leg, initial,
             current_banker, floors, caps, model_failed_count):
     cost = combos * UNIT_TL
-    L = [f"🎫 <b>HİBRİT KUPON — {hippo.upper()}</b>",
-         f"📊 {combos:,} kombi × {UNIT_TL:.2f} TL = <b>{cost:,.2f} TL</b> "
-         f"(bütçenin %{cost/HARD_MAX_TL*100:.0f}'i)"]
+    L = [f"🎫 <b>ALTILI KUPON — {hippo.upper()}</b>",
+         f"💰 {combos:,} kombinasyon × {UNIT_TL:.2f} TL = <b>{cost:,.2f} TL</b>"]
     if model_failed_count > 0:
-        L.append(f"⚠ Model {model_failed_count}/{len(race_legs)} ayakta veri-yok (yeni at) → nötr")
-    L.append(f"ℹ At seçimi: Public AGF + Model tier filtre (sürpriz-gebe ayak +bonus, sağlam ayak -model'in zayıf gördüğü)")
-    L.append(f"⚠ ANALIZ — TR pari-mutuel -EV (audit/67). Berkay karar verir.")
+        L.append(f"⚠ {model_failed_count} ayakta model tahmini yok (yeni atlar) → halk yüzdesiyle seçildi")
+    L.append("⚠ <i>Analiz aracı — kâr garantisi yok, son karar senin.</i>")
     L.append("")
-    L.append(render_surprise_summary(race_legs, scores))
+    summary = render_surprise_summary(race_legs, scores)
+    if summary:
+        L.append(summary)
 
     for i, (horses, s, sel, n, cb, fl, cp) in enumerate(
             zip(race_legs, scores, selections, n_per_leg, current_banker, floors, caps), 1):
         ri = horses[0]
         rn = ri.get('race_number', '?')
         st = str(ri.get('start_time') or '')[:5]
+        st_str = f" · {st}" if st and st != '00:00' else ""
         grp = _grp_short(ri.get('group_name'))
         dist = ri.get('distance') or 0
         tt = _track_tr(ri.get('track_type'))
-        bk_str = ""
-        if s['bucket_fav'] is not None:
-            arrow = "↑" if s['bucket_fav'] > s['baseline']+0.02 else ("↓" if s['bucket_fav'] < s['baseline']-0.02 else "≈")
-            bk_str = f" · bucket %{s['bucket_fav']*100:.0f}{arrow}base"
         broken = (s['is_banker'] and not cb)
-        bb_tag = " (banker→orta, bütçe)" if broken else ""
-        cap_str = f" [{fl}-{cp}]" if not cb else ""
-        L.append(f"━ {i}. AYAK {leg_tag(s, cb)} ({rn}.K · {st}) — {len(sel)} at{cap_str}{bb_tag}")
+        L.append(f"━━ <b>{i}. AYAK</b> ({rn}. koşu{st_str}) — <b>{len(sel)} at</b>  {leg_tag(s, cb)}")
         L.append(f"   {grp} · {dist}m {tt}")
-        L.append(f"   unc {s['combined']:.2f} [L1 {s['layer1']:.2f}·L2 {s['layer2']:.2f}]{bk_str}")
+        why = _leg_why(s, cb, broken)
+        if why:
+            L.append(f"   💡 {why}")
         for h in sel:
-            name = (h.get('horse_name') or f"#{h.get('horse_number')}").strip()[:18]
-            agf_pct = int(h.get('agf_value') or 0)
-            rank = h.get('agf_rank') or '?'
-            ts = h.get('tier_score', 0.5)
+            name = _name_clean(h.get('horse_name') or f"#{h.get('horse_number')}")[:18]
+            agf_pct = h.get('agf_value') or 0
+            rank = h.get('agf_rank') or 0
+            rank_str = f" ({rank}. favori)" if rank else ""
             tm = h.get('tier_mark', '◇')
             mp = h.get('model_prob', 0)
-            mp_str = f"mdl %{int(mp*100)}" if mp > 0 else "mdl —"
-            L.append(f"   {tm} #{h.get('horse_number')} {name}  (AGF %{agf_pct} rank{rank}) {mp_str} tier {ts:.2f}")
-        # GERÇEK top3/top4 modelleri (model/trained_targets_v4/top{3,4}/) çıktısı varsa
-        # her ayak için İLK 3 / İLK 4 sıralaması. Yoksa sahte üretmeyiz, satır yok.
+            mp_str = f" · model %{mp*100:.0f}" if mp > 0 else ""
+            L.append(f"   {tm} <b>#{h.get('horse_number')}</b> {name} — halk %{agf_pct:.0f}{rank_str}{mp_str}")
+        # GERÇEK top3/top4 modelleri varsa göster. Yoksa sahte üretmeyiz, satır yok.
         has_t3 = any(h.get('model_top3') is not None for h in horses)
         has_t4 = any(h.get('model_top4') is not None for h in horses)
         if has_t3:
             ranked3 = sorted([h for h in horses if h.get('model_top3') is not None],
                               key=lambda h: -h.get('model_top3'))[:3]
             t3_str = ", ".join(
-                f"#{h.get('horse_number')}({(h.get('horse_name') or '?').strip()[:10]} %{int((h.get('model_top3') or 0)*100)})"
+                f"#{h.get('horse_number')} {_name_clean(h.get('horse_name') or '?')[:10]}"
                 for h in ranked3)
-            L.append(f"   📌 İLK 3 (model): {t3_str}")
+            L.append(f"   🤖 Modelin ilk 3 tahmini: {t3_str}")
         if has_t4:
             ranked4 = sorted([h for h in horses if h.get('model_top4') is not None],
                               key=lambda h: -h.get('model_top4'))[:4]
             t4_str = ", ".join(
-                f"#{h.get('horse_number')}({(h.get('horse_name') or '?').strip()[:10]} %{int((h.get('model_top4') or 0)*100)})"
+                f"#{h.get('horse_number')} {_name_clean(h.get('horse_name') or '?')[:10]}"
                 for h in ranked4)
-            L.append(f"   📌 İLK 4 (model): {t4_str}")
+            L.append(f"   🤖 Modelin ilk 4 tahmini: {t4_str}")
         L.append("")
     L.append("─" * 30)
-    L.append("ℹ️ <i>analiz amaçlıdır, +EV garantisi YOK</i>")
-    L.append("   🔒 banker · ◇ sağlam · ◆ orta · 🌐 sürpriz-gebe")
-    L.append("   tier ⭐≥0.65 · ◇≥0.40 · ⚠≥0.20 · ✗<0.20")
+    L.append("<i>Ayak türleri: 🔒 tek at · ✅ sağlam (az at) · ◆ orta · 🌐 sürprize açık (çok at)</i>")
+    L.append("<i>At işareti (model görüşü): ⭐ güçlü · ◇ normal · ⚠ zayıf · ✗ çok zayıf</i>")
+    L.append("<i>halk % = oynayanların yüzdesi (AGF) · analiz amaçlıdır, kâr garantisi yok</i>")
     return "\n".join(L)
 
 

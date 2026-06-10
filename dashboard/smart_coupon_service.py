@@ -56,7 +56,6 @@ def _yerli_pipeline_to_audit73_legs(hippodrome_dict, target_date, engine):
       agf_rank, race_number, start_time, distance, track_type, group_name, race_date, hippo,
       will_not_run, model_top3, model_top4, model_prob, tier_score, breed, tier_mark)
     """
-    from datetime import time as _time
     legs_summary = hippodrome_dict.get('legs_summary') or []
     hippo_name = hippodrome_dict.get('hippodrome', '?')
     race_legs = []
@@ -64,6 +63,7 @@ def _yerli_pipeline_to_audit73_legs(hippodrome_dict, target_date, engine):
     for leg in legs_summary:
         ayak = leg.get('ayak')
         rn = leg.get('race_number') or ayak or 0
+        race_time = str(leg.get('race_time') or '').strip()[:5]
         dist = leg.get('distance') or 1400
         try:
             dist = int(str(dist).replace('m','').strip() or 1400)
@@ -101,7 +101,7 @@ def _yerli_pipeline_to_audit73_legs(hippodrome_dict, target_date, engine):
             horses_out.append({
                 'horse_number': hno, 'horse_name': h.get('name', f'#{hno}'),
                 'agf_value': agf, 'agf_rank': rank_map.get(hno, 0),
-                'race_number': rn, 'start_time': _time(0,0),
+                'race_number': rn, 'start_time': race_time,
                 'distance': dist, 'track_type': tt, 'group_name': grp,
                 'race_date': target_date, 'hippo': hippo_name,
                 'will_not_run': False, 'fixed_odds': None,
@@ -128,14 +128,24 @@ def _all_hippo_candidates_from_pipeline(target_date, engine):
     except Exception as e:
         return [], buckets_data, f"pipeline_error: {repr(e)[:200]}"
     hippodromes = (result or {}).get('hippodromes') or []
+    # Çifte altılı günü: aynı hipodromda 2 havuz → etikete pencere ekle ("İstanbul · 2. Altılı (4-9)")
+    venue_counts = defaultdict(int)
+    for hippo in hippodromes:
+        if not hippo.get('error'):
+            venue_counts[hippo.get('hippodrome', '?')] += 1
     cands = []
     for hippo in hippodromes:
         if hippo.get('error'): continue
         race_legs, model_failed = _yerli_pipeline_to_audit73_legs(hippo, target_date, engine)
         if len(race_legs) < 4: continue
+        label = hippo.get('hippodrome', '?')
+        if venue_counts[label] > 1:
+            rns = sorted({h[0].get('race_number') for h in race_legs if h})
+            win = f" ({rns[0]}-{rns[-1]})" if rns else ""
+            label = f"{label} · {hippo.get('altili_no', '?')}. Altılı{win}"
         scores = [engine.score_leg(legs, buckets_data) for legs in race_legs]
         rank_score = engine.hippo_score(race_legs)
-        cands.append({'hippo': hippo.get('hippodrome', '?'), 'race_legs': race_legs,
+        cands.append({'hippo': label, 'race_legs': race_legs,
                       'scores': scores, 'rank_score': rank_score,
                       'model_failed': model_failed})
     cands.sort(key=lambda c: -c['rank_score'])
@@ -213,9 +223,13 @@ def _build_one(engine, mode, c):
     else:
         text = engine.render(hippo_name, c['race_legs'], c['scores'], sel, combos,
                               n_per_leg, init, cb, fl, cp)
+    try:
+        first_time = str(c['race_legs'][0][0].get('start_time') or '')[:5]
+    except Exception:
+        first_time = ''
     return {
         'status': 'ok', 'mode': mode, 'hippo': hippo_name,
-        'rank_score': c['rank_score'],
+        'rank_score': c['rank_score'], 'first_time': first_time,
         'combos': combos, 'cost_tl': combos * engine.UNIT_TL,
         'text': text, 'n_legs': len(sel),
         'banker_count': sum(1 for b in cb if b),
@@ -223,8 +237,16 @@ def _build_one(engine, mode, c):
     }
 
 
+def _coerce_date(target_date):
+    """API string verir ('2026-06-10'), pipeline date bekler — boundary'de katla."""
+    if isinstance(target_date, str):
+        return date.fromisoformat(target_date.strip()[:10])
+    return target_date
+
+
 def build_single_coupon(target_date):
     """En yüksek skor'lu hipodromu seçer, kupon kurar."""
+    target_date = _coerce_date(target_date)
     engine, mode = _load_engine()
     try:
         cands, _ = _all_hippo_candidates(target_date, engine, mode)
@@ -245,13 +267,16 @@ def build_single_coupon(target_date):
 
 
 def build_all_hippos(target_date):
-    """Her hipodrom için ayrı kupon. Liste döner."""
+    """Her altılı havuzu için ayrı kupon. Kronolojik sıralı liste döner."""
+    target_date = _coerce_date(target_date)
     engine, mode = _load_engine()
     try:
         cands, _ = _all_hippo_candidates(target_date, engine, mode)
     except Exception as e:
         return [{'status':'error', 'reason': repr(e)[:200], 'mode': mode}]
-    return [_build_one(engine, mode, c) for c in cands]
+    out = [_build_one(engine, mode, c) for c in cands]
+    out.sort(key=lambda r: (r.get('first_time') or '99:99', r.get('hippo') or ''))
+    return out
 
 
 def send_telegram(text, dry_run=False):

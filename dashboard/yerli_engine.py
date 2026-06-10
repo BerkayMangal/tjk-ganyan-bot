@@ -136,32 +136,37 @@ _BUDGET_DAR_MAX      = 2500.0
 _BUDGET_GENIS_MAX    = 5000.0
 
 
-# PATCH_FAZ2_TR_WHITELIST_v1: Turkish hippodrome whitelist (BUG 1: foreign leak)
+# Turkish hippodrome whitelist (foreign leak koruması)
 _TR_HIPPODROMES_WHITELIST = frozenset({
     'istanbul', 'ankara', 'izmir', 'adana', 'bursa',
-    'şanlıurfa', 'sanliurfa', 'şanliurfa', 'sanlıurfa', 'urfa',
-    'diyarbakır', 'diyarbakir',
-    'elazığ', 'elazig',
-    'kocaeli',
+    'sanliurfa', 'urfa', 'diyarbakir', 'elazig', 'kocaeli',
+    'antalya', 'mahmudiye',
+})
+
+# Dotless ı (U+0131) NFKD'de decompose OLMAZ → ascii-ignore SİLER
+# ('Elazığ'→'elazg', 'Diyarbakır'→'diyarbakr') → whitelist kaçırır.
+# Önce explicit Türkçe harf katlaması, sonra NFKD güvenlik ağı.
+_TR_FOLD_MAP = str.maketrans({
+    'ı': 'i', 'İ': 'i', 'ğ': 'g', 'Ğ': 'g', 'ş': 's', 'Ş': 's',
+    'ç': 'c', 'Ç': 'c', 'ö': 'o', 'Ö': 'o', 'ü': 'u', 'Ü': 'u',
 })
 
 
+def _tr_fold(name):
+    """Hipodrom adını karşılaştırma anahtarına indir: 'Elazığ Hipodromu' → 'elazig'."""
+    import unicodedata as _ud_tr
+    s = str(name or '').translate(_TR_FOLD_MAP).lower()
+    s = _ud_tr.normalize('NFKD', s).encode('ascii', 'ignore').decode('ascii')
+    return s.replace(' hipodromu', '').replace(' hipodrom', '').strip()
+
+
 def _is_turkish_hippodrome(name):
-    """PATCH_FAZ2_TR_WHITELIST_v1.
-    True iff name matches a Turkish hippodrome by substring on lower-cased
-    and 'hipodromu/hipodrom' stripped form. Used to gate all hippodrome
-    iteration entry points (AGF main, dashboard fallback, HTML-only fallback).
-    """
+    """True iff name matches a Turkish hippodrome (folded substring).
+    Used to gate all hippodrome iteration entry points (AGF main,
+    dashboard fallback, HTML-only fallback)."""
     if not name:
         return False
-    # PATCH_TR_LOWERCASE_FIX_ENGINE_v1: Turkish İ.lower() = 'i̇' (combining dot
-    # above) which breaks 'istanbul' substring match. Normalize to plain ASCII.
-    import unicodedata as _ud_tr
-    n = (
-        _ud_tr.normalize("NFKD", str(name))
-        .encode("ascii", "ignore").decode("ascii").lower()
-        .replace(' hipodromu', '').replace(' hipodrom', '').strip()
-    )
+    n = _tr_fold(name)
     return any(t in n for t in _TR_HIPPODROMES_WHITELIST)
 
 
@@ -2257,16 +2262,26 @@ def _save_live_test_snapshot(result_dict):
 
 def _altili_fingerprint(agf_alt):
     """Her altılının atlarını fingerprint olarak çıkar.
-    İki altılının atları aynıysa fingerprint'leri aynı olur."""
+    İki altılının atları aynıysa fingerprint'leri aynı olur.
+    (numara, AGF%) çifti: farklı yarışlar aynı numaraları paylaşır (her yarış
+    1'den başlar), gerçek çifte altılıyı sadece-numara fingerprint'i dup sanır."""
     legs = agf_alt.get("legs", []) or []
     fp = []
     for leg in legs:
         if not leg:
             fp.append(())
             continue
-        nums = tuple(sorted(h.get("horse_number") for h in leg
-                             if h.get("horse_number") is not None))
-        fp.append(nums)
+        pairs = []
+        for h in leg:
+            n = h.get("horse_number")
+            if n is None:
+                continue
+            try:
+                p = round(float(h.get("agf_pct") or 0), 2)
+            except Exception:
+                p = 0.0
+            pairs.append((n, p))
+        fp.append(tuple(sorted(pairs)))
     return tuple(fp)
 
 
@@ -2288,25 +2303,44 @@ def _dedup_agf_altilis(agf_altilis):
     seen_hippo_alt = {} # (hippo, alt_no) -> first index
 
     def _leg_overlap(legs_a, legs_b):
-        """Iki altilinin leg-by-leg ortalama at numarasi overlap orani."""
+        """Iki altilinin leg-by-leg benzerliği: numara Jaccard × AGF% uyumu.
+
+        Sadece-numara karşılaştırması gerçek çifte altılıyı ([1-6] vs [4-9])
+        dup sanıyordu (her yarış 1'den numaralanır). Aynı numaralı atların
+        AGF%'leri de uyuşuyorsa (|Δ|≤1.5pp) gerçek kopya; farklı yarışsa
+        yüzde profilleri uyuşmaz."""
         if not legs_a or not legs_b:
             return 0.0
         n = min(len(legs_a), len(legs_b))
         if n == 0:
             return 0.0
+
+        def _pcts(leg):
+            d = {}
+            for h in (leg or []):
+                num = h.get("horse_number")
+                if num is None:
+                    continue
+                try:
+                    d[num] = float(h.get("agf_pct") or 0)
+                except Exception:
+                    d[num] = 0.0
+            return d
+
         scores = []
         for i in range(n):
-            la = legs_a[i] or []
-            lb = legs_b[i] or []
-            nums_a = set(h.get("horse_number") for h in la
-                         if h.get("horse_number") is not None)
-            nums_b = set(h.get("horse_number") for h in lb
-                         if h.get("horse_number") is not None)
-            if not nums_a or not nums_b:
+            pa = _pcts(legs_a[i])
+            pb = _pcts(legs_b[i])
+            if not pa or not pb:
                 continue
-            inter = len(nums_a & nums_b)
-            union = len(nums_a | nums_b)
-            scores.append(inter / union if union else 0.0)
+            inter = set(pa) & set(pb)
+            union = set(pa) | set(pb)
+            num_jacc = len(inter) / len(union) if union else 0.0
+            if inter:
+                agree = sum(1 for k in inter if abs(pa[k] - pb[k]) <= 1.5) / len(inter)
+            else:
+                agree = 0.0
+            scores.append(num_jacc * agree)
         return sum(scores) / len(scores) if scores else 0.0
 
     for i, alt in enumerate(agf_altilis):
@@ -2439,10 +2473,10 @@ def _reconcile_hippodromes(all_results):
     """Multi-source assembly temizliği. result['hippodromes'] KÖKTEN temizlenir (display değil):
       0) KEY-MISMATCH safety: repaired leg'lerde all_horses → all_horses_with_mp (tüketici key'i),
       1) venue adını normalize ('İstanbul Hipodromu'→'İstanbul'),
-      2) PHANTOM/DUP DROP: AGF-native altılılar GÜVENİLİR (gerçek). Bir REPAIRED altılı, aynı
-         venue'deki bir AGF-native altılıyla YARIŞ PAYLAŞIYORSA → duplicate/phantom → düşür
-         (ör. İstanbul#2[5-10]repaired ↔ Hipodromu[5-10]AGF; Adana#2[4-9]repaired ↔ Adana#1[1-6]AGF).
-         Gerçek AYRIK altılılar (İstanbul AGF [1-6]+[5-10]) korunur,
+      2) PHANTOM/DUP DROP: aynı venue'de AT KADROSU ~aynı olan ikinci girdi düşer
+         (isim Jaccard ≥0.70; kaymış-pencere/phantom dup'ta atların tamamı ortaktır).
+         Gerçek çifte altılı ([1-6]+[4-9]) sadece ortak yarışların atlarını paylaşır
+         (~0.3-0.5) → KORUNUR,
       3) aynı-yarış-seti exact-dup tekille → en çok atlıyı tut,
       4) boş altılıyı düşür,
       5) venue başına altili_no'yu yeniden ata.
@@ -2479,7 +2513,35 @@ def _reconcile_hippodromes(all_results):
     # Şanlıurfa#1 [1-6] + #2 [3-8] = 4 race overlap, ikisi de AGF-native, ikisi de gösterildi.
     # YENİ kural: aynı venue + race-overlap ≥ 3 → dup (kaymış pencere/aynı kart). AGF-native
     # önce, sonra at sayısı çoktan az'a. Pair kontrolü, kept list'e ekleme.
-    DEDUP_OVERLAP = 3
+    # İçerik (at kimliği) bazlı dup tespiti: yarış-numarası overlap'i gerçek
+    # çifte altılıyı ([1-6]+[4-9] 3 yarış, [1-6]+[3-8] 4 yarış paylaşır) dup
+    # sanıyordu. Kaymış-pencere/phantom dup'ta atların TAMAMI aynıdır (isimler
+    # yeniden numaralanmış) → isim Jaccard ~1.0; gerçek ikizde sadece ortak
+    # yarışların atları ortak → ~0.3-0.5.
+    CONTENT_DUP_THR = 0.70
+
+    def _content_ids(r):
+        names, pairs = set(), set()
+        for ls in (r.get("legs_summary") or []):
+            rn = ls.get("race_number")
+            for h in (ls.get("all_horses_with_mp") or []):
+                nm = (h.get("name") or "").strip()
+                if nm and not _re.fullmatch(r"#?\d+", nm):
+                    names.add(nm.lower())
+                num = h.get("number") or h.get("horse_number")
+                if num is not None:
+                    pairs.add((rn, num))
+        return names, pairs
+
+    def _content_jaccard(r1, r2):
+        n1, p1 = _content_ids(r1)
+        n2, p2 = _content_ids(r2)
+        if n1 and n2:
+            u = n1 | n2
+            return len(n1 & n2) / len(u) if u else 0.0
+        u = p1 | p2
+        return len(p1 & p2) / len(u) if u else 0.0
+
     def _sort_key(r):
         is_rep = _is_repaired(r)
         has_time = bool((r.get("time") or "").strip())
@@ -2495,10 +2557,10 @@ def _reconcile_hippodromes(all_results):
         for o in survivors:
             if _venue(o) != v:
                 continue
-            ro = _races(o)
-            overlap = len(rr & ro) if (rr and ro) else 0
-            if overlap >= DEDUP_OVERLAP:
-                skip_reason = (f"venue=={v}, {overlap} yarış paylaşıyor "
+            cj = _content_jaccard(r, o)
+            if cj >= CONTENT_DUP_THR:
+                ro = _races(o)
+                skip_reason = (f"venue=={v}, at kadrosu %{cj*100:.0f} aynı "
                                f"(bu: {sorted(rr)} | tutulan: {sorted(ro)}) → kaymış pencere/dup")
                 break
         if skip_reason:
@@ -2541,6 +2603,8 @@ def _reconcile_hippodromes(all_results):
         by_venue[v].append(r)
     out = []
     for v in vorder:
+        # Çifte altılıda numara = yarış penceresi sırası (1. altılı [1-6], 2. altılı [4-9])
+        by_venue[v].sort(key=lambda r: min(_races(r)) if _races(r) else 99)
         for i, r in enumerate(by_venue[v], 1):
             r["hippodrome"] = v
             r["altili_no"] = i
@@ -2586,7 +2650,7 @@ def run_yerli_pipeline(target_date=None):
             logger.warning(f"Local AGF runtime error: {e}")
 
     if not use_proper:
-        tracks = _fetch_domestic_tracks()
+        tracks = _fetch_domestic_tracks(target_date)
         # tracks boş olabilir ama program_data'dan yine de prediction çıkarabiliriz
     else:
         tracks = None  # proper scraper kullanılacak, tracks gereksiz
@@ -2613,12 +2677,12 @@ def run_yerli_pipeline(target_date=None):
         for agf_alt in agf_altilis:
             # PATCH_FAZ2_TR_WHITELIST_v1: drop foreign hippodromes (BUG 1)
             if not _is_turkish_hippodrome(agf_alt.get('hippodrome', '')):
-                logger.info(f"[whitelist] skip foreign hippo: {agf_alt.get('hippodrome','?')}")
+                logger.warning(f"[whitelist] skip foreign hippo: {agf_alt.get('hippodrome','?')} (TR listesinde değil — gerçek TR venue ise _TR_HIPPODROMES_WHITELIST'e ekle)")
                 continue
             try:
                 result = _process_proper_altili(agf_alt, program_data, target_date, model_ok)
                 all_results.append(result)
-                processed_hippos.add(agf_alt.get('hippodrome', '').lower().replace(' hipodromu','').replace(' hipodrom',''))
+                processed_hippos.add(_tr_fold(agf_alt.get('hippodrome', '')))
             except Exception as e:
                 logger.error(f"  {agf_alt.get('hippodrome','?')} failed: {e}")
                 logger.exception('Pipeline error')
@@ -2637,7 +2701,7 @@ def run_yerli_pipeline(target_date=None):
                 try:
                     result = _process_track(track, program_data, target_date, model_ok)
                     all_results.append(result)
-                    processed_hippos.add(track.get('name', '').lower().replace(' hipodromu','').replace(' hipodrom',''))
+                    processed_hippos.add(_tr_fold(track.get('name', '')))
                 except Exception as e:
                     logger.error(f"  {track.get('name','?')} failed: {e}")
                     logger.exception('Pipeline error')
@@ -2651,8 +2715,7 @@ def run_yerli_pipeline(target_date=None):
     if program_data and model_ok:
         for ph in program_data:
             ph_name = ph.get('hippodrome', '')
-            import unicodedata as _ud
-            ph_lower = (_ud.normalize("NFKD", ph_name).encode("ascii", "ignore").decode("ascii").lower()).replace(' hipodromu','').replace(' hipodrom','')
+            ph_lower = _tr_fold(ph_name)
             # PATCH_FAZ2_TR_WHITELIST_v1: WHITELIST instead of blacklist (BUG 1)
             if not _is_turkish_hippodrome(ph_name):
                 continue
@@ -2867,9 +2930,9 @@ def _process_proper_altili(agf_alt, program_data, target_date, model_ok):
 
     # TJK HTML enrichment
     if program_data:
-        hippo_lower = hippo.lower().replace(' hipodromu', '').replace(' hipodrom', '')
+        hippo_lower = _tr_fold(hippo)
         for ph in program_data:
-            ph_lower = ph['hippodrome'].lower().replace(' hipodromu', '').replace(' hipodrom', '')
+            ph_lower = _tr_fold(ph['hippodrome'])
             if hippo_lower in ph_lower or ph_lower in hippo_lower:
                 try:
                     legs = enrich_legs_from_pdf(legs, ph.get('races', []))
@@ -3017,10 +3080,10 @@ def _process_proper_altili(agf_alt, program_data, target_date, model_ok):
     return result
 
 
-def _fetch_domestic_tracks():
+def _fetch_domestic_tracks(target_date=None):
     try:
         from tjk_scraper import fetch_domestic_races
-        tracks = fetch_domestic_races()
+        tracks = fetch_domestic_races(tarih=target_date)
         if tracks:
             logger.info(f"AGF (dashboard scraper): {len(tracks)} yerli hipodrom")
         return tracks or []
@@ -3063,10 +3126,10 @@ def _track_to_legs(track):
 
 def _enrich_legs(legs, hippo_name, program_data):
     if not program_data: return legs
-    hippo_lower = hippo_name.lower().replace(' hipodromu', '').replace(' hipodrom', '')
+    hippo_lower = _tr_fold(hippo_name)
     matched = None
     for ph in program_data:
-        pl = ph['hippodrome'].lower().replace(' hipodromu', '').replace(' hipodrom', '')
+        pl = _tr_fold(ph['hippodrome'])
         if hippo_lower in pl or pl in hippo_lower:
             matched = sorted(ph.get('races', []), key=lambda r: r.get('race_number', 0)); break
     if not matched: return legs
@@ -3106,9 +3169,9 @@ def _process_track(track, program_data, target_date, model_ok):
     if not legs:
         # AGF eşleşmedi — HTML-only fallback dene
         if program_data and model_ok:
-            hippo_lower = hippo.lower().replace(' hipodromu','').replace(' hipodrom','')
+            hippo_lower = _tr_fold(hippo)
             for ph in program_data:
-                pl = ph['hippodrome'].lower().replace(' hipodromu','').replace(' hipodrom','')
+                pl = _tr_fold(ph['hippodrome'])
                 if hippo_lower in pl or pl in hippo_lower:
                     races = ph.get('races', [])
                     if races and len(races) >= 6:
@@ -4670,7 +4733,7 @@ def _simple_kupon(legs, hippo, mode='dar'):
         bf = _ext_bf(hippo)
     except ImportError:
         # Inline fallback if engine.kupon not importable
-        _h = hippo.lower().replace(' hipodromu','').replace(' hipodrom','').strip()
+        _h = _tr_fold(hippo)
         _buyuk = {'istanbul','ankara','izmir','adana','bursa','kocaeli','antalya'}
         bf = 1.25 if any(b in _h for b in _buyuk) else 1.00
     budget = (1500 if mode == 'dar' else 4000)
@@ -4770,7 +4833,8 @@ def _build_legs_summary(legs):
             'agreement':round(leg.get('model_agreement',0),2),'leg_type':lt,'top3':top3,
             'all_horses_with_mp':all_horses_with_mp,
             'distance':leg.get('distance',''),'breed':'Arap' if leg.get('is_arab') else ('\u0130ngiliz' if leg.get('is_english') else ''),
-            'group_name':leg.get('group_name','') or '','track_type':leg.get('track_type','') or ''})
+            'group_name':leg.get('group_name','') or '','track_type':leg.get('track_type','') or '',
+            'race_time':leg.get('race_time','') or ''})
     return out
 
 
