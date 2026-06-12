@@ -323,8 +323,12 @@ def _rebuild_into(st, logger):
     for r in pools_new:
         key = r.get('hippo') or '?'
         merged[key] = _pool_entry(r, old.get(key))
+    # Yeni build'de olmayan eski havuz: gönderildiyse kayıt için tut; gönderilmediyse
+    # yapı değişmiştir (bayat tek havuz → çifte altılı split) → düşür. Tutulursa
+    # hayalet havuz 16:00 fallback deadline'ında bayat SON ÇAĞRI atıyor.
     for key, p in old.items():
-        merged.setdefault(key, p)
+        if key not in merged and (p.get('sent_fresh') or p.get('sent_stale')):
+            merged[key] = p
     st['pools'] = merged
     flats = sum(1 for p in merged.values() if p['agf_flat_legs'] > 0)
     _log(logger, f"[coupon_sched] rebuild OK · {len(pools_new)} havuz · bayat={flats}")
