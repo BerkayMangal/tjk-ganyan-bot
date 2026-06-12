@@ -7,12 +7,15 @@ Berkay direktifi:
   3. Model'i prod'a geri al — Public'i geçmesine gerek yok, Berkay model'i görmek istiyor
   4. Tüm hipodromlar → her altılıya 1 kupon
 
-Hibrit mantığı (V3):
-  - Baz seçim: AGF rank 1..k (Public)
-  - Her ata Model tier_score (audit/53 continuous) eklenir
-  - Sürpriz-gebe ayak (combined ≥ 0.40): AGF top-(k+1) + Model'in en yüksek tier_score'lu BONUS at
-  - Sağlam ayak (combined < 0.20): Public top-k, Model'in en düşük tier_score'lu ELE
-  - Orta ayak: değişiklik yok (sadece tier etiketi)
+Genişlik mantığı (V4, 2026-06-12 Berkay redesign — "ayak-önce, bütçe-sonra"):
+  - Her ayak için ÖNCE TARİH konuşur: yarış tipi (ırk+yaş+pist+mesafe+sınıf) →
+    historical_buckets_v2 (17k yarış, 2021-2026): bu tipi hangi AGF'li at kazanmış?
+  - TEK AT: tip favori-dostu + bugün güçlü AGF favorisi + MODEL de aynı atı 1. görüyor
+  - GENİŞ (5-7): tip sürprize gebe (kazanan sık AGF top-3 dışı) VEYA bugün AGF düz
+  - DAR (2-3): tip favori-dostu + bugün düzgün favori (ama TEK koşulları tam değil)
+  - ORTA (4-5): geri kalan
+  - Bütçe = SONUÇ (band normalizasyonu YOK); sadece HARD_MAX 4500 TL tavanı.
+  - Eşikler audit/86 walk-forward ile kalibre (n=429 altılı, OOS rank-stabil).
 
 Berkay karar verecek (öneri sistem, otomatik bahis değil).
 """
@@ -28,30 +31,34 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from dashboard.ranking_head import top_k_membership_probs
 from dashboard.feature_pipeline import build_X_from_db
-from dashboard.surprise import compute_surprise, historical_bucket_lookup
+from dashboard.surprise import compute_surprise
+from dashboard.race_type import parse_race_type, lookup_bucket
 
 MODELS_DIR = os.path.join(ROOT, 'model', 'trained_targets_v4')
-BUCKETS_FILE = os.path.join(ROOT, 'data', 'surprise', 'historical_buckets.json')
+BUCKETS_FILE = os.path.join(ROOT, 'data', 'surprise', 'historical_buckets_v2.json')
 
 UNIT_TL = 0.25
 HARD_MAX_TL = 4500.0
 HARD_MAX_COMBOS = int(HARD_MAX_TL / UNIT_TL)
-# audit/84 grid (768 konfig × 122 altılı): (6000,10000) + floor-3 eğri + banker-off
-# prod'u HER İKİ eksende dominate etti (hit6 24>23, ort maliyet 2285<3017 TL).
-# n=122 → winner's-curse payı var; ama banker-zararı FLB ile bağımsız örtüşüyor.
-TARGET_MIN_COMBOS = 6000
-TARGET_MAX_COMBOS = 10000
-L2_NEG = -0.05; L2_POS = 0.10
-W_L1 = 0.50; W_L2 = 0.50
-N_MAX_GLOBAL = 6
-# Banker KAPALI (999): AGF≥30 favoriler yapısal overbet (Phase 5.2.5 FLB ×0.51,
-# 50%+ dahil) + audit/84'te verimlilik cephesinin tamamı banker-off. Tek-at ayak
-# 6-bacak parlayda en kırılgan nokta — mekanizma korunuyor, doğal tetiklenmez.
-BANKER_AGF_MIN = 999
-BANKER_LAYER1_MAX = 0.30
-BANKER_BUCKET_TOL = 0.02
-SURPRISE_GEBE_THRESHOLD = 0.40
-SAGLAM_THRESHOLD = 0.20
+
+# ── Ayak-karar eşikleri (audit/86 walk-forward KALİBRE, 2026-06-12) ──
+# Kalibrasyon penceresi birincisi OOS'ta da birinci (rank-stabil, n=429 altılı).
+# Ayak tanısı: TEK→favori %47.5 kazanıyor; GENIS→%27.8 derin sürpriz (2.2× baseline).
+MIN_BUCKET_N = 150        # hücre güvenilirliği (altında hiyerarşide yukarı çık)
+TEK_FAV1_MIN = 0.42       # tip: favori kazanma oranı (0.40 OOS'ta gevşek çıktı)
+TEK_AGF_MIN = 38.0        # bugün: 1. favori AGF%
+TEK_L1_MAX = 0.35         # bugün: AGF dağılımı düz OLMASIN
+GENIS_SURP_MIN = 0.40     # tip: kazanan top3-dışı oranı (baseline 0.289)
+GENIS_L1_MIN = 0.60       # bugün: AGF düz → tarihten bağımsız geniş
+GENIS_TARGET = 5          # geniş taban (deep/düzlük ekstralarıyla 7'ye çıkar)
+GENIS_DEEP_EXTRA = 0.18   # tip: 6.+ sıra kazanan oranı yüksek → +1 at
+GENIS_L1_EXTRA = 0.70     # bugün: aşırı düz → +1 at
+N_MAX_GENIS = 8
+DAR_TOP3_MIN = 0.76       # tip: kazanan ilk-3'te oranı (baseline 0.711)
+DAR_L1_MAX = 0.40
+DAR_AGF_MIN = 30.0
+DAR_TARGET = 2            # dar hedef 2 at (tavan 3)
+ORTA_HI = 0.50            # orta ayak 4↔5 ayrımı (layer1 + tip sürprizi harmanı)
 
 # Continuous tier (audit/53)
 TIER_BASE = {('english',2025):1.00, ('english',2026):0.55,
@@ -146,6 +153,11 @@ def enrich_race_with_model(horses, year):
 
 
 def score_leg(horses, buckets_data):
+    """Ayak kararı: ÖNCE TARİH (yarış tipi → bucket v2), SONRA bugünün AGF şekli.
+
+    Verdict: TEK / GENIS / DAR / ORTA. Eski anahtarlar (is_banker, is_surprise_gebe,
+    is_saglam, bucket_fav, baseline) render/servis geri-uyumu için korunur.
+    """
     ri = horses[0]
     agf_arr = np.array([h.get('agf_value', 0) or 0 for h in horses], dtype=float)
     nedenler = []
@@ -159,40 +171,78 @@ def score_leg(horses, buckets_data):
         nedenler = sd.get('nedenler', []) or []
     except Exception:
         layer1 = 0.5
-    bucket = historical_bucket_lookup({
-        'distance': ri.get('distance', 1400),
-        'track_type': ri.get('track_type', 'dirt'),
-        'field_size': len(horses), 'group_name': ri.get('group_name', ''),
-    }, buckets_data.get('buckets', {}))
-    baseline = buckets_data.get('baseline', {}).get('fav_top1', 0.33)
-    if bucket is None:
-        layer2 = 0.5; bucket_fav = None
-    else:
-        bucket_fav = bucket['fav_top1_rate']
-        drop = baseline - bucket_fav
-        layer2 = float(np.clip((drop - L2_NEG) / (L2_POS - L2_NEG), 0, 1))
-    combined = float(np.clip(W_L1*layer1 + W_L2*layer2, 0, 1))
+    # AGF placeholder tespiti: TÜM atlar birebir aynı AGF (eşit-pay fallback,
+    # sayfa bayat/yayınlanmamış). Gerçek AGF asla tam eşit olmaz → layer1 nötr,
+    # karar SADECE tarihe dayanır ("halk kararsız" diye yazmayız).
+    agf_flat = bool(len(agf_arr) >= 4 and float(agf_arr.max()) > 0
+                    and float(agf_arr.max() - agf_arr.min()) <= 1e-6)
+    if agf_flat:
+        layer1 = 0.5
+        nedenler = []
+
+    parsed = parse_race_type(group_name=ri.get('group_name', ''),
+                             distance=ri.get('distance'),
+                             track_type=ri.get('track_type', ''))
+    hist, hist_level, hist_key = lookup_bucket(buckets_data, parsed, MIN_BUCKET_N)
+    baseline = float(((buckets_data or {}).get('baseline') or {}).get('fav1', 0.36))
+    hist_fav1 = float(hist.get('fav1', baseline))
+    hist_top3 = float(hist.get('top3', 0.711))
+    hist_deep = float(hist.get('deep', 0.124))
+    hist_surprise = 1.0 - hist_top3   # kazanan AGF top3 DIŞI oranı
+
     agf_top = max(horses, key=lambda h: h.get('agf_value', 0) or 0)
-    agf_top_val = agf_top.get('agf_value', 0) or 0
-    bucket_supports = (bucket_fav is None) or (bucket_fav >= baseline - BANKER_BUCKET_TOL)
-    is_banker = (agf_top_val >= BANKER_AGF_MIN and layer1 < BANKER_LAYER1_MAX and bucket_supports)
-    return {'layer1': layer1, 'layer2': layer2, 'combined': combined,
-            'is_banker': bool(is_banker), 'bucket_fav': bucket_fav, 'baseline': baseline,
-            'agf_top_val': agf_top_val, 'nedenler': nedenler,
-            'is_surprise_gebe': combined >= SURPRISE_GEBE_THRESHOLD,
-            'is_saglam': combined < SAGLAM_THRESHOLD}
+    agf_top_val = float(agf_top.get('agf_value', 0) or 0)
+    model_top = max(horses, key=lambda h: h.get('model_prob', 0) or 0)
+    model_agree = (float(model_top.get('model_prob', 0) or 0) > 0
+                   and model_top is agf_top)
+
+    # Verdict merdiveni: tarih konuşur, bugün onaylar
+    if (hist_fav1 >= TEK_FAV1_MIN and hist_surprise < GENIS_SURP_MIN
+            and agf_top_val >= TEK_AGF_MIN and model_agree and layer1 <= TEK_L1_MAX):
+        verdict = 'TEK'
+    elif hist_surprise >= GENIS_SURP_MIN or layer1 >= GENIS_L1_MIN:
+        verdict = 'GENIS'
+    elif hist_top3 >= DAR_TOP3_MIN and layer1 <= DAR_L1_MAX and agf_top_val >= DAR_AGF_MIN:
+        verdict = 'DAR'
+    else:
+        verdict = 'ORTA'
+
+    combined = float(np.clip(
+        0.5 * layer1 + 0.5 * np.clip((hist_surprise - 0.15) / 0.30, 0, 1), 0, 1))
+    return {'verdict': verdict, 'layer1': layer1, 'combined': combined,
+            'agf_flat': agf_flat,
+            'hist': hist, 'hist_level': hist_level, 'hist_key': hist_key,
+            'hist_surprise': hist_surprise, 'hist_deep': hist_deep,
+            'model_agree': bool(model_agree),
+            # geri-uyum anahtarları (render/leg_tag/pick_horses_hybrid/servis)
+            'is_banker': verdict == 'TEK',
+            'is_surprise_gebe': verdict == 'GENIS',
+            'is_saglam': verdict == 'DAR',
+            'bucket_fav': hist_fav1, 'baseline': baseline,
+            'agf_top_val': agf_top_val, 'nedenler': nedenler}
 
 
-def cap_floor(combined, n_field, is_banker):
-    if is_banker: return (1, 1, 1)
-    # audit/84 Pareto eğrisi (3,2,5,4,4,4): taban genişlik +1 (floor 3, cap 5, target 4)
-    floor = 3 + int(round(combined * 2))
-    cap = 5 + int(round(combined * 4))
-    target = 4 + int(round(combined * 4))
-    floor = min(floor, n_field)
-    cap = min(cap, n_field, N_MAX_GLOBAL)
-    target = min(max(target, floor), cap)
-    return floor, target, cap
+def leg_width(s, n_field):
+    """(floor, target, cap) — genişlik verdict'ten gelir, bütçe SONUÇtur."""
+    v = s['verdict']
+    if v == 'TEK':
+        return 1, 1, 1
+    if v == 'GENIS':
+        target = GENIS_TARGET
+        if s['hist_deep'] >= GENIS_DEEP_EXTRA:
+            target += 1    # tip derin sürprize gebe (6.+ favori kazanıyor)
+        if s['layer1'] >= GENIS_L1_EXTRA:
+            target += 1    # bugün AGF aşırı düz
+        cap = min(n_field, N_MAX_GENIS)
+        floor = min(4, n_field)
+        return floor, min(max(target, floor), cap), cap
+    if v == 'DAR':
+        return min(2, n_field), min(DAR_TARGET, n_field), min(3, n_field)
+    # ORTA: 4↔5 — bugünün düzlüğü + tipin sürpriz eğilimi harmanı
+    floor = min(3, n_field)
+    cap = min(5, n_field)
+    target = 5 if s['combined'] >= ORTA_HI else 4
+    return floor, min(max(target, floor), cap), cap
 
 
 def pick_horses_hybrid(horses, n, is_banker, score):
@@ -204,20 +254,23 @@ def pick_horses_hybrid(horses, n, is_banker, score):
     if is_banker:
         return [max(horses, key=lambda h: h.get('agf_value', 0) or 0)]
     by_agf = sorted(horses, key=lambda h: -(h.get('agf_value', 0) or 0))
-    by_tier = sorted(horses, key=lambda h: -h.get('tier_score', 0.5))
+    by_tier = sorted(horses, key=lambda h: (-h.get('tier_score', 0.5),
+                                            -(h.get('agf_value', 0) or 0)))
 
     if score['is_surprise_gebe'] and n >= 3:
-        # AGF top-(n-1) + best tier_score not in those
+        # AGF top-(n-1) + best tier_score not in those (eşitlikte AGF sırası)
         base_sel = list(by_agf[:n-1])
         base_ids = {id(h) for h in base_sel}
         bonus = next((h for h in by_tier if id(h) not in base_ids), None)
         if bonus: base_sel.append(bonus)
         return base_sel[:n]
     elif score['is_saglam'] and n >= 3:
-        # AGF top-(n+1) — eliminate lowest tier_score
+        # AGF top-(n+1) — en düşük tier eleriz; 1. favori KORUNUR (DAR=favori-dostu)
         candidates = list(by_agf[:min(n+1, len(horses))])
         if len(candidates) > n:
-            worst = min(candidates, key=lambda h: h.get('tier_score', 0.5))
+            worst = min(candidates[1:],
+                        key=lambda h: (h.get('tier_score', 0.5),
+                                       h.get('agf_value', 0) or 0))
             candidates.remove(worst)
         return candidates[:n]
     else:
@@ -225,40 +278,26 @@ def pick_horses_hybrid(horses, n, is_banker, score):
 
 
 def optimize_budget(race_legs, scores):
-    is_banker = [bool(s['is_banker']) for s in scores]
-    cf = [cap_floor(s['combined'], len(r), b) for r, s, b in zip(race_legs, scores, is_banker)]
-    n_per_leg = [c[1] for c in cf]
-    floors = [c[0] for c in cf]; caps = [c[2] for c in cf]
+    """Ayak-önce: genişlikler verdict'ten; bütçe ÇIKTI (band normalizasyonu YOK).
+
+    Tek müdahale: HARD_MAX tavanı aşılırsa en az sürprize-gebe ayaktan kırp.
+    """
+    is_banker = [s['verdict'] == 'TEK' for s in scores]
+    widths = [leg_width(s, len(r)) for r, s in zip(race_legs, scores)]
+    floors = [w[0] for w in widths]
+    n_per_leg = [w[1] for w in widths]
+    caps = [w[2] for w in widths]
+
     def cc(ns):
         c = 1
         for n in ns: c *= max(1, n)
         return c
     initial = cc(n_per_leg)
-    for _ in range(150):
-        combos = cc(n_per_leg)
-        if TARGET_MIN_COMBOS <= combos <= TARGET_MAX_COMBOS: break
-        if combos > HARD_MAX_COMBOS or combos > TARGET_MAX_COMBOS:
-            cand = [(i, scores[i]['combined']) for i in range(len(race_legs))
-                    if not is_banker[i] and n_per_leg[i] > floors[i]]
-            if not cand: break
-            cand.sort(key=lambda x: x[1])
-            n_per_leg[cand[0][0]] -= 1
-            continue
-        cand_grow = [(i, scores[i]['combined']) for i in range(len(race_legs))
-                     if not is_banker[i] and n_per_leg[i] < caps[i]]
-        if cand_grow:
-            cand_grow.sort(key=lambda x: -x[1])
-            n_per_leg[cand_grow[0][0]] += 1
-            continue
-        banker_idx = [i for i in range(len(race_legs)) if is_banker[i]]
-        if banker_idx:
-            banker_idx.sort(key=lambda i: -scores[i]['combined'])
-            i = banker_idx[0]
-            is_banker[i] = False
-            f, t, c = cap_floor(scores[i]['combined'], len(race_legs[i]), False)
-            floors[i] = f; caps[i] = c; n_per_leg[i] = t
-            continue
-        break
+    while cc(n_per_leg) > HARD_MAX_COMBOS:
+        cand = [i for i in range(len(race_legs)) if n_per_leg[i] > floors[i]]
+        if not cand: break
+        i = min(cand, key=lambda j: (scores[j]['hist_surprise'], scores[j]['layer1']))
+        n_per_leg[i] -= 1
     selections = [pick_horses_hybrid(r, n, b, s)
                    for r, n, b, s in zip(race_legs, n_per_leg, is_banker, scores)]
     return selections, cc(n_per_leg), n_per_leg, initial, is_banker, floors, caps
@@ -293,12 +332,16 @@ def hippo_score(race_legs):
 
 
 def render_surprise_summary(race_legs, scores):
-    """Üst kutu: hangi ayak sürprize açık, hangisi sağlam — düz Türkçe."""
-    surps = [str(i+1) for i, s in enumerate(scores) if s['is_surprise_gebe']]
-    sags = [str(i+1) for i, s in enumerate(scores) if s['is_saglam']]
-    if not surps and not sags:
+    """Üst kutu: hangi ayak tek/geniş/dar — düz Türkçe."""
+    teks = [str(i+1) for i, s in enumerate(scores) if s['verdict'] == 'TEK']
+    surps = [str(i+1) for i, s in enumerate(scores) if s['verdict'] == 'GENIS']
+    sags = [str(i+1) for i, s in enumerate(scores) if s['verdict'] == 'DAR']
+    if not teks and not surps and not sags:
         return ""
     L = ["🎯 <b>GÜNÜN OKUMASI</b>"]
+    if teks:
+        L.append(f"🔒 Tek geçtiğimiz ayak{'lar' if len(teks) > 1 else ''}: "
+                 f"<b>{', '.join(teks)}</b> → hakkı sürprizli ayaklara harcadık")
     if surps:
         L.append(f"🌐 Sürprize açık ayak{'lar' if len(surps) > 1 else ''}: "
                  f"<b>{', '.join(surps)}</b> → çok at yazdık")
@@ -309,24 +352,28 @@ def render_surprise_summary(race_legs, scores):
 
 
 def _leg_why(s, cb, broken):
-    """Ayak gerekçesi — düz Türkçe, jargonsuz."""
-    if cb:
-        return f"Halkın %{s['agf_top_val']:.0f}'i tek atta birleşmiş → tek geçiyoruz"
-    parts = []
-    if broken:
-        parts.append("Tek geçilebilirdi ama garanti için yanına at ekledik")
-    elif s['is_surprise_gebe']:
-        ned = [n.split('—')[-1].strip() for n in (s.get('nedenler') or [])[:2]]
-        why = "Sürpriz çıkabilir" + (f" ({', '.join(ned)})" if ned else "")
-        parts.append(why + " → geniş tuttuk")
-    elif s['is_saglam']:
-        parts.append("Beklenen sonuç — favoriler güçlü → dar tuttuk")
-    bf = s.get('bucket_fav')
-    if bf is not None and bf < s['baseline'] - 0.02:
-        parts.append(f"bu tip yarışta favori sık kaybediyor (geçmişte %{bf*100:.0f} kazanmış)")
-    elif bf is not None and bf > s['baseline'] + 0.02:
-        parts.append(f"bu tip yarışta favori güvenilir (geçmişte %{bf*100:.0f} kazanmış)")
-    return " · ".join(parts) if parts else ""
+    """Ayak gerekçesi — düz Türkçe: önce geçmiş ne demiş, sonra bugün ne diyor."""
+    v = s.get('verdict', 'ORTA')
+    hf = s.get('bucket_fav', 0.36)
+    hs = s.get('hist_surprise', 0.29)
+    if v == 'TEK':
+        return (f"Bu tip yarışı geçmişte %{hf*100:.0f} oranla 1. favori kazanmış + "
+                f"halkın %{s['agf_top_val']:.0f}'i bu atta + model de aynı atı 1. görüyor "
+                f"→ tek geçiyoruz")
+    if v == 'GENIS':
+        parts = []
+        if hs >= GENIS_SURP_MIN:
+            parts.append(f"Bu tip yarışta kazanan %{hs*100:.0f} ihtimalle "
+                         f"ilk-3 favori dışından çıkmış")
+        if s.get('layer1', 0) >= GENIS_L1_MIN and not s.get('agf_flat'):
+            parts.append("bugün halk kararsız (AGF düz)")
+        if not parts:
+            parts.append("yarış açık görünüyor")
+        return " + ".join(parts) + " → geniş tuttuk"
+    if v == 'DAR':
+        return (f"Bu tip yarışta kazanan %{(1-hs)*100:.0f} ilk-3 favoriden çıkmış + "
+                f"bugün favori belirgin → dar tuttuk")
+    return ""
 
 
 def render(hippo, race_legs, scores, selections, combos, n_per_leg, initial,
@@ -336,6 +383,9 @@ def render(hippo, race_legs, scores, selections, combos, n_per_leg, initial,
          f"💰 {combos:,} kombinasyon × {UNIT_TL:.2f} TL = <b>{cost:,.2f} TL</b>"]
     if model_failed_count > 0:
         L.append(f"⚠ {model_failed_count} ayakta model tahmini yok (yeni atlar) → halk yüzdesiyle seçildi")
+    flat_count = sum(1 for s in scores if s.get('agf_flat'))
+    if flat_count > 0:
+        L.append(f"⚠ {flat_count} ayakta AGF henüz yayınlanmamış → karar tarihsel istatistiğe dayalı")
     L.append("⚠ <i>Analiz aracı — kâr garantisi yok, son karar senin.</i>")
     L.append("")
     summary = render_surprise_summary(race_legs, scores)
@@ -398,7 +448,7 @@ def main():
     try:
         with open(BUCKETS_FILE) as f: buckets_data = json.load(f)
     except Exception:
-        buckets_data = {'baseline':{'fav_top1':0.33}, 'buckets':{}}
+        buckets_data = {'baseline': {}, 'levels': {}}
 
     rows = fetch_day_races(target_date)
     if not rows: print(f"⚠ Veri yok"); return

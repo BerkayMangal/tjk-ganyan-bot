@@ -122,7 +122,7 @@ def _all_hippo_candidates_from_pipeline(target_date, engine):
     try:
         with open(engine.BUCKETS_FILE) as f: buckets_data = json.load(f)
     except Exception:
-        buckets_data = {'baseline':{'fav_top1':0.33}, 'buckets':{}}
+        buckets_data = {'baseline': {}, 'levels': {}}
     try:
         result = run_yerli_pipeline(target_date)
     except Exception as e:
@@ -162,7 +162,7 @@ def _all_hippo_candidates(target_date, engine, mode):
     try:
         with open(engine.BUCKETS_FILE) as f: buckets_data = json.load(f)
     except Exception:
-        buckets_data = {'baseline':{'fav_top1':0.33}, 'buckets':{}}
+        buckets_data = {'baseline': {}, 'levels': {}}
     rows = engine.fetch_day_races(target_date)
     if not rows: return [], buckets_data
     by_hippo = defaultdict(lambda: defaultdict(list))
