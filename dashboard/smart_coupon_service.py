@@ -227,6 +227,18 @@ def _build_one(engine, mode, c):
         first_time = str(c['race_legs'][0][0].get('start_time') or '')[:5]
     except Exception:
         first_time = ''
+    # AGF tazelik (coupon_scheduler gönderim kararı): flat-AGF guard'lı ayak sayısı
+    try:
+        agf_flat_legs = sum(1 for s in c['scores']
+                            if isinstance(s, dict) and s.get('agf_flat'))
+    except Exception:
+        agf_flat_legs = 0
+    # İçerik parmak izi (T-45 değişim tespiti): ayak başına seçilen at numaraları
+    try:
+        sel_fp = '|'.join(','.join(str(h.get('horse_number', '?')) for h in leg)
+                          for leg in sel)
+    except Exception:
+        sel_fp = ''
     return {
         'status': 'ok', 'mode': mode, 'hippo': hippo_name,
         'rank_score': c['rank_score'], 'first_time': first_time,
@@ -234,6 +246,7 @@ def _build_one(engine, mode, c):
         'text': text, 'n_legs': len(sel),
         'banker_count': sum(1 for b in cb if b),
         'model_failed': c.get('model_failed', 0),
+        'agf_flat_legs': agf_flat_legs, 'sel_fp': sel_fp,
     }
 
 

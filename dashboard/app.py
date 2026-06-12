@@ -405,33 +405,28 @@ try:
         DAILY_HOUR = int(os.environ.get("TJK_DAILY_COUPON_HOUR", "9"))
         DAILY_MIN = int(os.environ.get("TJK_DAILY_COUPON_MINUTE", "0"))
         def _scheduled_daily_coupon():
+            # AGF-gated gönderim (Berkay 2026-06-12): kupon HER ZAMAN AGF
+            # yayınlandıktan sonra gider. AGF tazeyse hemen; bayatsa watcher bekler.
             try:
-                from datetime import date as _date
-                from dashboard.smart_coupon_service import build_all_hippos, send_telegram
-                today = _date.today()
-                # Berkay direktif: TÜM hipodromlar → her birine 1 kupon
-                all_results = build_all_hippos(today)
-                ok_count = sum(1 for r in all_results if r.get('status') == 'ok')
-                if ok_count == 0:
-                    app.logger.warning(f"[daily_coupon] no hippo coupons built")
-                    return
-                # Tek genel header + her hippo için ayrı mesaj
-                header_text = (f"📊 <b>GÜNLÜK ANALİZ — {today}</b>\n"
-                               f"{ok_count} kupon (çifte altılı günleri hipodrom başına 2)\n"
-                               f"⚠ Analiz aracı, Berkay karar verir.")
-                send_telegram(header_text)
-                for r in all_results:
-                    if r.get('status') != 'ok': continue
-                    tg = send_telegram(r['text'])
-                    app.logger.info(f"[daily_coupon] {r['hippo']} · {r['combos']:,} kombi · "
-                                    f"{r['cost_tl']:.0f} TL · model_fail={r.get('model_failed',0)} · "
-                                    f"TG={tg.get('sent')}")
+                from dashboard.coupon_scheduler import morning_job
+                morning_job(app.logger)
             except Exception as e:
                 app.logger.warning(f"[daily_coupon] fail: {e}")
         scheduler.add_job(_scheduled_daily_coupon, 'cron',
                           hour=DAILY_HOUR, minute=DAILY_MIN,
                           id='daily_smart_coupon', replace_existing=True)
         app.logger.info(f"⏰ Daily smart coupon aktif — {DAILY_HOUR:02d}:{DAILY_MIN:02d} İstanbul")
+        if os.environ.get("TJK_AGF_WATCHER", "1") == "1":
+            def _scheduled_agf_watcher():
+                try:
+                    from dashboard.coupon_scheduler import watcher_tick
+                    watcher_tick(app.logger)
+                except Exception as e:
+                    app.logger.warning(f"[agf_watcher] fail: {e}")
+            scheduler.add_job(_scheduled_agf_watcher, 'cron', minute='*/10',
+                              id='agf_coupon_watcher', replace_existing=True)
+            app.logger.info("⏰ AGF watcher aktif (*/10 dk; flip→gönder, T-45 güncelle, "
+                            "T-20 son çare; TJK_AGF_WATCHER=0 ile kapat)")
     scheduler.start()
     SCHEDULER_OK = True
     app.logger.info(
