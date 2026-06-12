@@ -239,6 +239,25 @@ def _build_one(engine, mode, c):
                           for leg in sel)
     except Exception:
         sel_fp = ''
+    # AGF snapshot (anomaly watcher girdisi): ayak başına at→AGF% haritası
+    agf_snapshot = []
+    try:
+        for idx, leg in enumerate(c['race_legs']):
+            if not leg:
+                continue
+            agf_snapshot.append({
+                'leg_no': idx + 1,
+                'race_no': leg[0].get('race_number'),
+                'time': str(leg[0].get('start_time') or '')[:5],
+                'horses': [
+                    {'no': h.get('horse_number'),
+                     'name': h.get('horse_name', '?'),
+                     'pct': float(h.get('agf_value') or 0)}
+                    for h in leg
+                ],
+            })
+    except Exception:
+        agf_snapshot = []
     return {
         'status': 'ok', 'mode': mode, 'hippo': hippo_name,
         'rank_score': c['rank_score'], 'first_time': first_time,
@@ -247,6 +266,7 @@ def _build_one(engine, mode, c):
         'banker_count': sum(1 for b in cb if b),
         'model_failed': c.get('model_failed', 0),
         'agf_flat_legs': agf_flat_legs, 'sel_fp': sel_fp,
+        'agf_snapshot': agf_snapshot,
     }
 
 

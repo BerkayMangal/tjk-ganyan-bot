@@ -25,6 +25,14 @@ from datetime import datetime, timedelta
 
 import pytz
 
+try:
+    from dashboard import agf_anomaly as _agf_anom
+except ImportError:
+    try:
+        import agf_anomaly as _agf_anom
+    except ImportError:
+        _agf_anom = None
+
 IST = pytz.timezone('Europe/Istanbul')
 PROBE_URL = 'https://www.agftablosu.com/agf-tablosu'
 
@@ -169,6 +177,33 @@ def _build_pools(now):
     return [r for r in res if r.get('status') == 'ok']
 
 
+def _record_snapshots(st, pools_new, now):
+    """Build sonrası her havuzun AGF snapshot'ını anomaly history'sine ekle."""
+    if _agf_anom is None:
+        return
+    for r in pools_new:
+        snap = r.get('agf_snapshot') or []
+        if not snap:
+            continue
+        key = r.get('hippo') or '?'
+        try:
+            _agf_anom.record_snapshot(st, key, snap, now)
+        except Exception:
+            pass
+
+
+def _maybe_send_anomalies(st, now, logger):
+    """TJK_AGF_ANOMALY (default 1): pool'ları tara, hareketli atları bildir."""
+    if _agf_anom is None:
+        return
+    if os.environ.get('TJK_AGF_ANOMALY', '1') != '1':
+        return
+    try:
+        _agf_anom.maybe_announce(st, _svc().send_telegram, now, logger)
+    except Exception as e:
+        _log(logger, f"[agf_anomaly] skip: {repr(e)[:200]}")
+
+
 def _send(p, prefix, logger):
     text = (prefix + '\n' + p['text']) if prefix else p['text']
     tg = _svc().send_telegram(text)
@@ -195,10 +230,16 @@ def _morning_locked(logger, bootstrap=False):
     pools = _build_pools(now)
     old = _load_state(day) or {'pools': {}}
     st = {'date': day, 'last_build': now.isoformat(),
-          'agf_live': bool(old.get('agf_live')), 'pools': {}}
+          'agf_live': bool(old.get('agf_live')), 'pools': {},
+          'agf_history': old.get('agf_history') or {},
+          'anomaly_sent': old.get('anomaly_sent') or {}}
     for r in pools:
         key = r.get('hippo') or '?'
         st['pools'][key] = _pool_entry(r, (old.get('pools') or {}).get(key))
+    # AGF snapshot: sadece taze AGF olan havuzlar (bayatta scores=0 → gürültü)
+    fresh_pools = [r for r in pools if int(r.get('agf_flat_legs') or 0) == 0]
+    if fresh_pools:
+        _record_snapshots(st, fresh_pools, now)
     fresh = [p for p in st['pools'].values() if p['agf_flat_legs'] == 0]
     stale = [p for p in st['pools'].values() if p['agf_flat_legs'] > 0]
     if fresh:
@@ -266,6 +307,7 @@ def _tick_locked(logger):
                    if p['sent_fresh'] and not p['refresh_done'] and not p['missed']
                    and _in_refresh_window(p, now)]
     if not waiting and not refreshable:
+        _maybe_send_anomalies(st, now, logger)
         _save_state(day, st)
         return
 
@@ -304,6 +346,7 @@ def _tick_locked(logger):
                 _send(p, "⏰ <b>SON ÇAĞRI</b> — AGF hâlâ yayınlanmadı; kart tarihsel "
                          f"istatistikle (ilk ayak {ft})", logger)
                 p['sent_stale'] = True
+    _maybe_send_anomalies(st, now, logger)
     _save_state(day, st)
 
 
@@ -318,6 +361,10 @@ def _rebuild_into(st, logger):
     if not pools_new:
         _log(logger, "[coupon_sched] rebuild 0 havuz")
         return False
+    # AGF snapshot (anomaly): rebuild = taze AGF okuması; bayat havuzları atla
+    fresh_pools = [r for r in pools_new if int(r.get('agf_flat_legs') or 0) == 0]
+    if fresh_pools:
+        _record_snapshots(st, fresh_pools, now)
     old = st.get('pools') or {}
     merged = {}
     for r in pools_new:
