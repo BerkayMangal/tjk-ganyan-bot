@@ -6092,6 +6092,21 @@ def run_daily_recap(target_date_str=None, send_telegram=False):
             logger.warning(f"[recap] fetch_results failed: {e}")
             results_status = f"error: {e}"
 
+        # Phase 1E.2 FIX (2026-06-13): bet_diary outcome update — bu çağrı PROD recap
+        # yolunda EKSİKTİ (yalnız LEGACY engine/retro.py'de vardı → tetiklenmiyordu →
+        # did_we_win hep None → model kalibrasyon dataseti boş). Burada eklendi:
+        # results 'ok' olduğunda her gün bet_diary outcomes güncellenir.
+        if raw_results:
+            try:
+                try:
+                    from bet_diary_writer import update_outcomes_for_date
+                except ImportError:
+                    from dashboard.bet_diary_writer import update_outcomes_for_date
+                _bo = update_outcomes_for_date(target_dt, raw_results)
+                logger.info(f"[recap] bet_diary outcomes: {_bo}")
+            except Exception as _e_bo:
+                logger.warning(f"[recap] bet_diary outcome update failed: {_e_bo}")
+
         # Phase 6: hybrid eşleşme — önce race_number (robust, snapshot'ın altılı tanımına
         # bağımsız), fallback altılı_no. Winner'ların yeni 'race_number' alanı eklendi (tjk_sehir).
         official_by_venue_race = {}   # (hippo_norm, race_no) → horse_no

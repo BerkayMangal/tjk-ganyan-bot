@@ -113,13 +113,20 @@ def update_outcomes_for_date(target_date: Any, results: Any,
         if not wmap:
             return out
 
-        since = None
+        # Phase 1E.2 BUG FIX (2026-06-13): tarih dışı kayıt match etmesin.
+        # Önceki: since=date-1d (sadece alt sınır) → gelecek tüm günleri dahil ediyordu;
+        # aynı (hippo, altili_no, leg) farklı gün outcome'ları sahte üst-üste update yapıyordu.
+        # Yeni: target_date GÜNÜNE ait kayıtları filtre et (predicted_at date == target_date).
+        target_iso = None
         if hasattr(target_date, "isoformat"):
-            from datetime import timedelta
-            since = (target_date - timedelta(days=1)).isoformat()
+            target_iso = target_date.isoformat()[:10]
 
-        for rec in bd.read_bets(since=since):
+        for rec in bd.read_bets():
             try:
+                if target_iso is not None:
+                    rec_day = (rec.get("predicted_at") or "")[:10]
+                    if rec_day != target_iso:
+                        continue
                 key = (_norm_hippo(rec.get("hippodrome")), rec.get("altili_no"),
                        rec.get("race_number"))
                 if key not in wmap:
