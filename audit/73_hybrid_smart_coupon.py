@@ -376,6 +376,56 @@ def _leg_why(s, cb, broken):
     return ""
 
 
+def _collect_value_picks(race_legs, mp_min=0.25, gap_min=0.15, agf_max=0.30, max_picks=5):
+    """Modelin halktan ayrıştığı 'value pick' atları seç (Phase 5.8 underdog edge).
+
+    Şart: model_prob ≥ mp_min AND (model_prob − agf) ≥ gap_min AND agf ≤ agf_max.
+    Ayak başına en güçlü 1 at (aynı ayakta çoklu spam yok). Top-K (gap büyük → öne).
+    Veri/eşik kalibre etmek için: phase 5.2.6 grid raporu sonrası eşikler güncellenir.
+    """
+    picks = []
+    for leg_idx, horses in enumerate(race_legs, 1):
+        if not horses: continue
+        best = None
+        for h in horses:
+            try:
+                mp = float(h.get('model_prob') or 0)  # 0-1
+                agf = float(h.get('agf_value') or 0) / 100.0  # 0-1
+            except Exception:
+                continue
+            if mp < mp_min or agf > agf_max:
+                continue
+            gap = mp - agf
+            if gap < gap_min:
+                continue
+            if best is None or gap > best['gap']:
+                best = {
+                    'leg': leg_idx,
+                    'race_no': h.get('race_number') or leg_idx,
+                    'horse_no': h.get('horse_number') or '?',
+                    'name': _name_clean(h.get('horse_name') or '?')[:18],
+                    'agf': agf * 100, 'mp': mp * 100, 'gap': gap,
+                }
+        if best is not None:
+            picks.append(best)
+    picks.sort(key=lambda p: -p['gap'])
+    return picks[:max_picks]
+
+
+def render_value_picks(race_legs):
+    picks = _collect_value_picks(race_legs)
+    if not picks:
+        return ''
+    L = ['─' * 20, '🎯 <b>MODEL\'İN GİZLİ DEĞERİ</b>',
+         '<i>(model halkın gözden kaçırdığı atları görüyor)</i>', '']
+    for p in sorted(picks, key=lambda x: x['leg']):
+        L.append(f"  <b>{p['leg']}. AYAK</b> · #{p['horse_no']} {p['name']} — "
+                 f"halk %{p['agf']:.0f} · model %{p['mp']:.0f}")
+    L.append('')
+    L.append('<i>⚠ Edge iddiası yok, sadece model görüşü.</i>')
+    return '\n'.join(L)
+
+
 def render(hippo, race_legs, scores, selections, combos, n_per_leg, initial,
             current_banker, floors, caps, model_failed_count):
     cost = combos * UNIT_TL
@@ -433,6 +483,10 @@ def render(hippo, race_legs, scores, selections, combos, n_per_leg, initial,
                 f"#{h.get('horse_number')} {_name_clean(h.get('horse_name') or '?')[:10]}"
                 for h in ranked4)
             L.append(f"   🤖 Modelin ilk 4 tahmini: {t4_str}")
+        L.append("")
+    value_block = render_value_picks(race_legs)
+    if value_block:
+        L.append(value_block)
         L.append("")
     L.append("─" * 30)
     L.append("<i>Ayak türleri: 🔒 tek at · ✅ sağlam (az at) · ◆ orta · 🌐 sürprize açık (çok at)</i>")

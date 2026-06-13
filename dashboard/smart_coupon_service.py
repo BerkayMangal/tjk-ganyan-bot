@@ -97,7 +97,23 @@ def _yerli_pipeline_to_audit73_legs(hippodrome_dict, target_date, engine):
             mt4 = h.get('model_top4')
             if mt3 is not None: mt3 = float(mt3)
             if mt4 is not None: mt4 = float(mt4)
-            ts = engine.tier_score_continuous(breed, year, mp, agf) if any_model else 0.5
+            # FLB compensator (Phase 5.5 → 5.5 LIVE 2026-06-13). TJK_FLB_ACTIVE=1 default:
+            # tier_score = flb_compensated mp ile hesaplanır (kupon seçim'i FLB-aware).
+            # UX'te "model %Y" orijinal mp gösterir; sadece SEÇİM mekaniği değişir.
+            # Kill-switch: TJK_FLB_ACTIVE=0 → no-op (eski davranış).
+            mp_eff = mp
+            flb_mult = 1.0
+            try:
+                if os.environ.get('TJK_FLB_ACTIVE', '1') == '1':
+                    try:
+                        from calibration_loader import flb_multiplier as _flbm
+                    except ImportError:
+                        from dashboard.calibration_loader import flb_multiplier as _flbm
+                    flb_mult = float(_flbm(agf))
+                    mp_eff = max(0.0, min(1.0, mp * flb_mult))
+            except Exception:
+                mp_eff = mp; flb_mult = 1.0
+            ts = engine.tier_score_continuous(breed, year, mp_eff, agf) if any_model else 0.5
             horses_out.append({
                 'horse_number': hno, 'horse_name': h.get('name', f'#{hno}'),
                 'agf_value': agf, 'agf_rank': rank_map.get(hno, 0),
@@ -106,6 +122,7 @@ def _yerli_pipeline_to_audit73_legs(hippodrome_dict, target_date, engine):
                 'race_date': target_date, 'hippo': hippo_name,
                 'will_not_run': False, 'fixed_odds': None,
                 'model_top3': mt3, 'model_top4': mt4, 'model_prob': mp,
+                'model_prob_eff': mp_eff, 'flb_multiplier': flb_mult,
                 'tier_score': ts, 'tier_mark': engine.tier_marker(ts),
                 'breed': breed,
             })
