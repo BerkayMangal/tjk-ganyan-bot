@@ -376,12 +376,15 @@ def _leg_why(s, cb, broken):
     return ""
 
 
-def _collect_value_picks(race_legs, mp_min=0.25, gap_min=0.15, agf_max=0.30, max_picks=5):
-    """Modelin halktan ayrıştığı 'value pick' atları seç (Phase 5.8 underdog edge).
+def _collect_value_picks(race_legs, mp_min=0.35, agf_max=0.30, max_picks=5):
+    """SİB ilk-4 value pick atları seç (Phase 5.8.3 — Berkay yeni eşik 2026-06-14).
 
-    Şart: model_prob ≥ mp_min AND (model_prob − agf) ≥ gap_min AND agf ≤ agf_max.
-    Ayak başına en güçlü 1 at (aynı ayakta çoklu spam yok). Top-K (gap büyük → öne).
-    Veri/eşik kalibre etmek için: phase 5.2.6 grid raporu sonrası eşikler güncellenir.
+    Şart: model_prob ≥ mp_min (default %35) AND agf ≤ agf_max (default %30).
+    Backtest (audit/91, n=346): hit %59 vs base %40, lift +%48, p<0.0001.
+
+    Ayak başına en güçlü 1 at (aynı ayakta çoklu spam yok). Top-K (mp büyük → öne).
+    Önceki eşik (mp≥%25, gap≥15pp) Berkay'ın AGF-bağımsız önerisiyle değiştirildi:
+    "model %35'in üstü ilk-4 hit %59" → daha az pick, daha yüksek p, daha temiz sinyal.
     """
     picks = []
     for leg_idx, horses in enumerate(race_legs, 1):
@@ -395,20 +398,18 @@ def _collect_value_picks(race_legs, mp_min=0.25, gap_min=0.15, agf_max=0.30, max
                 continue
             if mp < mp_min or agf > agf_max:
                 continue
-            gap = mp - agf
-            if gap < gap_min:
-                continue
-            if best is None or gap > best['gap']:
+            if best is None or mp > best['mp_raw']:
                 best = {
                     'leg': leg_idx,
                     'race_no': h.get('race_number') or leg_idx,
                     'horse_no': h.get('horse_number') or '?',
                     'name': _name_clean(h.get('horse_name') or '?')[:18],
-                    'agf': agf * 100, 'mp': mp * 100, 'gap': gap,
+                    'agf': agf * 100, 'mp': mp * 100,
+                    'mp_raw': mp, 'gap': mp - agf,
                 }
         if best is not None:
             picks.append(best)
-    picks.sort(key=lambda p: -p['gap'])
+    picks.sort(key=lambda p: -p['mp_raw'])
     return picks[:max_picks]
 
 
@@ -423,14 +424,17 @@ def render_value_picks(race_legs):
     if not picks:
         return ''
     L = ['─' * 20, '📊 <b>SİB İLK-4 ÖNERİSİ</b>',
-         '<i>(disiplinli tek-ticket · backtest: n=37, hit %54 vs %40 baseline, '
-         'lift +%35, p=0.06)</i>', '']
+         '<i>(model %35+ AND halk %30-  ·  backtest: n=346, hit %59 vs %40 '
+         'baseline, lift +%48, p&lt;0.0001)</i>', '']
     for p in sorted(picks, key=lambda x: x['leg']):
+        mult = p['mp'] / max(p['agf'], 0.5)
         L.append(f"  <b>{p['leg']}. AYAK</b> · #{p['horse_no']} {p['name']} — "
                  f"halk %{p['agf']:.0f} · model %{p['mp']:.0f} "
-                 f"(model {p['mp']/max(p['agf'],0.5):.1f}× değer)")
+                 f"(model {mult:.1f}× değer)")
     L.append('')
     L.append('<i>⚠ SİB pazarı pari-mutuel değil; oran sabit, halka karşı bahis.</i>')
+    L.append('<i>⚠ Model %70+ verdiği atlarda lift düşer (kalibrasyonsuz aşırı '
+             'güven) — dikkat.</i>')
     L.append('<i>⚠ +EV garantisi yok — gerçek ROI 2-3 hafta gözlem sonrası.</i>')
     return '\n'.join(L)
 
