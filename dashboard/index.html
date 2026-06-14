@@ -63,6 +63,7 @@ input:focus{outline:1px solid #333}input[type=number]{-moz-appearance:textfield}
       <button class="tab-btn active" onclick="switchView('races')">YARISLAR</button>
       <button class="tab-btn" onclick="switchView('dutch')">DUTCH</button>
       <button class="tab-btn" onclick="switchView('yerli')">YERLI KUPON</button>
+      <button class="tab-btn" onclick="switchView('sib')" style="color:var(--yellow);font-weight:800">🎯 BUNU OYNA</button>
       <button class="tab-btn" onclick="switchView('strategy')">STRATEJI</button>
     </div>
   </div>
@@ -221,7 +222,7 @@ function getDemoData(){return{timestamp:new Date().toISOString(),source:"demo",t
 ]}}
 
 // ─── RENDER ───
-function render(){if(!D)return;let m=document.getElementById("main");if(view==="races")renderRaces(m);else if(view==="dutch")renderDutch(m);else if(view==="yerli")renderYerli(m);else renderStrategy(m)}
+function render(){if(!D)return;let m=document.getElementById("main");if(view==="races")renderRaces(m);else if(view==="dutch")renderDutch(m);else if(view==="yerli")renderYerli(m);else if(view==="sib")renderSibTop4(m);else renderStrategy(m)}
 
 function renderRaces(el){
   let tracks=region==="ALL"?D.tracks:D.tracks.filter(t=>t.country===region);
@@ -467,6 +468,92 @@ function renderYerli(el){
     })
     .catch(err => {
       el.innerHTML = `<div style="text-align:center;padding:60px;color:var(--red)">Kupon yüklenemedi: ${err.message}<br><span style="font-size:11px;color:var(--text4)">/api/smart_coupon/all endpoint kontrol edin</span></div>`;
+    });
+}
+
+
+// Phase 5.8.4 — 🎯 BUNU OYNA İLK-4 SİB kanalı.
+// Endpoint: /api/sib_top4/today · sadece ALTIN + PREMIUM pick'ler (backtest +%145..+%195 lift).
+// Berkay (2026-06-14): "ayrı sekme, emin olduklarımız için, BUNU OYNA İLK4 İÇİN".
+function renderSibTop4(el){
+  el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">EMİN olduklarımız hesaplanıyor (Backtest ALTIN +%195, PREMIUM +%145 lift)...</div>';
+  let today = new Date();
+  let dateStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
+  fetch("/api/sib_top4/today?date=" + dateStr)
+    .then(r => r.json())
+    .then(data => {
+      let altin = data.altin || [];
+      let premium = data.premium || [];
+      let totals = data.totals || {};
+      let pickCard = (p, badge, badgeColor, accentColor) => `
+        <div class="card" style="margin-bottom:10px;border-left:3px solid ${accentColor}">
+          <div style="padding:10px 14px;display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
+            <div style="flex:1;min-width:260px">
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+                <span style="background:${badgeColor};color:#000;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:800">${badge}</span>
+                <span style="color:var(--text2);font-size:11px">${p.pool}</span>
+              </div>
+              <div style="font-size:18px;font-weight:800;color:#fff;margin-bottom:4px">
+                ${p.leg}. AYAK · #${p.horse_no} ${p.name}
+              </div>
+              <div style="font-size:12px;color:var(--text2);font-family:var(--mono)">
+                halk %${p.agf.toFixed(0)} · model %${p.mp.toFixed(0)} · ${p.mult.toFixed(1)}× değer · ${p.field_size} atlı · ilk ayak ${p.first_time||'?'}
+              </div>
+            </div>
+            <div style="text-align:right;min-width:80px">
+              <div style="font-size:24px;font-weight:800;color:${accentColor}">${p.mult.toFixed(1)}×</div>
+              <div style="font-size:9px;color:var(--text3);text-transform:uppercase">değer çarpanı</div>
+            </div>
+          </div>
+        </div>`;
+
+      let altinHtml = altin.length === 0
+        ? '<div style="padding:18px;color:var(--text3);font-size:12px;text-align:center">Bugün ALTIN pick yok</div>'
+        : altin.map(p => pickCard(p, '🌟 ALTIN', '#FFD60A', 'var(--yellow)')).join('');
+      let premiumHtml = premium.length === 0
+        ? '<div style="padding:18px;color:var(--text3);font-size:12px;text-align:center">Bugün PREMIUM pick yok</div>'
+        : premium.map(p => pickCard(p, '⭐ PREMIUM', '#3b9fff', 'var(--blue)')).join('');
+
+      el.innerHTML = `<div style="max-width:1100px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+          <div>
+            <div style="font-size:22px;font-weight:800;color:var(--yellow)">🎯 BUNU OYNA — İLK 4 SİB</div>
+            <div style="font-size:11px;color:var(--text3);margin-top:3px">${dateStr} · ${totals.pools_scanned||0} havuz tarandı · sadece EMİN olduklarımız</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button onclick="renderSibTop4(document.getElementById('main'))" style="background:var(--border);border:1px solid var(--border2);color:var(--text2);padding:4px 10px;border-radius:3px;font-size:10px;cursor:pointer;font-family:var(--sans)">YENILE</button>
+            <button onclick="if(confirm('BUNU OYNA pick\\'lerini Telegram\\'a yolla?')){fetch('/api/sib_top4/today?date=${dateStr}&send=1').then(r=>r.json()).then(d=>{alert((d.telegram&&d.telegram.sent)?'Telegram\\'a gönderildi':'Gönderim başarısız: '+JSON.stringify(d.telegram||d));})}" style="background:rgba(255,214,10,.1);border:1px solid rgba(255,214,10,.3);color:var(--yellow);padding:4px 10px;border-radius:3px;font-size:10px;font-weight:700;cursor:pointer;font-family:var(--sans)">TELEGRAM ATAR</button>
+          </div>
+        </div>
+
+        <div style="background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:12px 16px;margin-bottom:18px;font-size:11px;color:var(--text2);line-height:1.7">
+          <div style="color:var(--yellow);font-weight:700;margin-bottom:4px">Filtreler (Phase 5.8.4 backtest, n=346 base):</div>
+          🌟 <b style="color:var(--yellow)">ALTIN</b> = İstanbul + 12+ at + model %35-45 → backtest <b>hit %94.7, lift +%195</b><br>
+          ⭐ <b style="color:var(--blue)">PREMIUM</b> = 12+ at + model %35-45 → backtest <b>lift +%145</b><br>
+          <span style="color:var(--text3)">⚠ Mp 45-55 "tuzak band" eleniyor. Mp 70+ "halüsinasyon" bandı bu sekmede yok (kupon altında STANDART/HALÜSİNASYON görünür).</span><br>
+          <span style="color:var(--text3)">⚠ +EV garantisi yok — gerçek SİB oranıyla değerlendir.</span>
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;margin:18px 0 10px">
+          <div style="font-size:14px;font-weight:800;color:var(--yellow)">🌟 ALTIN (${altin.length})</div>
+          <div style="font-size:10px;color:var(--text3)">en güçlü kategori</div>
+        </div>
+        ${altinHtml}
+
+        <div style="display:flex;align-items:center;justify-content:space-between;margin:24px 0 10px">
+          <div style="font-size:14px;font-weight:800;color:var(--blue)">⭐ PREMIUM (${premium.length})</div>
+          <div style="font-size:10px;color:var(--text3)">12+ at + model %35-45</div>
+        </div>
+        ${premiumHtml}
+
+        <div style="padding:16px;margin-top:20px;background:var(--bg1);border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--text3);line-height:1.6">
+          <b style="color:var(--text2)">NOT:</b> Bu sekmede sadece <b>ALTIN + PREMIUM</b> (en güvenli iki kategori) görünür. STANDART ve HALÜSİNASYON kategorileri ana <b>YERLI KUPON</b> sekmesinde her hipodrom kuponunun altında "SİB İLK-4 ÖNERİSİ" bölümünde görünür.<br>
+          <b style="color:var(--text2)">SİB</b> = Sabit İhtimalli Bahis (TJK bukmeker fiyatı). Pari-mutuel altılı/ganyan değil — ayrı pazar.
+        </div>
+      </div>`;
+    })
+    .catch(e => {
+      el.innerHTML = `<div style="text-align:center;padding:60px;color:var(--red)">SİB top-4 yüklenemedi<br><span style="font-size:11px;color:var(--text4)">Hata: ${e.message}</span></div>`;
     });
 }
 

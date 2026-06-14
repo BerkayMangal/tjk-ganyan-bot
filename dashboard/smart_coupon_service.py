@@ -284,6 +284,8 @@ def _build_one(engine, mode, c):
         'model_failed': c.get('model_failed', 0),
         'agf_flat_legs': agf_flat_legs, 'sel_fp': sel_fp,
         'agf_snapshot': agf_snapshot,
+        # SİB BUNU OYNA kanalı (Phase 5.8.4) için: tam race_legs her atın model_prob+agf_value ile
+        'race_legs': c.get('race_legs'),
     }
 
 

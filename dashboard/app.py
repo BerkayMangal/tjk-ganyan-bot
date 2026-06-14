@@ -772,6 +772,41 @@ def get_smart_coupon_all(date_str):
                 r['telegram'] = tg
     return jsonify({'date': date_str, 'hippos': hippos})
 
+@app.route("/api/sib_top4/today")
+def get_sib_top4_today():
+    """SİB İLK-4 'BUNU OYNA' kanalı — sadece ALTIN + PREMIUM pick'ler.
+
+    GET → JSON payload (altin/premium listeleri)
+    GET ?send=1 → Telegram'a "BUNU OYNA — İLK 4 SİB" mesajı (X-Token guard yok,
+      gün max 1 kez gönderim için scheduler entegrasyonu coupon_scheduler'da)
+    """
+    from datetime import date as _date
+    from flask import request as _req
+    target_str = _req.args.get('date')
+    try:
+        target = _date.fromisoformat(target_str) if target_str else _date.today()
+    except Exception:
+        return jsonify({'status': 'bad_date'}), 400
+    try:
+        try:
+            from dashboard.sib_top4_service import collect_today_picks, format_telegram_message
+            from dashboard.smart_coupon_service import send_telegram
+        except ImportError:
+            from sib_top4_service import collect_today_picks, format_telegram_message
+            from smart_coupon_service import send_telegram
+    except Exception as e:
+        return jsonify({'status': 'import_error', 'reason': repr(e)[:200]}), 500
+    try:
+        payload = collect_today_picks(target)
+    except Exception as e:
+        return jsonify({'status': 'collect_error', 'reason': repr(e)[:200]}), 500
+    out = {'date': str(target), **payload, 'telegram': None}
+    if _req.args.get('send') == '1':
+        text = format_telegram_message(payload)
+        out['telegram'] = send_telegram(text)
+    return jsonify(out)
+
+
 @app.route("/api/yerli_kupon/telegram")
 def send_yerli_telegram():
     if not YERLI_ENGINE_OK:

@@ -204,6 +204,39 @@ def _maybe_send_anomalies(st, now, logger):
         _log(logger, f"[agf_anomaly] skip: {repr(e)[:200]}")
 
 
+def _maybe_send_sib_top4(st, now, logger):
+    """TJK_SIB_TOP4 (default 1): kupon gönderim sonrası "BUNU OYNA" SİB mesajı.
+
+    Spam guard: gün başına max 1 mesaj (state['sib_top4_sent']=True).
+    Tetik: en az 1 havuz taze kupon gönderildiğinde (sent_fresh=True ∃) çağrılır.
+    """
+    if os.environ.get('TJK_SIB_TOP4', '1') != '1':
+        return
+    if st.get('sib_top4_sent'):
+        return
+    pools = st.get('pools') or {}
+    any_fresh = any(p.get('sent_fresh') for p in pools.values())
+    if not any_fresh:
+        return
+    try:
+        try:
+            from dashboard.sib_top4_service import collect_today_picks, format_telegram_message
+        except ImportError:
+            from sib_top4_service import collect_today_picks, format_telegram_message
+        payload = collect_today_picks(now.date())
+        if not (payload.get('altin') or payload.get('premium')):
+            _log(logger, "[sib_top4] bugün ALTIN/PREMIUM yok — mesaj gönderilmedi")
+            st['sib_top4_sent'] = True   # tekrar denemeyi engelle (boş gün)
+            return
+        text = format_telegram_message(payload)
+        tg = _svc().send_telegram(text)
+        _log(logger, f"[sib_top4] BUNU OYNA gönderildi · ALTIN={payload['totals']['altin']} "
+                     f"PREMIUM={payload['totals']['premium']} · TG={tg}")
+        st['sib_top4_sent'] = True
+    except Exception as e:
+        _log(logger, f"[sib_top4] skip: {repr(e)[:200]}")
+
+
 def _send(p, prefix, logger):
     text = (prefix + '\n' + p['text']) if prefix else p['text']
     tg = _svc().send_telegram(text)
@@ -254,6 +287,8 @@ def _morning_locked(logger, bootstrap=False):
                 _send(p, None, logger)
                 p['sent_fresh'] = True
                 p['sent_fp'] = p['sel_fp']
+            # SİB BUNU OYNA — kupon serisi gittikten sonra ayrı mesaj
+            _maybe_send_sib_top4(st, now, logger)
     elif stale:
         tag = "yeniden başlatma" if bootstrap else "sabah"
         _svc().send_telegram(
@@ -347,6 +382,7 @@ def _tick_locked(logger):
                          f"istatistikle (ilk ayak {ft})", logger)
                 p['sent_stale'] = True
     _maybe_send_anomalies(st, now, logger)
+    _maybe_send_sib_top4(st, now, logger)
     _save_state(day, st)
 
 
