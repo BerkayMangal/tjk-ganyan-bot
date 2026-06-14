@@ -376,28 +376,45 @@ def _leg_why(s, cb, broken):
     return ""
 
 
-def _collect_value_picks(race_legs, mp_min=0.35, agf_max=0.30, max_picks=5):
-    """SİB ilk-4 value pick atları seç (Phase 5.8.3 — Berkay yeni eşik 2026-06-14).
+def _collect_value_picks(race_legs, hippo='', agf_max=0.30, max_picks=8):
+    """SİB ilk-4 value pick (Phase 5.8.4 — katmanlı + tuzak band 2026-06-14).
 
-    Şart: model_prob ≥ mp_min (default %35) AND agf ≤ agf_max (default %30).
-    Backtest (audit/91, n=346): hit %59 vs base %40, lift +%48, p<0.0001.
+    Backtest bulguları (audit/92, n=346 base):
+      - mp 35-45: hit %70, lift +%89  ⭐ SWEET
+      - mp 45-55: hit %37, lift -%20  ❌ TUZAK BAND (elenir)
+      - mp 55-70: hit %67, lift +%82  ⭐ SWEET
+      - mp 70+:   hit %50, lift +%22  (kalibrasyon halüsinasyonu, etiketsel)
+      - field ≥ 12 + mp 35-45: hit %76-79, lift +%145-152  ⭐⭐ PREMIUM
+      - field ≥ 12 + mp 35-45 + İstanbul: hit %94.7, lift +%195  🌟 ALTIN
 
-    Ayak başına en güçlü 1 at (aynı ayakta çoklu spam yok). Top-K (mp büyük → öne).
-    Önceki eşik (mp≥%25, gap≥15pp) Berkay'ın AGF-bağımsız önerisiyle değiştirildi:
-    "model %35'in üstü ilk-4 hit %59" → daha az pick, daha yüksek p, daha temiz sinyal.
+    Pick mantığı (ayak başına en güçlü 1):
+      - mp ∈ [0.35, 0.45) ∪ [0.55, 0.70] AND agf ≤ agf_max (tuzak band elenir)
+      - field (at sayısı) ve hipodrom etiketleri pick'e işlenir → render ayırt eder
     """
+    is_istanbul = 'i̇stanbul' in (hippo or '').lower() or 'istanbul' in (hippo or '').lower()
     picks = []
     for leg_idx, horses in enumerate(race_legs, 1):
         if not horses: continue
+        field_size = len(horses)
         best = None
         for h in horses:
             try:
-                mp = float(h.get('model_prob') or 0)  # 0-1
-                agf = float(h.get('agf_value') or 0) / 100.0  # 0-1
+                mp = float(h.get('model_prob') or 0)
+                agf = float(h.get('agf_value') or 0) / 100.0
             except Exception:
                 continue
-            if mp < mp_min or agf > agf_max:
-                continue
+            if agf > agf_max: continue
+            # Tuzak band elenir (mp 45-55 lift -%20)
+            if mp < 0.35 or (0.45 <= mp < 0.55): continue
+            if mp >= 0.70:
+                # halüsinasyon bandı — etiketlenir ama elenmez (lift +%22, hâlâ baseline üstü)
+                tier = 'HALÜSİNASYON'
+            elif 0.55 <= mp < 0.70:
+                tier = 'SWEET-2'
+            else:  # 0.35-0.45
+                tier = 'SWEET-1'
+            premium = (tier == 'SWEET-1' and field_size >= 12)
+            altin = premium and is_istanbul
             if best is None or mp > best['mp_raw']:
                 best = {
                     'leg': leg_idx,
@@ -406,36 +423,71 @@ def _collect_value_picks(race_legs, mp_min=0.35, agf_max=0.30, max_picks=5):
                     'name': _name_clean(h.get('horse_name') or '?')[:18],
                     'agf': agf * 100, 'mp': mp * 100,
                     'mp_raw': mp, 'gap': mp - agf,
+                    'field_size': field_size, 'tier': tier,
+                    'premium': premium, 'altin': altin,
                 }
         if best is not None:
             picks.append(best)
-    picks.sort(key=lambda p: -p['mp_raw'])
+    # Sıralama: ALTIN > PREMIUM > SWEET-1 > SWEET-2 > HALÜSİNASYON (ve mp desc)
+    rank_order = {'HALÜSİNASYON': 3, 'SWEET-2': 2, 'SWEET-1': 1}
+    picks.sort(key=lambda p: (
+        -3 if p['altin'] else (-2 if p['premium'] else rank_order.get(p['tier'], 4)),
+        -p['mp_raw'],
+    ))
     return picks[:max_picks]
 
 
-def render_value_picks(race_legs):
-    """SİB ilk-4 öneri bölümü. Backtest (n=37, +%35 lift, p=0.06) destekli.
+def render_value_picks(race_legs, hippo=''):
+    """SİB ilk-4 katmanlı öneri bölümü (Phase 5.8.4, 2026-06-14).
 
-    Berkay (2026-06-13 strateji): "disiplinli tek ticket, model 2× değer".
-    Bahis tipi: SİB (Sabit İhtimalli Bahis) → İlk-4. Pari-mutuel altılı DEĞİL —
-    bukmeker fiyatı, takeout farklı, edge potansiyeli VAR. Yine de garantisi yok.
+    ALTIN > PREMIUM > STANDART > HALÜSİNASYON sıralı. Tuzak band (mp 45-55) elenir.
     """
-    picks = _collect_value_picks(race_legs)
+    picks = _collect_value_picks(race_legs, hippo=hippo)
     if not picks:
         return ''
-    L = ['─' * 20, '📊 <b>SİB İLK-4 ÖNERİSİ</b>',
-         '<i>(model %35+ AND halk %30-  ·  backtest: n=346, hit %59 vs %40 '
-         'baseline, lift +%48, p&lt;0.0001)</i>', '']
-    for p in sorted(picks, key=lambda x: x['leg']):
+    altins = [p for p in picks if p['altin']]
+    premiums = [p for p in picks if p['premium'] and not p['altin']]
+    standards = [p for p in picks if not p['premium'] and p['tier'] != 'HALÜSİNASYON']
+    halus = [p for p in picks if p['tier'] == 'HALÜSİNASYON']
+
+    L = ['─' * 20, '📊 <b>SİB İLK-4 ÖNERİSİ</b> (katmanlı)',
+         '<i>backtest: ÇEKİRDEK n=128, hit %69 vs %31 baseline, lift +%125, '
+         'p&lt;0.0001  ·  ALTIN n=57, hit %94.7</i>', '']
+
+    def _row(p, extra=''):
         mult = p['mp'] / max(p['agf'], 0.5)
-        L.append(f"  <b>{p['leg']}. AYAK</b> · #{p['horse_no']} {p['name']} — "
-                 f"halk %{p['agf']:.0f} · model %{p['mp']:.0f} "
-                 f"(model {mult:.1f}× değer)")
-    L.append('')
+        return (f"  <b>{p['leg']}. AYAK</b> · #{p['horse_no']} {p['name']} — "
+                f"halk %{p['agf']:.0f} · model %{p['mp']:.0f}{extra} "
+                f"({mult:.1f}× · {p['field_size']} atlı)")
+
+    if altins:
+        L.append('🌟 <b>ALTIN</b> <i>(İstanbul + 12+ at + model 35-45 — backtest +%195 lift)</i>')
+        for p in sorted(altins, key=lambda x: x['leg']):
+            L.append(_row(p))
+        L.append('')
+
+    if premiums:
+        L.append('⭐ <b>PREMIUM</b> <i>(12+ at + model 35-45 — backtest +%145 lift)</i>')
+        for p in sorted(premiums, key=lambda x: x['leg']):
+            L.append(_row(p))
+        L.append('')
+
+    if standards:
+        L.append('✓ <b>STANDART</b> <i>(model 35-45 veya 55-70 — backtest +%80 lift)</i>')
+        for p in sorted(standards, key=lambda x: x['leg']):
+            tag = ' [55-70 sweet]' if p['tier'] == 'SWEET-2' else ''
+            L.append(_row(p, tag))
+        L.append('')
+
+    if halus:
+        L.append('⚠️ <b>HALÜSİNASYON (model %70+ — lift sadece +%22, dikkat)</b>')
+        for p in sorted(halus, key=lambda x: x['leg']):
+            L.append(_row(p))
+        L.append('')
+
+    L.append('<i>⚠ Model %45-55 "TUZAK BANDI" otomatik elendi (backtest lift -%20).</i>')
     L.append('<i>⚠ SİB pazarı pari-mutuel değil; oran sabit, halka karşı bahis.</i>')
-    L.append('<i>⚠ Model %70+ verdiği atlarda lift düşer (kalibrasyonsuz aşırı '
-             'güven) — dikkat.</i>')
-    L.append('<i>⚠ +EV garantisi yok — gerçek ROI 2-3 hafta gözlem sonrası.</i>')
+    L.append('<i>⚠ +EV garantisi yok — forward 2-3 hafta canlı doğrulama bekliyor.</i>')
     return '\n'.join(L)
 
 
@@ -497,7 +549,7 @@ def render(hippo, race_legs, scores, selections, combos, n_per_leg, initial,
                 for h in ranked4)
             L.append(f"   🤖 Modelin ilk 4 tahmini: {t4_str}")
         L.append("")
-    value_block = render_value_picks(race_legs)
+    value_block = render_value_picks(race_legs, hippo=hippo)
     if value_block:
         L.append(value_block)
         L.append("")
