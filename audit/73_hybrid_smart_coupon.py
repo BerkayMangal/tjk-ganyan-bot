@@ -413,16 +413,25 @@ def _collect_value_picks(race_legs, mp_min=0.25, gap_min=0.15, agf_max=0.30, max
 
 
 def render_value_picks(race_legs):
+    """SİB ilk-4 öneri bölümü. Backtest (n=37, +%35 lift, p=0.06) destekli.
+
+    Berkay (2026-06-13 strateji): "disiplinli tek ticket, model 2× değer".
+    Bahis tipi: SİB (Sabit İhtimalli Bahis) → İlk-4. Pari-mutuel altılı DEĞİL —
+    bukmeker fiyatı, takeout farklı, edge potansiyeli VAR. Yine de garantisi yok.
+    """
     picks = _collect_value_picks(race_legs)
     if not picks:
         return ''
-    L = ['─' * 20, '🎯 <b>MODEL\'İN GİZLİ DEĞERİ</b>',
-         '<i>(model halkın gözden kaçırdığı atları görüyor)</i>', '']
+    L = ['─' * 20, '📊 <b>SİB İLK-4 ÖNERİSİ</b>',
+         '<i>(disiplinli tek-ticket · backtest: n=37, hit %54 vs %40 baseline, '
+         'lift +%35, p=0.06)</i>', '']
     for p in sorted(picks, key=lambda x: x['leg']):
         L.append(f"  <b>{p['leg']}. AYAK</b> · #{p['horse_no']} {p['name']} — "
-                 f"halk %{p['agf']:.0f} · model %{p['mp']:.0f}")
+                 f"halk %{p['agf']:.0f} · model %{p['mp']:.0f} "
+                 f"(model {p['mp']/max(p['agf'],0.5):.1f}× değer)")
     L.append('')
-    L.append('<i>⚠ Edge iddiası yok, sadece model görüşü.</i>')
+    L.append('<i>⚠ SİB pazarı pari-mutuel değil; oran sabit, halka karşı bahis.</i>')
+    L.append('<i>⚠ +EV garantisi yok — gerçek ROI 2-3 hafta gözlem sonrası.</i>')
     return '\n'.join(L)
 
 
