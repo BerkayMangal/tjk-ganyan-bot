@@ -376,20 +376,17 @@ def _leg_why(s, cb, broken):
     return ""
 
 
-def _collect_value_picks(race_legs, hippo='', agf_max=0.30, max_picks=8):
-    """SİB ilk-4 value pick (Phase 5.8.4 — katmanlı + tuzak band 2026-06-14).
+def _collect_value_picks(race_legs, hippo='', agf_max=0.30, max_picks=10):
+    """SİB ilk-4 value pick (Phase 5.8.4/5.8.6 — katmanlı + tuzak band 2026-06-14).
 
-    Backtest bulguları (audit/92, n=346 base):
-      - mp 35-45: hit %70, lift +%89  ⭐ SWEET
-      - mp 45-55: hit %37, lift -%20  ❌ TUZAK BAND (elenir)
-      - mp 55-70: hit %67, lift +%82  ⭐ SWEET
-      - mp 70+:   hit %50, lift +%22  (kalibrasyon halüsinasyonu, etiketsel)
-      - field ≥ 12 + mp 35-45: hit %76-79, lift +%145-152  ⭐⭐ PREMIUM
-      - field ≥ 12 + mp 35-45 + İstanbul: hit %94.7, lift +%195  🌟 ALTIN
-
-    Pick mantığı (ayak başına en güçlü 1):
-      - mp ∈ [0.35, 0.45) ∪ [0.55, 0.70] AND agf ≤ agf_max (tuzak band elenir)
-      - field (at sayısı) ve hipodrom etiketleri pick'e işlenir → render ayırt eder
+    Tier hiyerarşisi:
+      🌟 ALTIN     = SWEET-1 + 12+ at + İstanbul       (n=57, hit %94.7, +%195)
+      ⭐ PREMIUM   = SWEET-1 + 12+ at                  (n=95, hit %76, +%145)
+      ✓ STANDART  = SWEET-1 veya SWEET-2 (diğer)       (n=199, hit %67, +%80)
+      💡 FIRSAT    = mp ∈ [0.25,0.35) + gap ≥ 0.15      (n=37, hit %54, +%35)
+                     ↑ Berkay'ın 2026-06-13 4/4 SİB hit aldığı orijinal eşik (Phase 5.8.2)
+      ⚠️ HALÜSİNASYON = mp ≥ 0.70                       (n=88, hit %50, +%22, etiketsel)
+    Tuzak band: mp ∈ [0.45, 0.55) → backtest lift -%20 → elenir.
     """
     is_istanbul = 'i̇stanbul' in (hippo or '').lower() or 'istanbul' in (hippo or '').lower()
     picks = []
@@ -404,17 +401,25 @@ def _collect_value_picks(race_legs, hippo='', agf_max=0.30, max_picks=8):
             except Exception:
                 continue
             if agf > agf_max: continue
+            gap = mp - agf
             # Tuzak band elenir (mp 45-55 lift -%20)
-            if mp < 0.35 or (0.45 <= mp < 0.55): continue
-            if mp >= 0.70:
-                # halüsinasyon bandı — etiketlenir ama elenmez (lift +%22, hâlâ baseline üstü)
-                tier = 'HALÜSİNASYON'
+            if 0.45 <= mp < 0.55:
+                continue
+            if 0.25 <= mp < 0.35:
+                # FIRSAT — dünkü 4/4 filtresi. gap ≥ 15pp zorunlu (Phase 5.8.2).
+                if gap < 0.15: continue
+                tier = 'FIRSAT'
+            elif 0.35 <= mp < 0.45:
+                tier = 'SWEET-1'
             elif 0.55 <= mp < 0.70:
                 tier = 'SWEET-2'
-            else:  # 0.35-0.45
-                tier = 'SWEET-1'
+            elif mp >= 0.70:
+                tier = 'HALÜSİNASYON'
+            else:
+                continue   # mp < 0.25
             premium = (tier == 'SWEET-1' and field_size >= 12)
             altin = premium and is_istanbul
+            firsat = (tier == 'FIRSAT')
             if best is None or mp > best['mp_raw']:
                 best = {
                     'leg': leg_idx,
@@ -422,16 +427,16 @@ def _collect_value_picks(race_legs, hippo='', agf_max=0.30, max_picks=8):
                     'horse_no': h.get('horse_number') or '?',
                     'name': _name_clean(h.get('horse_name') or '?')[:18],
                     'agf': agf * 100, 'mp': mp * 100,
-                    'mp_raw': mp, 'gap': mp - agf,
+                    'mp_raw': mp, 'gap': gap,
                     'field_size': field_size, 'tier': tier,
-                    'premium': premium, 'altin': altin,
+                    'premium': premium, 'altin': altin, 'firsat': firsat,
                 }
         if best is not None:
             picks.append(best)
-    # Sıralama: ALTIN > PREMIUM > SWEET-1 > SWEET-2 > HALÜSİNASYON (ve mp desc)
-    rank_order = {'HALÜSİNASYON': 3, 'SWEET-2': 2, 'SWEET-1': 1}
+    # Sıralama: ALTIN > PREMIUM > SWEET-1/2 > FIRSAT > HALÜSİNASYON (ve mp desc)
+    rank_order = {'SWEET-1': 1, 'SWEET-2': 2, 'FIRSAT': 4, 'HALÜSİNASYON': 5}
     picks.sort(key=lambda p: (
-        -3 if p['altin'] else (-2 if p['premium'] else rank_order.get(p['tier'], 4)),
+        -3 if p['altin'] else (-2 if p['premium'] else rank_order.get(p['tier'], 6)),
         -p['mp_raw'],
     ))
     return picks[:max_picks]
@@ -447,12 +452,14 @@ def render_value_picks(race_legs, hippo=''):
         return ''
     altins = [p for p in picks if p['altin']]
     premiums = [p for p in picks if p['premium'] and not p['altin']]
-    standards = [p for p in picks if not p['premium'] and p['tier'] != 'HALÜSİNASYON']
+    standards = [p for p in picks if not p['premium']
+                 and p['tier'] in ('SWEET-1', 'SWEET-2')]
+    firsats = [p for p in picks if p['tier'] == 'FIRSAT']
     halus = [p for p in picks if p['tier'] == 'HALÜSİNASYON']
 
     L = ['─' * 20, '📊 <b>SİB İLK-4 ÖNERİSİ</b> (katmanlı)',
-         '<i>backtest: ÇEKİRDEK n=128, hit %69 vs %31 baseline, lift +%125, '
-         'p&lt;0.0001  ·  ALTIN n=57, hit %94.7</i>', '']
+         '<i>backtest: ALTIN +%195 · PREMIUM +%145 · STANDART +%80 · '
+         'FIRSAT +%35 (dün 4/4 olan eşik)</i>', '']
 
     def _row(p, extra=''):
         mult = p['mp'] / max(p['agf'], 0.5)
@@ -477,6 +484,12 @@ def render_value_picks(race_legs, hippo=''):
         for p in sorted(standards, key=lambda x: x['leg']):
             tag = ' [55-70 sweet]' if p['tier'] == 'SWEET-2' else ''
             L.append(_row(p, tag))
+        L.append('')
+
+    if firsats:
+        L.append('💡 <b>FIRSAT</b> <i>(dün 4/4 olan eşik: mp 25-35 + gap ≥ 15pp — backtest +%35 lift)</i>')
+        for p in sorted(firsats, key=lambda x: x['leg']):
+            L.append(_row(p))
         L.append('')
 
     if halus:

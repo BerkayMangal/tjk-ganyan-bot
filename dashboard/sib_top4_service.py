@@ -11,6 +11,7 @@ Mantık:
 
 ALTIN = İstanbul + 12+ at + mp 35-45 (backtest n=57, hit %94.7, lift +%195)
 PREMIUM = 12+ at + mp 35-45 (backtest n=95, lift +%145)
+FIRSAT = mp 25-35 + gap ≥ 15pp (Phase 5.8.2 — Berkay'ın dün 4/4 olan eşiği, +%35)
 
 Standart/Halüsinasyon BUNU OYNA mesajına GİRMEZ — onlar mevcut kupon
 mesajının altında "SİB İLK-4 ÖNERİSİ (katmanlı)" bölümünde kalır.
@@ -59,6 +60,7 @@ def collect_today_picks(target_date=None):
 
     altin_list = []
     premium_list = []
+    firsat_list = []
     for pool in pools:
         hippo_label = pool.get('hippo', '')   # örn. "İstanbul · 1. Altılı (1-6)"
         first_time = pool.get('first_time', '')
@@ -98,16 +100,21 @@ def collect_today_picks(target_date=None):
                 altin_list.append(entry)
             elif p.get('premium'):
                 premium_list.append(entry)
+            elif p.get('firsat'):
+                firsat_list.append(entry)
     # Sıralama: önce ALTIN içinde mp DESC, sonra zaman
     altin_list.sort(key=lambda x: (-x['mp'], x['first_time']))
     premium_list.sort(key=lambda x: (-x['mp'], x['first_time']))
+    firsat_list.sort(key=lambda x: (-x['mp'], x['first_time']))
     return {
         'date': str(target_date),
         'altin': altin_list,
         'premium': premium_list,
+        'firsat': firsat_list,
         'totals': {
             'altin': len(altin_list),
             'premium': len(premium_list),
+            'firsat': len(firsat_list),
             'pools_scanned': len(pools),
         },
     }
@@ -137,41 +144,46 @@ def _reconstruct_from_snapshot(pool):
 
 
 def format_telegram_message(payload):
-    """Defansif Telegram metni; sadece ALTIN + PREMIUM; yoksa kısa "bugün yok"."""
+    """Defansif Telegram metni; ALTIN + PREMIUM + FIRSAT (dünkü 4/4 eşiği)."""
     altin = payload.get('altin') or []
     premium = payload.get('premium') or []
-    if not altin and not premium:
+    firsat = payload.get('firsat') or []
+    if not altin and not premium and not firsat:
         return ('🎯 <b>BUNU OYNA — İLK 4 SİB</b>\n'
                 f'<i>{payload.get("date","")}</i>\n\n'
-                '<i>Bugün ALTIN/PREMIUM kategorisinde pick yok. '
+                '<i>Bugün ALTIN/PREMIUM/FIRSAT kategorisinde pick yok. '
                 'AGF yayınlanınca tekrar denenecek.</i>')
+
     L = [f'🎯 <b>BUNU OYNA — İLK 4 SİB</b> ({payload.get("date","")})',
-         '<i>Backtest: ALTIN +%195 lift, PREMIUM +%145 lift, p&lt;0.0001</i>',
+         '<i>Backtest: ALTIN +%195 · PREMIUM +%145 · FIRSAT +%35 (dünkü 4/4 eşiği)</i>',
          '<i>⚠ +EV garantisi yok — gerçek SİB oranı ile değerlendir.</i>',
          '']
+
+    def _section(title, sub, lst):
+        L.append(f'{title} ({len(lst)} pick)')
+        L.append(f'<i>{sub}</i>')
+        for p in lst:
+            L.append(f"  • <b>{p['pool']}</b>")
+            L.append(f"     {p['leg']}. AYAK ({p['race_no']}. koşu) · "
+                     f"#{p['horse_no']} <b>{p['name']}</b>")
+            L.append(f"     halk %{p['agf']:.0f} · model %{p['mp']:.0f} "
+                     f"({p['mult']:.1f}× · {p['field_size']} atlı)")
+        L.append('')
+
     if altin:
-        L.append(f'🌟 <b>ALTIN</b> ({len(altin)} pick)')
-        L.append('<i>İstanbul + 12+ at + model %35-45 (hit %94.7 backtest)</i>')
-        for p in altin:
-            L.append(f"  • <b>{p['pool']}</b>")
-            L.append(f"     {p['leg']}. AYAK ({p['race_no']}. koşu) · "
-                     f"#{p['horse_no']} <b>{p['name']}</b>")
-            L.append(f"     halk %{p['agf']:.0f} · model %{p['mp']:.0f} "
-                     f"({p['mult']:.1f}× · {p['field_size']} atlı)")
-        L.append('')
+        _section('🌟 <b>ALTIN</b>',
+                 'İstanbul + 12+ at + model %35-45 (hit %94.7 backtest)', altin)
     if premium:
-        L.append(f'⭐ <b>PREMIUM</b> ({len(premium)} pick)')
-        L.append('<i>12+ at + model %35-45 (lift +%145 backtest)</i>')
-        for p in premium:
-            L.append(f"  • <b>{p['pool']}</b>")
-            L.append(f"     {p['leg']}. AYAK ({p['race_no']}. koşu) · "
-                     f"#{p['horse_no']} <b>{p['name']}</b>")
-            L.append(f"     halk %{p['agf']:.0f} · model %{p['mp']:.0f} "
-                     f"({p['mult']:.1f}× · {p['field_size']} atlı)")
-        L.append('')
-    L.append('<i>NOT: STANDART ve HALÜSİNASYON kategorileri ana kuponun '
-             'altındaki SİB ÖNERİSİ bölümünde kalıyor — bu mesaj sadece '
-             'EMİN olduklarımız için.</i>')
+        _section('⭐ <b>PREMIUM</b>',
+                 '12+ at + model %35-45 (lift +%145 backtest)', premium)
+    if firsat:
+        _section('💡 <b>FIRSAT</b>',
+                 'Berkay\'ın dün 4/4 yaptığı eşik: mp 25-35 + gap ≥ 15pp '
+                 '(geniş ağ, +%35 lift)', firsat)
+
+    L.append('<i>NOT: STANDART ve HALÜSİNASYON ana kupon altında "SİB ÖNERİSİ" '
+             'bölümünde kalıyor — bu mesaj ALTIN/PREMIUM (emin) + FIRSAT '
+             '(geniş ağ) içindir.</i>')
     return '\n'.join(L)
 
 

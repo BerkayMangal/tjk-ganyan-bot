@@ -484,6 +484,7 @@ function renderSibTop4(el){
     .then(data => {
       let altin = data.altin || [];
       let premium = data.premium || [];
+      let firsat = data.firsat || [];
       let totals = data.totals || {};
       let pickCard = (p, badge, badgeColor, accentColor) => `
         <div class="card" style="margin-bottom:10px;border-left:3px solid ${accentColor}">
@@ -513,6 +514,9 @@ function renderSibTop4(el){
       let premiumHtml = premium.length === 0
         ? '<div style="padding:18px;color:var(--text3);font-size:12px;text-align:center">Bugün PREMIUM pick yok</div>'
         : premium.map(p => pickCard(p, '⭐ PREMIUM', '#3b9fff', 'var(--blue)')).join('');
+      let firsatHtml = firsat.length === 0
+        ? '<div style="padding:18px;color:var(--text3);font-size:12px;text-align:center">Bugün FIRSAT pick yok</div>'
+        : firsat.map(p => pickCard(p, '💡 FIRSAT', '#f59e0b', 'var(--orange)')).join('');
 
       el.innerHTML = `<div style="max-width:1100px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
@@ -527,10 +531,11 @@ function renderSibTop4(el){
         </div>
 
         <div style="background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:12px 16px;margin-bottom:18px;font-size:11px;color:var(--text2);line-height:1.7">
-          <div style="color:var(--yellow);font-weight:700;margin-bottom:4px">Filtreler (Phase 5.8.4 backtest, n=346 base):</div>
-          🌟 <b style="color:var(--yellow)">ALTIN</b> = İstanbul + 12+ at + model %35-45 → backtest <b>hit %94.7, lift +%195</b><br>
-          ⭐ <b style="color:var(--blue)">PREMIUM</b> = 12+ at + model %35-45 → backtest <b>lift +%145</b><br>
-          <span style="color:var(--text3)">⚠ Mp 45-55 "tuzak band" eleniyor. Mp 70+ "halüsinasyon" bandı bu sekmede yok (kupon altında STANDART/HALÜSİNASYON görünür).</span><br>
+          <div style="color:var(--yellow);font-weight:700;margin-bottom:4px">Filtreler (backtest):</div>
+          🌟 <b style="color:var(--yellow)">ALTIN</b> = İstanbul + 12+ at + model %35-45 → <b>hit %94.7, lift +%195</b><br>
+          ⭐ <b style="color:var(--blue)">PREMIUM</b> = 12+ at + model %35-45 → <b>lift +%145</b><br>
+          💡 <b style="color:var(--orange)">FIRSAT</b> = model %25-35 + halktan ≥15pp yüksek → <b>lift +%35</b> <i>(Berkay'ın 2026-06-13 4/4 SİB hit aldığı eşik)</i><br>
+          <span style="color:var(--text3)">⚠ Mp 45-55 "tuzak band" eleniyor (lift -%20). Mp 70+ "halüsinasyon" sekmesi yok (kupon altında STANDART/HALÜSİNASYON görünür).</span><br>
           <span style="color:var(--text3)">⚠ +EV garantisi yok — gerçek SİB oranıyla değerlendir.</span>
         </div>
 
@@ -545,6 +550,12 @@ function renderSibTop4(el){
           <div style="font-size:10px;color:var(--text3)">12+ at + model %35-45</div>
         </div>
         ${premiumHtml}
+
+        <div style="display:flex;align-items:center;justify-content:space-between;margin:24px 0 10px">
+          <div style="font-size:14px;font-weight:800;color:var(--orange)">💡 FIRSAT (${firsat.length})</div>
+          <div style="font-size:10px;color:var(--text3)">Berkay'ın dün 4/4 yaptığı geniş ağ filtresi</div>
+        </div>
+        ${firsatHtml}
 
         <div style="padding:16px;margin-top:20px;background:var(--bg1);border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--text3);line-height:1.6">
           <b style="color:var(--text2)">NOT:</b> Bu sekmede sadece <b>ALTIN + PREMIUM</b> (en güvenli iki kategori) görünür. STANDART ve HALÜSİNASYON kategorileri ana <b>YERLI KUPON</b> sekmesinde her hipodrom kuponunun altında "SİB İLK-4 ÖNERİSİ" bölümünde görünür.<br>
