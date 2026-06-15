@@ -3467,6 +3467,17 @@ def _model_predict_legs(legs, hippo, target_date):
                                     leg['horses'][j][3]['v7_score'] = float(_v7r['scores'][j])
                 except Exception as _v7e:
                     logger.debug(f"  Leg {i+1} v7 shadow: {_v7e}")
+                # PATCH_5_8_28_V7_LIVE — ENV TJK_V7_LIVE=1 ile V3 LIVE probs'u V7 ile override
+                if os.environ.get('TJK_V7_LIVE', '0') == '1':
+                    _v7s = leg.get('v7_shadow')
+                    if _v7s and _v7s.get('probs'):
+                        try:
+                            _v7_probs_raw = np.array(_v7s.get('probs') or [], dtype=float)
+                            if len(_v7_probs_raw) == len(probs) and _v7_probs_raw.sum() > 0:
+                                probs = _v7_probs_raw
+                                logger.debug(f"  Leg {i+1} V7 LIVE override")
+                        except Exception as _v7le:
+                            logger.debug(f"  Leg {i+1} V7 LIVE fail: {_v7le}")
                 ps = probs.sum()
                 pn = probs / ps if ps > 0 else probs
                 for j in range(len(pn)):
