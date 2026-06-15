@@ -1,0 +1,9 @@
+{
+  "sources": [
+    "v6_ranker",
+    "v7_ranker",
+    "pl_sim"
+  ],
+  "meta_train_window": "2025-01-01 \u2192 2025-05-24",
+  "test_window": ">= 2025-05-24"
+}
