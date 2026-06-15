@@ -40,3 +40,8 @@ review/
 review.zip
 /tmp_*
 model/trained_v3_pre_full_bak/
+
+# Phase 5.8.19 — V6 dataset (250 MB, regenerable)
+data/training_v6/races_v6.csv
+# V6 horse career snapshot (8 MB, prod lookup şart — istisna)
+!data/horse_career_stats.json
