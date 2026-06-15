@@ -79,6 +79,7 @@ def _load_bundle() -> dict:
             ('scaler', 'scaler_{b}.pkl'),
             ('scaler_prob', 'scaler_prob_{b}.pkl'),
             ('isotonic', 'isotonic_prob_{b}.pkl'),
+            ('beta', 'beta_prob_{b}.pkl'),   # PATCH_5_8_14 — V3 NEW beta calibrator
         ]
         for breed in ('arab', 'english'):
             b = {}
@@ -89,6 +90,16 @@ def _load_bundle() -> dict:
                         b[key] = joblib.load(p)
                     except Exception as e:
                         logger.warning(f'v3_live: {breed}/{key} load fail: {e!r}')
+            # calib_best_<breed>.txt: 'raw' | 'isotonic' | 'beta' (Phase 5.8.14)
+            cb_path = os.path.join(TRAINED_V3_DIR, f'calib_best_{breed}.txt')
+            calib_best = 'isotonic'   # legacy default
+            if os.path.exists(cb_path):
+                try:
+                    with open(cb_path) as f:
+                        calib_best = f.read().strip()
+                except Exception:
+                    pass
+            b['calib_best'] = calib_best
             if 'scaler' in b and 'xgb' in b and 'lgbm' in b:
                 bundle['breeds'][breed] = b
         _BUNDLE = bundle
@@ -238,7 +249,16 @@ def predict_v3(horse_numbers, breed: str, hippo: str, race_no: Optional[int],
         p1 = b['xgb_prob'].predict_proba(X_sp)[:, 1]
         p2 = b['lgbm_prob'].predict_proba(X_sp)[:, 1]
         probs = 0.5 * p1 + 0.5 * p2
-        if 'isotonic' in b:
+        # Phase 5.8.14 — calib_best ile beta/isotonic/raw seçimi (V3 NEW 180)
+        _cb = b.get('calib_best', 'isotonic')
+        if _cb == 'beta' and 'beta' in b:
+            try:
+                probs = b['beta'].predict(probs)
+            except Exception as _eb:
+                logger.debug(f'v3_live: beta calibrator fail: {_eb!r}')
+        elif _cb == 'raw':
+            pass    # no-op, raw kalır
+        elif 'isotonic' in b:
             try:
                 probs = b['isotonic'].transform(probs)
             except Exception as _e:

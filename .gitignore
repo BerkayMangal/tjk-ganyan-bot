@@ -11,6 +11,9 @@ data/*
 !data/surprise/
 # Phase 5.8.7 — jokey × mesafe × track conditional bucket (134 KB, prod lookup ŞART)
 !data/jockey_distance_buckets.json
+
+# Phase 5.8.13 — V3 LIVE 177 backup (eski model, swap öncesi snapshot)
+model/trained_v3_pre_180_bak/
 *.csv
 
 # Audit — üretilen tarihli raporlar (regenerable, tracked DEĞİL)

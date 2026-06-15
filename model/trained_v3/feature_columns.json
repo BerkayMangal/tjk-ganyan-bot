@@ -175,5 +175,8 @@
   "mf__trainer_enc",
   "mf__weather_condition",
   "mf__weather_condition_enc",
-  "mf__weight_per_distance"
+  "mf__weight_per_distance",
+  "mf__jockey_cond_top4",
+  "mf__jockey_cond_win",
+  "mf__jockey_cond_n"
 ]
