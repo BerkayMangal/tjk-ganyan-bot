@@ -109,6 +109,29 @@ def collect_today_picks(target_date=None):
     altin_list.sort(key=lambda x: (-x['mp'], x['first_time']))
     premium_list.sort(key=lambda x: (-x['mp'], x['first_time']))
     firsat_list.sort(key=lambda x: (-x['mp'], x['first_time']))
+
+    # Phase 5.8.8 — idman dereceleri özet (sadece ALTIN+PREMIUM, politeness 2s)
+    # FIRSAT atlanır (kaynak HTML çoklu istek; uzun sürer)
+    if os.environ.get('TJK_IDMAN_LOOKUP', '1') == '1':
+        try:
+            try:
+                from dashboard.idman_lookup import fetch_summary as _idman_sum
+            except ImportError:
+                from idman_lookup import fetch_summary as _idman_sum
+            for p in altin_list + premium_list:
+                # Race-leg'ten distance bul (pool first_time + race_no'ya bakmaktan
+                # daha kolayı: pool dict'ten alalım — şu an pool'da yok, mesafeyi
+                # 1400 default ile geç; gerçek mesafe önemli ise lookup recs'inde
+                # nearest distance otomatik bulunur)
+                try:
+                    summary = _idman_sum(p['name'], target_distance=1400,
+                                          politeness=2.0)
+                except Exception:
+                    summary = None
+                p['idman'] = summary
+        except Exception:
+            pass
+
     return {
         'date': str(target_date),
         'altin': altin_list,
@@ -182,6 +205,20 @@ def format_telegram_message(payload):
                          f"ilk-4 %{jct4*100:.0f}{extra}")
             elif jov is not None and jn:
                 L.append(f"     · jokey {jn} · genel ilk-4 %{jov*100:.0f}")
+            # İdman (galop dereceleri) özet — Phase 5.8.8
+            idman = p.get('idman')
+            if idman:
+                n = idman.get('n_window') or 0
+                last = idman.get('days_since_last')
+                bs = idman.get('best_speed')
+                nd = idman.get('nearest_dist')
+                if n > 0:
+                    parts = [f"🏃 idman: {n}× son 30g"]
+                    if last is not None:
+                        parts.append(f"son {last}g önce")
+                    if bs and nd:
+                        parts.append(f"en hızlı {bs:.1f} m/s @{nd}m")
+                    L.append(f"     {' · '.join(parts)}")
         L.append('')
 
     if altin:

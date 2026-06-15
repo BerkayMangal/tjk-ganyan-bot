@@ -496,6 +496,13 @@ function renderSibTop4(el){
         } else if (p.jockey_overall_top4 != null && p.jockey_name) {
           jline = `<div style="font-size:11px;color:var(--text2);font-family:var(--mono);margin-top:4px">· jokey ${p.jockey_name} · genel ilk-4 %${(p.jockey_overall_top4*100).toFixed(0)}</div>`;
         }
+        let iline = '';
+        if (p.idman && (p.idman.n_window || 0) > 0) {
+          let parts = ['🏃 idman: ' + p.idman.n_window + '× son ' + (p.idman.window_days||30) + 'g'];
+          if (p.idman.days_since_last != null) parts.push('son ' + p.idman.days_since_last + 'g önce');
+          if (p.idman.best_speed && p.idman.nearest_dist) parts.push('en hızlı ' + p.idman.best_speed.toFixed(1) + ' m/s @' + p.idman.nearest_dist + 'm');
+          iline = `<div style="font-size:11px;color:var(--purple);font-family:var(--mono);margin-top:3px">${parts.join(' · ')}</div>`;
+        }
         return `
         <div class="card" style="margin-bottom:10px;border-left:3px solid ${accentColor}">
           <div style="padding:10px 14px;display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
@@ -511,6 +518,7 @@ function renderSibTop4(el){
                 halk %${p.agf.toFixed(0)} · model %${p.mp.toFixed(0)} · ${p.mult.toFixed(1)}× değer · ${p.field_size} atlı · ilk ayak ${p.first_time||'?'}
               </div>
               ${jline}
+              ${iline}
             </div>
             <div style="text-align:right;min-width:80px">
               <div style="font-size:24px;font-weight:800;color:${accentColor}">${p.mult.toFixed(1)}×</div>
