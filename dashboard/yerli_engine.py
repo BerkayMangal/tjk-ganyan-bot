@@ -3389,6 +3389,46 @@ def _model_predict_legs(legs, hippo, target_date):
                                     _hnames, _agfs, breed, _v3r, v5_probs=v5_probs)
                 except Exception as _v3e:
                     logger.debug(f"  Leg {i+1} v3_live override: {_v3e}")
+                # PATCH_5_8_22_V6_SHADOW — V6 (210) shadow inference yan tarafta
+                try:
+                    from dashboard.v6_live import predict_v6 as _v6_predict, is_shadow_enabled as _v6_on
+                    if _v6_on():
+                        _horse_meta = []
+                        for t in leg['horses'][:len(probs)]:
+                            try: hnum = int(t[2])
+                            except (TypeError, ValueError): continue
+                            agf = next((a.get('agf_pct') for a in (agf_data or [])
+                                        if a.get('horse_number') == hnum), 0)
+                            fd = t[3] if isinstance(t[3], dict) else {}
+                            _horse_meta.append({
+                                'horse_name': t[0], 'horse_number': hnum,
+                                'agf_pct': float(agf or 0),
+                                'jockey_name': fd.get('jockey') or fd.get('jockey_name', ''),
+                                'age': fd.get('age', 0), 'weight': fd.get('weight', 0),
+                                'distance': leg.get('distance', 1400),
+                                'track_type': leg.get('track_type', ''),
+                                'group_name': leg.get('group_name', ''),
+                            })
+                        _v6r = _v6_predict(_horse_meta, breed, hippo,
+                                            leg.get('race_number') or leg.get('ayak'),
+                                            target_date)
+                        if _v6r:
+                            leg['v6_shadow'] = {
+                                'top1_idx': _v6r['top1_idx'],
+                                'top3_idx': _v6r['top3_idx'],
+                                'top4_idx': _v6r['top4_idx'],
+                                'probs': _v6r['probs'],
+                                'scores': _v6r['scores'],
+                                'calib_used': _v6r['calib_used'],
+                                'mode': _v6r['mode'],
+                            }
+                            # Per-horse v6 prediction'ı feature dict'ine ekle
+                            for j, hp in enumerate(_v6r.get('probs') or []):
+                                if j < len(leg['horses']):
+                                    leg['horses'][j][3]['v6_prob'] = float(hp)
+                                    leg['horses'][j][3]['v6_score'] = float(_v6r['scores'][j])
+                except Exception as _v6e:
+                    logger.debug(f"  Leg {i+1} v6 shadow: {_v6e}")
                 ps = probs.sum()
                 pn = probs / ps if ps > 0 else probs
                 for j in range(len(pn)):
@@ -4815,10 +4855,14 @@ def _build_legs_summary(legs):
             ve = (h[3].get('model_prob', 0) - ap/100.0)*100 if isinstance(h[3], dict) and ap > 0 else 0
             # PATCH_5_8_7_JOCKEY — jokey adı ek (Phase 5.8.7 conditional bucket için).
             jk = (h[3].get('jockey_name') or h[3].get('jockey') or '') if isinstance(h[3], dict) else ''
+            # PATCH_5_8_22_V6 — V6 shadow per-horse scores
+            v6_prob = h[3].get('v6_prob') if isinstance(h[3], dict) else None
+            v6_score = h[3].get('v6_score') if isinstance(h[3], dict) else None
             all_horses_with_mp.append({
                 'name': h[0], 'number': h[2], 'score': round(h[1], 4),
                 'agf_pct': ap, 'model_prob': round(mp, 1), 'value_edge': round(ve, 1),
                 'jockey_name': jk,
+                'v6_prob': v6_prob, 'v6_score': v6_score,
             })
         # Existing top3 logic — UNCHANGED.
         top3 = []
@@ -4837,7 +4881,9 @@ def _build_legs_summary(legs):
             'all_horses_with_mp':all_horses_with_mp,
             'distance':leg.get('distance',''),'breed':'Arap' if leg.get('is_arab') else ('\u0130ngiliz' if leg.get('is_english') else ''),
             'group_name':leg.get('group_name','') or '','track_type':leg.get('track_type','') or '',
-            'race_time':leg.get('race_time','') or ''})
+            'race_time':leg.get('race_time','') or '',
+            # PATCH_5_8_22 \u2014 V6 shadow leg-level output
+            'v6_shadow': leg.get('v6_shadow')})
     return out
 
 
