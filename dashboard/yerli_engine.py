@@ -3429,6 +3429,44 @@ def _model_predict_legs(legs, hippo, target_date):
                                     leg['horses'][j][3]['v6_score'] = float(_v6r['scores'][j])
                 except Exception as _v6e:
                     logger.debug(f"  Leg {i+1} v6 shadow: {_v6e}")
+                # PATCH_5_8_28_V7_SHADOW — V7 (225) shadow inference
+                try:
+                    from dashboard.v7_live import predict_v7 as _v7_predict, is_shadow_enabled as _v7_on
+                    if _v7_on():
+                        _horse_meta_v7 = []
+                        for t in leg['horses'][:len(probs)]:
+                            try: hnum = int(t[2])
+                            except (TypeError, ValueError): continue
+                            agf = next((a.get('agf_pct') for a in (agf_data or [])
+                                        if a.get('horse_number') == hnum), 0)
+                            fd = t[3] if isinstance(t[3], dict) else {}
+                            _horse_meta_v7.append({
+                                'horse_name': t[0], 'horse_number': hnum,
+                                'agf_pct': float(agf or 0),
+                                'jockey_name': fd.get('jockey') or fd.get('jockey_name', ''),
+                                'age': fd.get('age', 0), 'weight': fd.get('weight', 0),
+                                'distance': leg.get('distance', 1400),
+                                'track_type': leg.get('track_type', ''),
+                                'group_name': leg.get('group_name', ''),
+                            })
+                        _v7r = _v7_predict(_horse_meta_v7, breed, hippo,
+                                            leg.get('race_number') or leg.get('ayak'),
+                                            target_date)
+                        if _v7r:
+                            leg['v7_shadow'] = {
+                                'top1_idx': _v7r['top1_idx'],
+                                'top3_idx': _v7r['top3_idx'],
+                                'top4_idx': _v7r['top4_idx'],
+                                'probs': _v7r['probs'],
+                                'scores': _v7r['scores'],
+                                'mode': _v7r['mode'],
+                            }
+                            for j, hp in enumerate(_v7r.get('probs') or []):
+                                if j < len(leg['horses']):
+                                    leg['horses'][j][3]['v7_prob'] = float(hp)
+                                    leg['horses'][j][3]['v7_score'] = float(_v7r['scores'][j])
+                except Exception as _v7e:
+                    logger.debug(f"  Leg {i+1} v7 shadow: {_v7e}")
                 ps = probs.sum()
                 pn = probs / ps if ps > 0 else probs
                 for j in range(len(pn)):
@@ -4858,11 +4896,15 @@ def _build_legs_summary(legs):
             # PATCH_5_8_22_V6 — V6 shadow per-horse scores
             v6_prob = h[3].get('v6_prob') if isinstance(h[3], dict) else None
             v6_score = h[3].get('v6_score') if isinstance(h[3], dict) else None
+            # PATCH_5_8_28_V7 — V7 shadow per-horse scores
+            v7_prob = h[3].get('v7_prob') if isinstance(h[3], dict) else None
+            v7_score = h[3].get('v7_score') if isinstance(h[3], dict) else None
             all_horses_with_mp.append({
                 'name': h[0], 'number': h[2], 'score': round(h[1], 4),
                 'agf_pct': ap, 'model_prob': round(mp, 1), 'value_edge': round(ve, 1),
                 'jockey_name': jk,
                 'v6_prob': v6_prob, 'v6_score': v6_score,
+                'v7_prob': v7_prob, 'v7_score': v7_score,
             })
         # Existing top3 logic — UNCHANGED.
         top3 = []
@@ -4883,7 +4925,9 @@ def _build_legs_summary(legs):
             'group_name':leg.get('group_name','') or '','track_type':leg.get('track_type','') or '',
             'race_time':leg.get('race_time','') or '',
             # PATCH_5_8_22 \u2014 V6 shadow leg-level output
-            'v6_shadow': leg.get('v6_shadow')})
+            'v6_shadow': leg.get('v6_shadow'),
+            # PATCH_5_8_28 \u2014 V7 shadow leg-level output
+            'v7_shadow': leg.get('v7_shadow')})
     return out
 
 
