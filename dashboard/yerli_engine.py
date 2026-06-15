@@ -4813,9 +4813,12 @@ def _build_legs_summary(legs):
                 if a['horse_number'] == h[2]: ap = a['agf_pct']; break
             mp = h[3].get('model_prob', 0)*100 if isinstance(h[3], dict) else 0
             ve = (h[3].get('model_prob', 0) - ap/100.0)*100 if isinstance(h[3], dict) and ap > 0 else 0
+            # PATCH_5_8_7_JOCKEY — jokey adı ek (Phase 5.8.7 conditional bucket için).
+            jk = (h[3].get('jockey_name') or h[3].get('jockey') or '') if isinstance(h[3], dict) else ''
             all_horses_with_mp.append({
                 'name': h[0], 'number': h[2], 'score': round(h[1], 4),
                 'agf_pct': ap, 'model_prob': round(mp, 1), 'value_edge': round(ve, 1),
+                'jockey_name': jk,
             })
         # Existing top3 logic — UNCHANGED.
         top3 = []

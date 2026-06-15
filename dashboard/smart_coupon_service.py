@@ -114,6 +114,23 @@ def _yerli_pipeline_to_audit73_legs(hippodrome_dict, target_date, engine):
             except Exception:
                 mp_eff = mp; flb_mult = 1.0
             ts = engine.tier_score_continuous(breed, year, mp_eff, agf) if any_model else 0.5
+            # Jokey × mesafe × track conditional (Phase 5.8.7) — predict-time lookup
+            jockey_name = (h.get('jockey') or h.get('jockey_name') or '').strip()
+            j_cond_top4 = j_cond_win = j_overall_top4 = j_overall_n = None
+            try:
+                try:
+                    from dashboard.jockey_lookup import cond_top4 as _jct4, cond_win as _jcw, overall as _jov
+                except ImportError:
+                    from jockey_lookup import cond_top4 as _jct4, cond_win as _jcw, overall as _jov
+                if jockey_name:
+                    j_cond_top4 = _jct4(jockey_name, dist, tt)
+                    j_cond_win = _jcw(jockey_name, dist, tt)
+                    _ov = _jov(jockey_name)
+                    if _ov:
+                        j_overall_top4 = _ov.get('top4_rate')
+                        j_overall_n = _ov.get('n')
+            except Exception:
+                pass
             horses_out.append({
                 'horse_number': hno, 'horse_name': h.get('name', f'#{hno}'),
                 'agf_value': agf, 'agf_rank': rank_map.get(hno, 0),
@@ -125,6 +142,9 @@ def _yerli_pipeline_to_audit73_legs(hippodrome_dict, target_date, engine):
                 'model_prob_eff': mp_eff, 'flb_multiplier': flb_mult,
                 'tier_score': ts, 'tier_mark': engine.tier_marker(ts),
                 'breed': breed,
+                'jockey_name': jockey_name,
+                'jockey_cond_top4': j_cond_top4, 'jockey_cond_win': j_cond_win,
+                'jockey_overall_top4': j_overall_top4, 'jockey_overall_n': j_overall_n,
             })
         race_legs.append(horses_out)
     return race_legs, model_failed

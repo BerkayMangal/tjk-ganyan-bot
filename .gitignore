@@ -9,6 +9,8 @@ data/*
 # İSTİSNA: sürpriz bucket'ları küçük (~7KB) ve prod kupon L2 katmanı için GEREKLİ
 # (Railway'de data/ yoktu → bucket lookup hep ıskalar → L2=0.5 nötr kalıyordu)
 !data/surprise/
+# Phase 5.8.7 — jokey × mesafe × track conditional bucket (134 KB, prod lookup ŞART)
+!data/jockey_distance_buckets.json
 *.csv
 
 # Audit — üretilen tarihli raporlar (regenerable, tracked DEĞİL)

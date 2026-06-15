@@ -95,6 +95,9 @@ def collect_today_picks(target_date=None):
                 'mult': round(p['mp'] / max(p['agf'], 0.5), 1),
                 'field_size': p['field_size'],
                 'tier': p['tier'],
+                'jockey_name': p.get('jockey_name') or '',
+                'jockey_cond_top4': p.get('jockey_cond_top4'),
+                'jockey_overall_top4': p.get('jockey_overall_top4'),
             }
             if p.get('altin'):
                 altin_list.append(entry)
@@ -168,6 +171,17 @@ def format_telegram_message(payload):
                      f"#{p['horse_no']} <b>{p['name']}</b>")
             L.append(f"     halk %{p['agf']:.0f} · model %{p['mp']:.0f} "
                      f"({p['mult']:.1f}× · {p['field_size']} atlı)")
+            # Jokey conditional (varsa)
+            jct4 = p.get('jockey_cond_top4')
+            jov = p.get('jockey_overall_top4')
+            jn = p.get('jockey_name') or ''
+            if jct4 is not None and jn:
+                tag = '🔥' if jct4 >= 0.65 else ('✓' if jct4 >= 0.50 else '·')
+                extra = f" (genel %{jov*100:.0f})" if jov is not None else ''
+                L.append(f"     {tag} jokey {jn} · bu mesafe/zeminde "
+                         f"ilk-4 %{jct4*100:.0f}{extra}")
+            elif jov is not None and jn:
+                L.append(f"     · jokey {jn} · genel ilk-4 %{jov*100:.0f}")
         L.append('')
 
     if altin:

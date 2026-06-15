@@ -430,6 +430,10 @@ def _collect_value_picks(race_legs, hippo='', agf_max=0.30, max_picks=10):
                     'mp_raw': mp, 'gap': gap,
                     'field_size': field_size, 'tier': tier,
                     'premium': premium, 'altin': altin, 'firsat': firsat,
+                    # Phase 5.8.7 — jokey × mesafe × track conditional
+                    'jockey_name': h.get('jockey_name') or '',
+                    'jockey_cond_top4': h.get('jockey_cond_top4'),
+                    'jockey_overall_top4': h.get('jockey_overall_top4'),
                 }
         if best is not None:
             picks.append(best)
@@ -463,9 +467,21 @@ def render_value_picks(race_legs, hippo=''):
 
     def _row(p, extra=''):
         mult = p['mp'] / max(p['agf'], 0.5)
+        # Jokey conditional satır (varsa)
+        jline = ''
+        jct4 = p.get('jockey_cond_top4')
+        jov = p.get('jockey_overall_top4')
+        jname = p.get('jockey_name') or ''
+        if jct4 is not None and jname:
+            tag = '🔥' if jct4 >= 0.65 else ('✓' if jct4 >= 0.50 else '·')
+            jline = (f"\n     {tag} jokey {jname[:18]} · "
+                     f"bu mesafe/zeminde ilk-4 %{jct4*100:.0f}"
+                     + (f" (genel %{jov*100:.0f})" if jov is not None else ''))
+        elif jov is not None and jname:
+            jline = f"\n     · jokey {jname[:18]} · genel ilk-4 %{jov*100:.0f}"
         return (f"  <b>{p['leg']}. AYAK</b> · #{p['horse_no']} {p['name']} — "
                 f"halk %{p['agf']:.0f} · model %{p['mp']:.0f}{extra} "
-                f"({mult:.1f}× · {p['field_size']} atlı)")
+                f"({mult:.1f}× · {p['field_size']} atlı){jline}")
 
     if altins:
         L.append('🌟 <b>ALTIN</b> <i>(İstanbul + 12+ at + model 35-45 — backtest +%195 lift)</i>')

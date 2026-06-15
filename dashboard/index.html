@@ -486,7 +486,17 @@ function renderSibTop4(el){
       let premium = data.premium || [];
       let firsat = data.firsat || [];
       let totals = data.totals || {};
-      let pickCard = (p, badge, badgeColor, accentColor) => `
+      let pickCard = (p, badge, badgeColor, accentColor) => {
+        let jline = '';
+        if (p.jockey_cond_top4 != null && p.jockey_name) {
+          let pct = (p.jockey_cond_top4*100).toFixed(0);
+          let tag = p.jockey_cond_top4 >= 0.65 ? '🔥' : (p.jockey_cond_top4 >= 0.50 ? '✓' : '·');
+          let extra = (p.jockey_overall_top4 != null) ? ' (genel %' + (p.jockey_overall_top4*100).toFixed(0) + ')' : '';
+          jline = `<div style="font-size:11px;color:var(--green);font-family:var(--mono);margin-top:4px">${tag} jokey ${p.jockey_name} · bu mesafe/zeminde ilk-4 <b>%${pct}</b>${extra}</div>`;
+        } else if (p.jockey_overall_top4 != null && p.jockey_name) {
+          jline = `<div style="font-size:11px;color:var(--text2);font-family:var(--mono);margin-top:4px">· jokey ${p.jockey_name} · genel ilk-4 %${(p.jockey_overall_top4*100).toFixed(0)}</div>`;
+        }
+        return `
         <div class="card" style="margin-bottom:10px;border-left:3px solid ${accentColor}">
           <div style="padding:10px 14px;display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px">
             <div style="flex:1;min-width:260px">
@@ -500,6 +510,7 @@ function renderSibTop4(el){
               <div style="font-size:12px;color:var(--text2);font-family:var(--mono)">
                 halk %${p.agf.toFixed(0)} · model %${p.mp.toFixed(0)} · ${p.mult.toFixed(1)}× değer · ${p.field_size} atlı · ilk ayak ${p.first_time||'?'}
               </div>
+              ${jline}
             </div>
             <div style="text-align:right;min-width:80px">
               <div style="font-size:24px;font-weight:800;color:${accentColor}">${p.mult.toFixed(1)}×</div>
@@ -507,6 +518,7 @@ function renderSibTop4(el){
             </div>
           </div>
         </div>`;
+      };
 
       let altinHtml = altin.length === 0
         ? '<div style="padding:18px;color:var(--text3);font-size:12px;text-align:center">Bugün ALTIN pick yok</div>'
