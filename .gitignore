@@ -39,3 +39,4 @@ catboost_info/
 review/
 review.zip
 /tmp_*
+model/trained_v3_pre_full_bak/
