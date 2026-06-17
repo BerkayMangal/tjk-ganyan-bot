@@ -183,28 +183,54 @@ def match_outcome(picks, rich):
     return out
 
 
-def compute_pnl(pick, payout, bankroll, kelly_factor):
-    """Half-Kelly bet sizing → bet_size × (top4 hit × payout - 1)."""
+def estimate_payout(pick):
+    """AGF rank'a göre TR SİB top4 payout tahmini (Berkay 2026-06-17 gözlemi):
+    halk favorisi → ezici overbet → minimum payout. Underbet (low AGF) → high payout.
+
+    Bant         AGF              tipik SİB top4 payout
+    ezici favori ≥40%             ~1.05×
+    favori       25-40%           ~1.25×
+    orta         15-25%           ~1.55×
+    underbet     8-15%            ~2.00×
+    longshot     <8%              ~2.80×
+    """
+    agf = pick.get('agf', 0) or 0
+    if agf >= 0.40: return 1.05
+    if agf >= 0.25: return 1.25
+    if agf >= 0.15: return 1.55
+    if agf >= 0.08: return 2.00
+    return 2.80
+
+
+def compute_pnl(pick, payout_override, bankroll, kelly_factor):
+    """Half-Kelly bet sizing × AGF-bazlı payout tahmini.
+
+    payout_override: None ise estimate_payout (AGF bant), float ise override.
+    """
     # Strateji-spesifik hit rate (audit/129 walk-forward)
     hit_rates = {
         'ALTIN': 0.897, 'PREMIUM': 0.747, 'FIRSAT': 0.812,
-        'MODEL_top1_V7': 0.797, 'MODEL_top1_V3': 0.725,  # V3 tahminen V7'den düşük
+        'MODEL_top1_V7': 0.797, 'MODEL_top1_V3': 0.725,
         'AGF_top1': 0.751, 'SWEET-1-SMALL': 0.70, 'SWEET-2': 0.80, 'HALUSINASYON': 0.50,
     }
     p = hit_rates.get(pick['strategy'], 0.50)
+    payout = payout_override if payout_override is not None else estimate_payout(pick)
     b = payout - 1.0
-    if b <= 0: return {'bet_size': 0.0, 'pnl': 0.0, 'kelly_pct': 0.0}
+    if b <= 0:
+        return {'bet_size': 0.0, 'pnl': 0.0, 'kelly_pct': 0.0,
+                'expected_roi_pct': round((p * payout - 1) * 100, 2),
+                'payout_est': round(payout, 2)}
     q = 1.0 - p
     kelly = max(0.0, (p * b - q) / b)
     bet_size = bankroll * kelly * kelly_factor
     if pick['matched']:
-        # gerçek outcome
         pnl = bet_size * (pick['top4_hit'] * payout - 1)
     else:
-        pnl = 0.0  # bilinmiyor
+        pnl = 0.0
     return {'bet_size': round(bet_size, 2), 'pnl': round(pnl, 2),
             'kelly_pct': round(kelly * kelly_factor * 100, 1),
-            'expected_roi_pct': round((p * payout - 1) * 100, 2)}
+            'expected_roi_pct': round((p * payout - 1) * 100, 2),
+            'payout_est': round(payout, 2)}
 
 
 def log_picks(matched, payout, bankroll, kelly_factor):
@@ -236,8 +262,8 @@ def summarize():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('dates', nargs='+')
-    ap.add_argument('--payout', type=float, default=1.5,
-                    help='Assumed SİB top4 payout (default 1.5×)')
+    ap.add_argument('--payout', type=float, default=None,
+                    help='Payout override (default: AGF-bazlı estimate_payout)')
     ap.add_argument('--bankroll', type=float, default=1000.0,
                     help='Bankroll TL (default 1000)')
     ap.add_argument('--kelly', type=float, default=0.5,
@@ -259,7 +285,8 @@ def main():
         all_matched.extend(matched)
 
     # Per-strategy özet
-    print(f'\n=== {args.dates[0]}..{args.dates[-1]} özet (payout={args.payout}×, bankroll={args.bankroll}TL, kelly={args.kelly}) ===\n')
+    p_str = f'{args.payout}×' if args.payout else 'AGF-bazlı'
+    print(f'\n=== {args.dates[0]}..{args.dates[-1]} özet (payout={p_str}, bankroll={args.bankroll}TL, kelly={args.kelly}) ===\n')
     by_strat = {}
     for p in all_matched:
         s = p['strategy']
