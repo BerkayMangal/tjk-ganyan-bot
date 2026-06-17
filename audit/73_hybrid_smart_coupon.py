@@ -424,6 +424,7 @@ def _collect_value_picks(race_legs, hippo='', agf_max=0.30, max_picks=10):
                 best = {
                     'leg': leg_idx,
                     'race_no': h.get('race_number') or leg_idx,
+                    'race_time': (h.get('start_time') or h.get('race_time') or '')[:5],
                     'horse_no': h.get('horse_number') or '?',
                     'name': _name_clean(h.get('horse_name') or '?')[:18],
                     'agf': agf * 100, 'mp': mp * 100,

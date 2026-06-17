@@ -86,6 +86,7 @@ def collect_today_picks(target_date=None):
                 'pool': hippo_label,
                 'hippo_base': hippo_base,
                 'first_time': first_time,
+                'race_time': p.get('race_time') or first_time,
                 'leg': p['leg'],
                 'race_no': p['race_no'],
                 'horse_no': p['horse_no'],
@@ -191,65 +192,41 @@ def format_telegram_message(payload):
                 '<i>Bugün ALTIN/PREMIUM/FIRSAT kategorisinde pick yok. '
                 'AGF yayınlanınca tekrar denenecek.</i>')
 
-    L = [f'🎯 <b>BUNU OYNA — İLK 4 SİB</b> ({payload.get("date","")})',
-         '<i>Walk-forward (V7, n=6,734): ALTIN +10pp · PREMIUM ~ · FIRSAT +1.5pp '
-         '(MODEL_top1 baseline %79.7) — audit/129</i>',
-         '<i>⚠ +EV garantisi yok — gerçek SİB oranı ile değerlendir.</i>',
-         '']
+    L = [f'🎯 <b>BUNU OYNA — İLK 4 SİB</b> · {payload.get("date","")}', '']
 
-    def _section(title, sub, lst):
-        L.append(f'{title} ({len(lst)} pick)')
-        L.append(f'<i>{sub}</i>')
-        for p in lst:
-            L.append(f"  • <b>{p['pool']}</b>")
-            L.append(f"     {p['leg']}. AYAK ({p['race_no']}. koşu) · "
-                     f"#{p['horse_no']} <b>{p['name']}</b>")
-            L.append(f"     halk %{p['agf']:.0f} · model %{p['mp']:.0f} "
-                     f"({p['mult']:.1f}× · {p['field_size']} atlı)")
-            # Jokey conditional (varsa)
-            jct4 = p.get('jockey_cond_top4')
+    def _line_for(p):
+        """Tek pick için sade satırlar — saat · hipo · koşu · at · halk/model · jokey."""
+        rt = p.get('race_time') or p.get('first_time') or ''
+        hp = p.get('hippo_base') or (p.get('pool') or '').split('·')[0].strip()
+        out = [
+            f"🕐 <b>{rt}</b> · {hp} · <b>{p['race_no']}. koşu</b>",
+            f"   #{p['horse_no']} <b>{p['name']}</b>  ·  halk %{p['agf']:.0f} · model %{p['mp']:.0f}",
+        ]
+        jct4 = p.get('jockey_cond_top4')
+        jn = p.get('jockey_name') or ''
+        if jct4 is not None and jn:
+            tag = '🔥 ' if jct4 >= 0.65 else ('✓ ' if jct4 >= 0.50 else '')
+            out.append(f"   {tag}jokey {jn} · mesafe %{jct4*100:.0f}")
+        elif jn:
             jov = p.get('jockey_overall_top4')
-            jn = p.get('jockey_name') or ''
-            if jct4 is not None and jn:
-                tag = '🔥' if jct4 >= 0.65 else ('✓' if jct4 >= 0.50 else '·')
-                extra = f" (genel %{jov*100:.0f})" if jov is not None else ''
-                L.append(f"     {tag} jokey {jn} · bu mesafe/zeminde "
-                         f"ilk-4 %{jct4*100:.0f}{extra}")
-            elif jov is not None and jn:
-                L.append(f"     · jokey {jn} · genel ilk-4 %{jov*100:.0f}")
-            # İdman (galop dereceleri) özet — Phase 5.8.8
-            idman = p.get('idman')
-            if idman:
-                n = idman.get('n_window') or 0
-                last = idman.get('days_since_last')
-                bs = idman.get('best_speed')
-                nd = idman.get('nearest_dist')
-                if n > 0:
-                    parts = [f"🏃 idman: {n}× son 30g"]
-                    if last is not None:
-                        parts.append(f"son {last}g önce")
-                    if bs and nd:
-                        parts.append(f"en hızlı {bs:.1f} m/s @{nd}m")
-                    L.append(f"     {' · '.join(parts)}")
-        L.append('')
+            if jov is not None:
+                out.append(f"   jokey {jn} · genel %{jov*100:.0f}")
+        return out
 
-    if altin:
-        _section('🌟 <b>ALTIN</b>',
-                 'İstanbul + 12+ at + model %35-45 (WF n=29 hit %89.7, '
-                 'ham model_top1\'e +10pp)', altin)
-    if premium:
-        _section('⭐ <b>PREMIUM</b>',
-                 '12+ at + model %35-45 (WF n=99 hit %74.7, ham model_top1\'e '
-                 '−5pp — tier mantığı marjinal)', premium)
-    if firsat:
-        _section('💡 <b>FIRSAT</b>',
-                 'mp 25-35 + gap ≥ 15pp (WF n=202 hit %81.2, ham model_top1\'e '
-                 '+1.5pp, AGF_top1\'e +6pp)', firsat)
+    def _section(emoji_title, lst):
+        if not lst: return
+        # Saate göre sort
+        lst_sorted = sorted(lst, key=lambda x: (x.get('race_time') or x.get('first_time') or '99:99'))
+        L.append(f'{emoji_title} ({len(lst_sorted)} pick)')
+        for p in lst_sorted:
+            L.extend(_line_for(p))
+            L.append('')
 
-    L.append('<i>NOT: STANDART ve HALÜSİNASYON ana kupon altında "SİB ÖNERİSİ" '
-             'bölümünde kalıyor — bu mesaj ALTIN/PREMIUM (emin) + FIRSAT '
-             '(geniş ağ) içindir.</i>')
-    return '\n'.join(L)
+    _section('🌟 <b>ALTIN</b>', altin)
+    _section('⭐ <b>PREMIUM</b>', premium)
+    _section('💡 <b>FIRSAT</b>', firsat)
+
+    return '\n'.join(L).rstrip()
 
 
 def send_today_top4(target_date=None, dry_run=False):
