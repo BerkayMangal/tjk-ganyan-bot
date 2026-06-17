@@ -170,10 +170,20 @@ def _reconstruct_from_snapshot(pool):
 
 
 def format_telegram_message(payload):
-    """Defansif Telegram metni; ALTIN + PREMIUM + FIRSAT (dünkü 4/4 eşiği)."""
+    """Defansif Telegram metni; ALTIN + PREMIUM + FIRSAT (dünkü 4/4 eşiği).
+
+    Phase 5.8.37 (2026-06-17): lift framing güncellendi — audit/73 yorumdaki
+    "+%195 / +%145" RANDOM (4/field) baseline'a karşı şişirilmiş. Anlamlı
+    baseline = MODEL_top1 (V7 ranker top1'i top4 girme oranı %79.7). Dürüst
+    walk-forward (n_races=6,734): ALTIN +10pp, PREMIUM −5pp, FIRSAT +1.5pp.
+    Env `TJK_SIB_PREMIUM_DISABLE=1` → PREMIUM bölümü atlanır (default OFF).
+    """
     altin = payload.get('altin') or []
     premium = payload.get('premium') or []
     firsat = payload.get('firsat') or []
+    # Phase 5.8.37 — opsiyonel PREMIUM disable
+    if os.environ.get('TJK_SIB_PREMIUM_DISABLE', '0') == '1':
+        premium = []
     if not altin and not premium and not firsat:
         return ('🎯 <b>BUNU OYNA — İLK 4 SİB</b>\n'
                 f'<i>{payload.get("date","")}</i>\n\n'
@@ -181,7 +191,8 @@ def format_telegram_message(payload):
                 'AGF yayınlanınca tekrar denenecek.</i>')
 
     L = [f'🎯 <b>BUNU OYNA — İLK 4 SİB</b> ({payload.get("date","")})',
-         '<i>Backtest: ALTIN +%195 · PREMIUM +%145 · FIRSAT +%35 (dünkü 4/4 eşiği)</i>',
+         '<i>Walk-forward (V7, n=6,734): ALTIN +10pp · PREMIUM ~ · FIRSAT +1.5pp '
+         '(MODEL_top1 baseline %79.7) — audit/129</i>',
          '<i>⚠ +EV garantisi yok — gerçek SİB oranı ile değerlendir.</i>',
          '']
 
@@ -223,14 +234,16 @@ def format_telegram_message(payload):
 
     if altin:
         _section('🌟 <b>ALTIN</b>',
-                 'İstanbul + 12+ at + model %35-45 (hit %94.7 backtest)', altin)
+                 'İstanbul + 12+ at + model %35-45 (WF n=29 hit %89.7, '
+                 'ham model_top1\'e +10pp)', altin)
     if premium:
         _section('⭐ <b>PREMIUM</b>',
-                 '12+ at + model %35-45 (lift +%145 backtest)', premium)
+                 '12+ at + model %35-45 (WF n=99 hit %74.7, ham model_top1\'e '
+                 '−5pp — tier mantığı marjinal)', premium)
     if firsat:
         _section('💡 <b>FIRSAT</b>',
-                 'Berkay\'ın dün 4/4 yaptığı eşik: mp 25-35 + gap ≥ 15pp '
-                 '(geniş ağ, +%35 lift)', firsat)
+                 'mp 25-35 + gap ≥ 15pp (WF n=202 hit %81.2, ham model_top1\'e '
+                 '+1.5pp, AGF_top1\'e +6pp)', firsat)
 
     L.append('<i>NOT: STANDART ve HALÜSİNASYON ana kupon altında "SİB ÖNERİSİ" '
              'bölümünde kalıyor — bu mesaj ALTIN/PREMIUM (emin) + FIRSAT '
