@@ -41,6 +41,9 @@ review.zip
 /tmp_*
 model/trained_v3_pre_full_bak/
 
+# Phase 5.8.38 — SİB top4 daily log (append-only, prod cumulative)
+data/sib_top4_log.jsonl
+
 # Phase 5.8.31 — paired test artefacts (regenerable from audit scripts)
 model/trained_v3_180_paired/
 model/trained_v7_5_235/
