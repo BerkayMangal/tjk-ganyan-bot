@@ -215,8 +215,19 @@ def format_telegram_message(payload):
 
     def _section(emoji_title, lst):
         if not lst: return
+        # Dedup (audit/73 farklı pool'larda aynı atı yakalayabilir)
+        seen = set(); dedup = []
+        for p in lst:
+            key = (
+                (p.get('hippo_base') or (p.get('pool') or '').split('·')[0].strip()).strip().lower(),
+                str(p.get('race_no')),
+                str(p.get('horse_no')),
+            )
+            if key in seen: continue
+            seen.add(key)
+            dedup.append(p)
         # Saate göre sort
-        lst_sorted = sorted(lst, key=lambda x: (x.get('race_time') or x.get('first_time') or '99:99'))
+        lst_sorted = sorted(dedup, key=lambda x: (x.get('race_time') or x.get('first_time') or '99:99'))
         L.append(f'{emoji_title} ({len(lst_sorted)} pick)')
         for p in lst_sorted:
             L.extend(_line_for(p))
