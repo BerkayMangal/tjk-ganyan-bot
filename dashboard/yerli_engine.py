@@ -3467,8 +3467,10 @@ def _model_predict_legs(legs, hippo, target_date):
                                     leg['horses'][j][3]['v7_score'] = float(_v7r['scores'][j])
                 except Exception as _v7e:
                     logger.debug(f"  Leg {i+1} v7 shadow: {_v7e}")
-                # PATCH_5_8_28_V7_LIVE — ENV TJK_V7_LIVE=1 ile V3 LIVE probs'u V7 ile override
-                if os.environ.get('TJK_V7_LIVE', '0') == '1':
+                # PATCH_5_8_28_V7_LIVE — ENV TJK_V7_LIVE (default '1', Phase 5.8.40)
+                # V7 SHADOW probs ile V3 LIVE override. Graceful: V7 SHADOW yoksa V3 kullanılır.
+                # Rollback: TJK_V7_LIVE=0
+                if os.environ.get('TJK_V7_LIVE', '1') != '0':
                     _v7s = leg.get('v7_shadow')
                     if _v7s and _v7s.get('probs'):
                         try:

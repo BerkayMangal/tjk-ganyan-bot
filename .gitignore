@@ -48,6 +48,13 @@ data/sib_top4_log.jsonl
 model/trained_v3_180_paired/
 model/trained_v7_5_235/
 
+# Phase 5.8.40 — Top4 stacking models (marjinal, redundant with V7)
+model/trained_v7_top4_stack/
+
+# Phase 5.8.41/42 — race-pace V8b (KAYBETTİ; ENGLISH -0.67pp top4)
+data/training_v8b/races_v8b.csv
+model/trained_v8b/
+
 # Phase 5.8.30 — V7.5 dataset (~300 MB, regenerable from audit/121)
 data/training_v7_5/races_v7_5.csv
 
