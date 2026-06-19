@@ -79,3 +79,4 @@ data/insider/
 # Phase 5.8.48 — V9 dataset (303 MB, regenerable Taydex sec_* pull ile)
 data/training_v9/races_v9.csv
 model/trained_v9/
+data/agf_live/

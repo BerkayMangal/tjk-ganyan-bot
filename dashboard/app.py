@@ -12,6 +12,16 @@ if PARENT not in sys.path:
 app = Flask(__name__, static_folder=".", template_folder=".")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
+# Phase 5.8.51 — Pre-race AGF live scanner + T-3 kupon scheduler
+# Env flag ile aktive: TJK_AGF_LIVE_SCANNER=1 + TJK_PRERACE_SCHEDULER=1
+try:
+    from agf_live_scanner import start_background_scanner as _agf_start
+    from prerace_scheduler import start_background_scheduler as _prerace_start
+    _agf_start()      # default OFF (env flag), 15 dk polling
+    _prerace_start()  # default OFF, T-5 + T-3 tetik
+except Exception as _e:
+    app.logger.warning(f"PreRace scheduler init: {_e}")
+
 try:
     from edge_calc import (analyze_horse, dutch_calculate, norm_prob, calc_edge,
                            half_kelly, flb_adjustment, TJK_TAKEOUT, TAKEOUTS)
