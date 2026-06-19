@@ -153,7 +153,20 @@ def _fetch_day_mf(target_date) -> dict:
     try:
         import psycopg2
         from psycopg2.extras import RealDictCursor
-        cols_sql = ', '.join(f'mf.{c}' for c in raw_cols)
+        # Phase 5.8.44 — Taydex ml_features'ta olmayan kolonları graceful skip.
+        # V3 NEW 180 bundle 'jockey_cond_top4/middle/hard' istiyor, Taydex tablosunda
+        # yok → SQL fail. Önce schema oku, eksik kolonları skip listesinden çıkar.
+        conn = psycopg2.connect(dsn, connect_timeout=10)
+        conn.set_session(readonly=True, autocommit=True)
+        cur = conn.cursor()
+        cur.execute("""SELECT column_name FROM information_schema.columns
+                       WHERE table_schema='public' AND table_name='ml_features'""")
+        existing = {r[0] for r in cur.fetchall()}
+        present = [c for c in raw_cols if c in existing]
+        missing = [c for c in raw_cols if c not in existing]
+        if missing:
+            logger.info(f'v3_live: skipping {len(missing)} missing mf cols: {missing[:5]}{"..." if len(missing)>5 else ""}')
+        cols_sql = ', '.join(f'mf.{c}' for c in present) if present else '1 AS _none'
         sql = f"""
           SELECT h.name AS _hippo, r.race_number AS _rn, rh.horse_number AS _hn,
                  {cols_sql}
@@ -164,8 +177,6 @@ def _fetch_day_mf(target_date) -> dict:
           JOIN hippodromes h ON h.id = pr.hippodrome_id
           WHERE pr.race_date = %s
         """
-        conn = psycopg2.connect(dsn, connect_timeout=10)
-        conn.set_session(readonly=True, autocommit=True)
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute(sql, (key,))
         rows = cur.fetchall()
@@ -173,9 +184,12 @@ def _fetch_day_mf(target_date) -> dict:
         out = {}
         for r in rows:
             k = (_norm_hippo(r['_hippo']), r['_rn'], r['_hn'])
-            out[k] = {c: r[c] for c in raw_cols}
+            # Present kolonlar dolu, missing kolonlar 0.0 default
+            d = {c: r[c] for c in present}
+            for c in missing: d[c] = 0.0
+            out[k] = d
         _DAY_MF_CACHE[key] = out
-        logger.info(f'v3_live: ml_features bulk fetched for {key}: {len(out)} entries')
+        logger.info(f'v3_live: ml_features bulk fetched for {key}: {len(out)} entries ({len(present)} cols, {len(missing)} missing→0)')
         return out
     except Exception as e:
         logger.warning(f'v3_live: ml_features fetch fail for {key}: {e!r}')

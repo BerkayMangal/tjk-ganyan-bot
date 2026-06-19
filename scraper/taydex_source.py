@@ -27,8 +27,10 @@ from psycopg2.extras import RealDictCursor
 logger = logging.getLogger(__name__)
 
 # Default DSN — tünel açık varsayımı. PROD'da TAYDEX_DSN env override eder.
+# sslmode=disable: lokal tunnel üzerinden Postgres server SSL beklemiyor; bu olmadan
+# "server closed the connection unexpectedly" hatası alıyor (Phase 5.8.43 fix).
 _DEFAULT_DSN = ("postgresql://berkay_ro:4yhT8xJp7LZkWyKlSQrFalBp3qMFoOfh"
-                "@127.0.0.1:6543/taydex_production")
+                "@127.0.0.1:6543/taydex_production?sslmode=disable")
 CONNECT_TIMEOUT = 10
 
 # DB track_type → scraper TR formatı
