@@ -69,3 +69,6 @@ data/training_v6/races_v6.csv
 # Phase 5.8.28 — V7 dataset csv ignore, feature_columns istisna
 data/training_v7/races_v7.csv
 !data/training_v7/feature_columns_v7.json
+
+# Phase 5.8.44 — V7 model backup'ları (zaman damgalı, regenerable)
+model/trained_v7_225_backup_*/
