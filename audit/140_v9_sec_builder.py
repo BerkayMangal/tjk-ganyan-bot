@@ -33,31 +33,28 @@ OUT_FC = os.path.join(OUT_DIR, 'feature_columns_v9.json')
 REP = os.path.join(_REPO, 'audit', 'reports', 'phase_5_8_48_v9_builder.md')
 DSN = 'postgresql://berkay_ro:4yhT8xJp7LZkWyKlSQrFalBp3qMFoOfh@127.0.0.1:6543/taydex_production?sslmode=disable'
 
-# Stratejik subset: yarış-içi performansın özetlediği en bilgili kolonlar
-# (audit'te %35 doluluk gözükenler, tipik continuous degerler)
+# GEÇMİŞ-only feature seti — sec_prev* (5 önceki yarış sectional).
+# DİKKAT: ml_features.sec_* (prefix'siz) bu YARIŞIN post-race değerleri →
+# data leakage. Phase 5.8.48 ilk denemede top1 %30→%64 oldu (kanıt).
+# sec_prev1_*, sec_prev2_*, ... pre-race olduğu için güvenli.
 SEC_FEATURES = [
-    # Temel sürat dağılımı
-    'sec_speed_mean', 'sec_speed_max', 'sec_speed_std', 'sec_speed_cv', 'sec_speed_range',
-    # 3-segment pace profili (closer/leader/midpack belirleyici)
-    'sec_speed_early', 'sec_speed_mid', 'sec_speed_late',
-    # Kick / accel kuvveti
-    'sec_accel_index', 'sec_finish_kick', 'sec_last_200m_speed',
-    # Enerji dağılımı (pace style proxy)
-    'sec_energy_early_pct', 'sec_energy_mid_pct', 'sec_energy_late_pct',
-    # Peak speed timing
-    'sec_peak_speed_pct', 'sec_decel_onset_pct',
-    # Yarış-içi pozisyon değişimi
-    'sec_pos_mean', 'sec_pos_first_cp', 'sec_pos_last_cp', 'sec_pos_change',
-    # Önceki yarış formu
-    'sec_prev1_speed_mean',
-    # Track variant + sezgisel pace style
-    'sec_track_variant', 'sec_pace_style', 'sec_fsp',
-    # Speed z-score (race-relative)
-    'sec_speed_zscore',
-    # Par deviation (beklentiden sapma)
-    'sec_par_dev_mean', 'sec_par_dev_early', 'sec_par_dev_late',
-    # Toplam zaman
-    'sec_total_time_s',
+    # Önceki yarış sürat profili
+    'sec_prev1_speed_mean', 'sec_prev1_speed_zscore',
+    'sec_prev2_speed_zscore', 'sec_prev3_speed_zscore',
+    'sec_prev4_speed_zscore', 'sec_prev5_speed_zscore',
+    # Finish kick (son 200m kuvveti) trend
+    'sec_prev1_finish_kick', 'sec_prev2_finish_kick',
+    'sec_prev3_finish_kick', 'sec_prev4_finish_kick',
+    'sec_prev5_finish_kick',
+    # Accel index (closer kuvveti) trend
+    'sec_prev1_accel_index', 'sec_prev2_accel_index',
+    'sec_prev3_accel_index', 'sec_prev4_accel_index',
+    'sec_prev5_accel_index',
+    # Final stretch percentage trend
+    'sec_prev1_fsp', 'sec_prev2_fsp', 'sec_prev3_fsp',
+    'sec_prev4_fsp', 'sec_prev5_fsp',
+    # Pace style geçmiş (kategorik proxy)
+    'sec_prev1_pace_style',
 ]
 
 

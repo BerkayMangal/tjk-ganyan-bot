@@ -158,10 +158,14 @@ def train_breed(df_breed, fc, out_dir, breed):
     return {'n_races': int(n), 'hit': hit}
 
 
-def baseline_v7(df_breed, fc, breed):
+def baseline_v7(df_breed, fc_v9, breed):
+    """V7-ndcg@4 baseline: V7 (225) fc kullan, V9 dataset üstünde test."""
+    # V7 fc'sini yükle (225 feature, baseline scaler ile uyumlu)
+    fc_v7_path = os.path.join(REPO, 'data', 'training_v7', 'feature_columns_v7.json')
+    with open(fc_v7_path) as fp: fc_v7 = json.load(fp)
     test_df = df_breed[pd.to_datetime(df_breed['race_date']) >= CUTOFF]
     sc = joblib.load(os.path.join(V7_DIR, f'scaler_{breed}.pkl'))
-    X = sc.transform(build_X(test_df, fc))
+    X = sc.transform(build_X(test_df, fc_v7))
     xgb = joblib.load(os.path.join(V7_DIR, f'xgb_ranker_{breed}.pkl'))
     lgbm = joblib.load(os.path.join(V7_DIR, f'lgbm_ranker_{breed}.pkl'))
     cbp = os.path.join(V7_DIR, f'cb_ranker_{breed}.pkl')
