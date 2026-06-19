@@ -72,3 +72,5 @@ data/training_v7/races_v7.csv
 
 # Phase 5.8.44 — V7 model backup'ları (zaman damgalı, regenerable)
 model/trained_v7_225_backup_*/
+model/trained_v7_225_pre_*/
+model/trained_v7_ndcg4/
