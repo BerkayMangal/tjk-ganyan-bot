@@ -74,3 +74,4 @@ data/training_v7/races_v7.csv
 model/trained_v7_225_backup_*/
 model/trained_v7_225_pre_*/
 model/trained_v7_ndcg4/
+data/insider/
