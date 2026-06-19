@@ -182,9 +182,10 @@ def format_telegram_message(payload):
     altin = payload.get('altin') or []
     premium = payload.get('premium') or []
     firsat = payload.get('firsat') or []
-    # Phase 5.8.37→38 — PREMIUM default DISABLED (audit/129 −5pp vs MODEL_top1,
-    # audit/131 canlı 5 gün −663TL, hit %30 vs WF %74.7). Opt-in için flag=0.
-    if os.environ.get('TJK_SIB_PREMIUM_DISABLE', '1') != '0':
+    # Phase 5.8.50 — PREMIUM default ENABLED (yeni V7-ndcg@4 tier eşiği audit/142):
+    # mp 0.25-0.32 + field≥12 → audit/142 backtest n=141 top4 %79.4 (eski V3 LIVE
+    # mp 0.35-0.45 +field≥12 ile karıştırılmasın). Disable için TJK_SIB_PREMIUM_DISABLE=1.
+    if os.environ.get('TJK_SIB_PREMIUM_DISABLE', '0') == '1':
         premium = []
     if not altin and not premium and not firsat:
         return ('🎯 <b>BUNU OYNA — İLK 4 SİB</b>\n'

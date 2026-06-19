@@ -402,22 +402,40 @@ def _collect_value_picks(race_legs, hippo='', agf_max=0.30, max_picks=10):
                 continue
             if agf > agf_max: continue
             gap = mp - agf
-            # Tuzak band elenir (mp 45-55 lift -%20)
-            if 0.45 <= mp < 0.55:
-                continue
-            if 0.25 <= mp < 0.35:
-                # FIRSAT — dünkü 4/4 filtresi. gap ≥ 15pp zorunlu (Phase 5.8.2).
-                if gap < 0.15: continue
-                tier = 'FIRSAT'
-            elif 0.35 <= mp < 0.45:
-                tier = 'SWEET-1'
-            elif 0.55 <= mp < 0.70:
-                tier = 'SWEET-2'
-            elif mp >= 0.70:
-                tier = 'HALÜSİNASYON'
+            # Phase 5.8.50 — V7-ndcg@4 mp dağılımına göre yeniden kalibre eşikler.
+            # audit/142 backtest test set (≥2025-05-24): mp medyan=0.096, p95=0.179
+            # → eski eşikler (0.25-0.45) yeni dağılımda neredeyse hiç at yakalamıyor.
+            # Yeni FIRSAT 0.20-0.30 bandı n=717 top4 %71 (4.4x volume).
+            # Rollback: TJK_TIER_V2_NDCG4=0 → eski V3 LIVE eşikleri.
+            if os.environ.get('TJK_TIER_V2_NDCG4', '1') != '0':
+                # YENİ — V7-ndcg@4 kalibre eşikler
+                # mp [0.18, 0.32) → FIRSAT ana band (sınır mp=0.30 dahil olsun)
+                if 0.18 <= mp < 0.32:
+                    if gap < 0.10: continue  # gevşek gap (eski 0.15 → 0.10)
+                    tier = 'FIRSAT'
+                elif 0.32 <= mp < 0.45:
+                    tier = 'SWEET-2'  # nadir ama yüksek mp
+                elif mp >= 0.45:
+                    tier = 'HALÜSİNASYON'  # NDCG@4 sonrası nadir, etiketsel
+                else:
+                    continue   # mp < 0.18
+                # PREMIUM çekirdek: mp 0.25-0.32 + field≥12 (audit/142 sweet spot n=141 top4 %79)
+                premium = (0.25 <= mp < 0.32 and field_size >= 12)
             else:
-                continue   # mp < 0.25
-            premium = (tier == 'SWEET-1' and field_size >= 12)
+                # ESKİ — V3 LIVE kalibre (rollback)
+                if 0.45 <= mp < 0.55: continue
+                if 0.25 <= mp < 0.35:
+                    if gap < 0.15: continue
+                    tier = 'FIRSAT'
+                elif 0.35 <= mp < 0.45:
+                    tier = 'SWEET-1'
+                elif 0.55 <= mp < 0.70:
+                    tier = 'SWEET-2'
+                elif mp >= 0.70:
+                    tier = 'HALÜSİNASYON'
+                else:
+                    continue
+                premium = (tier == 'SWEET-1' and field_size >= 12)
             altin = premium and is_istanbul
             firsat = (tier == 'FIRSAT')
             if best is None or mp > best['mp_raw']:
