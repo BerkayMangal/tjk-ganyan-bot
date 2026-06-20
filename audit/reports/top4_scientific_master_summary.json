@@ -1,0 +1,70 @@
+{
+  "data_source": "synthetic_smoke",
+  "n_races_evaluated": 1,
+  "agf_benchmark_overall": {
+    "n_races": 1,
+    "agf_top1_top4_hit": 1.0,
+    "agf_top4_set_hit": 0.0,
+    "model_top1_top4_hit": 1.0,
+    "model_top4_set_hit": 0.0,
+    "blended_top1_top4_hit": 1.0,
+    "blended_top4_set_hit": 0.0,
+    "lift_model_over_agf": 0.0,
+    "note": ""
+  },
+  "coverage_by_size": {
+    "4": {
+      "n_races": 1,
+      "captured_full": 0,
+      "captured_at_least_3": 1,
+      "rate_full": 0.0,
+      "rate_at_least_3": 1.0
+    },
+    "5": {
+      "n_races": 1,
+      "captured_full": 1,
+      "captured_at_least_3": 1,
+      "rate_full": 1.0,
+      "rate_at_least_3": 1.0
+    },
+    "6": {
+      "n_races": 1,
+      "captured_full": 1,
+      "captured_at_least_3": 1,
+      "rate_full": 1.0,
+      "rate_at_least_3": 1.0
+    },
+    "7": {
+      "n_races": 1,
+      "captured_full": 1,
+      "captured_at_least_3": 1,
+      "rate_full": 1.0,
+      "rate_at_least_3": 1.0
+    },
+    "8": {
+      "n_races": 1,
+      "captured_full": 1,
+      "captured_at_least_3": 1,
+      "rate_full": 1.0,
+      "rate_at_least_3": 1.0
+    },
+    "9": {
+      "n_races": 1,
+      "captured_full": 1,
+      "captured_at_least_3": 1,
+      "rate_full": 1.0,
+      "rate_at_least_3": 1.0
+    },
+    "10": {
+      "n_races": 1,
+      "captured_full": 1,
+      "captured_at_least_3": 1,
+      "rate_full": 1.0,
+      "rate_at_least_3": 1.0
+    }
+  },
+  "decisions_count_by_mode": {
+    "small": 1
+  },
+  "warning": "SMOKE DATA \u2014 NOT A REAL BACKTEST"
+}

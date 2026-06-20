@@ -81,3 +81,7 @@ data/training_v9/races_v9.csv
 model/trained_v9/
 data/agf_live/
 data/prerace_log/
+
+# Top-4 scientific engine forward logs (append-only JSONL, regenerable)
+data/top4_forward/
+model/trained_v8/
