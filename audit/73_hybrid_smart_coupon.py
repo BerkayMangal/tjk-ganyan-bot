@@ -438,6 +438,18 @@ def _collect_value_picks(race_legs, hippo='', agf_max=0.30, max_picks=10):
                 premium = (tier == 'SWEET-1' and field_size >= 12)
             altin = premium and is_istanbul
             firsat = (tier == 'FIRSAT')
+            # Phase 5.8.54 — Segment booster (audit/144):
+            # - field_size ≤8 → top4 hit %85+ (global %78'den +7.5pp)
+            # - Şanlıurfa/Diyarbakır → top4 hit ~%69 (global'den −9pp, kaçın)
+            hippo_lc = (hippo or '').lower()
+            avoid_hippo = ('şanlıurfa' in hippo_lc or 'diyarbakır' in hippo_lc
+                           or 'sanliurfa' in hippo_lc or 'diyarbakir' in hippo_lc)
+            small_field = field_size <= 8
+            # Antalya/Ankara/Adana/İzmir → top4 %80+ (BOOSTER hipodrom)
+            strong_hippo = any(s in hippo_lc for s in
+                                ('antalya', 'ankara', 'adana', 'izmir', 'i̇zmir'))
+            subset_booster = small_field or strong_hippo
+            subset_avoid = avoid_hippo
             if best is None or mp > best['mp_raw']:
                 best = {
                     'leg': leg_idx,
@@ -449,6 +461,11 @@ def _collect_value_picks(race_legs, hippo='', agf_max=0.30, max_picks=10):
                     'mp_raw': mp, 'gap': gap,
                     'field_size': field_size, 'tier': tier,
                     'premium': premium, 'altin': altin, 'firsat': firsat,
+                    # Phase 5.8.54 — Segment booster flags (audit/144)
+                    'subset_booster': subset_booster,
+                    'subset_avoid': subset_avoid,
+                    'small_field': small_field,
+                    'strong_hippo': strong_hippo,
                     # Phase 5.8.7 — jokey × mesafe × track conditional
                     'jockey_name': h.get('jockey_name') or '',
                     'jockey_cond_top4': h.get('jockey_cond_top4'),

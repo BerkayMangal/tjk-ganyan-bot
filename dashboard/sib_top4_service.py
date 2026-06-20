@@ -99,6 +99,11 @@ def collect_today_picks(target_date=None):
                 'jockey_name': p.get('jockey_name') or '',
                 'jockey_cond_top4': p.get('jockey_cond_top4'),
                 'jockey_overall_top4': p.get('jockey_overall_top4'),
+                # Phase 5.8.54 — Subset booster (audit/144 segment analizi)
+                'subset_booster': p.get('subset_booster', False),
+                'subset_avoid': p.get('subset_avoid', False),
+                'small_field': p.get('small_field', False),
+                'strong_hippo': p.get('strong_hippo', False),
             }
             if p.get('altin'):
                 altin_list.append(entry)
@@ -228,6 +233,16 @@ def format_telegram_message(payload):
         # Halk/model + field
         field_part = f" · {p['field_size']} atlı" if p.get('field_size') else ''
         out.append(f"   model <b>%{p['mp']:.0f}</b>  ·  halk %{p['agf']:.0f}{field_part}")
+        # Phase 5.8.54 — Segment booster rozeti (audit/144)
+        booster_tags = []
+        if p.get('small_field'):
+            booster_tags.append('🌟 küçük field (≤8) → top4 %85+')
+        if p.get('strong_hippo'):
+            booster_tags.append('💪 güçlü hipo (top4 %80+)')
+        if p.get('subset_avoid'):
+            booster_tags.append('⚠ zayıf hipo (top4 ~%69)')
+        if booster_tags:
+            out.append(f"   <i>{' · '.join(booster_tags)}</i>")
         # Jokey + conditional
         jct4 = p.get('jockey_cond_top4')
         jov = p.get('jockey_overall_top4')
