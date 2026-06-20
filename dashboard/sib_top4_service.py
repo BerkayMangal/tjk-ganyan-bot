@@ -61,6 +61,7 @@ def collect_today_picks(target_date=None):
     altin_list = []
     premium_list = []
     firsat_list = []
+    diamond_list = []  # Phase 5.8.56 — DIAMOND tier (mp≥0.20 + agf≥%30, top4 %95+)
     for pool in pools:
         hippo_label = pool.get('hippo', '')   # örn. "İstanbul · 1. Altılı (1-6)"
         first_time = pool.get('first_time', '')
@@ -105,13 +106,17 @@ def collect_today_picks(target_date=None):
                 'small_field': p.get('small_field', False),
                 'strong_hippo': p.get('strong_hippo', False),
             }
-            if p.get('altin'):
+            # DIAMOND öncelikli (en güvenli, top4 %95+)
+            if p.get('diamond'):
+                diamond_list.append(entry)
+            elif p.get('altin'):
                 altin_list.append(entry)
             elif p.get('premium'):
                 premium_list.append(entry)
             elif p.get('firsat'):
                 firsat_list.append(entry)
     # Sıralama: önce ALTIN içinde mp DESC, sonra zaman
+    diamond_list.sort(key=lambda x: (-x['mp'], x['first_time']))
     altin_list.sort(key=lambda x: (-x['mp'], x['first_time']))
     premium_list.sort(key=lambda x: (-x['mp'], x['first_time']))
     firsat_list.sort(key=lambda x: (-x['mp'], x['first_time']))
@@ -140,10 +145,12 @@ def collect_today_picks(target_date=None):
 
     return {
         'date': str(target_date),
+        'diamond': diamond_list,
         'altin': altin_list,
         'premium': premium_list,
         'firsat': firsat_list,
         'totals': {
+            'diamond': len(diamond_list),
             'altin': len(altin_list),
             'premium': len(premium_list),
             'firsat': len(firsat_list),
@@ -184,6 +191,7 @@ def format_telegram_message(payload):
     walk-forward (n_races=6,734): ALTIN +10pp, PREMIUM −5pp, FIRSAT +1.5pp.
     Env `TJK_SIB_PREMIUM_DISABLE=1` → PREMIUM bölümü atlanır (default OFF).
     """
+    diamond = payload.get('diamond') or []  # Phase 5.8.56 — ezici favori + model agree
     altin = payload.get('altin') or []
     premium = payload.get('premium') or []
     firsat = payload.get('firsat') or []
@@ -192,10 +200,10 @@ def format_telegram_message(payload):
     # mp 0.35-0.45 +field≥12 ile karıştırılmasın). Disable için TJK_SIB_PREMIUM_DISABLE=1.
     if os.environ.get('TJK_SIB_PREMIUM_DISABLE', '0') == '1':
         premium = []
-    if not altin and not premium and not firsat:
+    if not diamond and not altin and not premium and not firsat:
         return ('🎯 <b>BUNU OYNA — İLK 4 SİB</b>\n'
                 f'<i>{payload.get("date","")}</i>\n\n'
-                '<i>Bugün ALTIN/PREMIUM/FIRSAT kategorisinde pick yok. '
+                '<i>Bugün DIAMOND/ALTIN/PREMIUM/FIRSAT kategorisinde pick yok. '
                 'AGF yayınlanınca tekrar denenecek.</i>')
 
     L = [f'🎯 <b>BUNU OYNA — İLK 4 SİB</b> · {payload.get("date","")}', '']
@@ -277,6 +285,7 @@ def format_telegram_message(payload):
             L.extend(_line_for(p))
             L.append('')
 
+    _section('💎 <b>DIAMOND</b> — ezici favori + model agree (top4 %95+)', diamond)
     _section('🌟 <b>ALTIN</b>', altin)
     _section('⭐ <b>PREMIUM</b>', premium)
     _section('💡 <b>FIRSAT</b>', firsat)

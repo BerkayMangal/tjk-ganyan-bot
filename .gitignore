@@ -80,3 +80,4 @@ data/insider/
 data/training_v9/races_v9.csv
 model/trained_v9/
 data/agf_live/
+data/prerace_log/

@@ -102,7 +102,7 @@ def _send_telegram(text: str) -> bool:
 
 
 def _trigger_coupon(race: Dict) -> bool:
-    """T-3'te kupon üret + Telegram'a yolla."""
+    """T-3'te kupon üret + Telegram'a yolla + JSONL log (forward validation)."""
     try:
         from dashboard import prerace_coupon_builder as pcb
     except ImportError:
@@ -113,6 +113,14 @@ def _trigger_coupon(race: Dict) -> bool:
         _trigger_targeted_scan()
         coupon = pcb.build_coupon(race)
         text = pcb.format_telegram(coupon)
+        # Phase 5.8.56 — forward validation log (audit/147)
+        try:
+            from dashboard import prerace_logger as plog
+        except ImportError:
+            try: import prerace_logger as plog
+            except ImportError: plog = None
+        if plog is not None:
+            plog.write_pick_log(coupon)
         return _send_telegram(text)
     except Exception as e:
         logger.warning(f'[prerace] coupon build fail: {e}')

@@ -400,7 +400,11 @@ def _collect_value_picks(race_legs, hippo='', agf_max=0.30, max_picks=10):
                 agf = float(h.get('agf_value') or 0) / 100.0
             except Exception:
                 continue
-            if agf > agf_max: continue
+            # Phase 5.8.56 — DIAMOND tier (audit/146 MP×AGF heatmap: top4 %95+):
+            # mp ≥ 0.20 AND agf ≥ %30 → ezici favori + model agree → "kesin" top4
+            # → agf_max=0.30 default'unu BYPASS eder
+            is_diamond_candidate = (mp >= 0.20 and agf >= 0.30)
+            if agf > agf_max and not is_diamond_candidate: continue
             gap = mp - agf
             # Phase 5.8.50 — V7-ndcg@4 mp dağılımına göre yeniden kalibre eşikler.
             # audit/142 backtest test set (≥2025-05-24): mp medyan=0.096, p95=0.179
@@ -409,8 +413,11 @@ def _collect_value_picks(race_legs, hippo='', agf_max=0.30, max_picks=10):
             # Rollback: TJK_TIER_V2_NDCG4=0 → eski V3 LIVE eşikleri.
             if os.environ.get('TJK_TIER_V2_NDCG4', '1') != '0':
                 # YENİ — V7-ndcg@4 kalibre eşikler
+                # DIAMOND öncelikli (audit/146 top4 %95+)
+                if is_diamond_candidate:
+                    tier = 'DIAMOND'
                 # mp [0.18, 0.32) → FIRSAT ana band (sınır mp=0.30 dahil olsun)
-                if 0.18 <= mp < 0.32:
+                elif 0.18 <= mp < 0.32:
                     if gap < 0.10: continue  # gevşek gap (eski 0.15 → 0.10)
                     tier = 'FIRSAT'
                 elif 0.32 <= mp < 0.45:
@@ -420,7 +427,8 @@ def _collect_value_picks(race_legs, hippo='', agf_max=0.30, max_picks=10):
                 else:
                     continue   # mp < 0.18
                 # PREMIUM çekirdek: mp 0.25-0.32 + field≥12 (audit/142 sweet spot n=141 top4 %79)
-                premium = (0.25 <= mp < 0.32 and field_size >= 12)
+                premium = (0.25 <= mp < 0.32 and field_size >= 12) and not is_diamond_candidate
+                diamond = is_diamond_candidate  # Ayrı flag
             else:
                 # ESKİ — V3 LIVE kalibre (rollback)
                 if 0.45 <= mp < 0.55: continue
@@ -436,6 +444,7 @@ def _collect_value_picks(race_legs, hippo='', agf_max=0.30, max_picks=10):
                 else:
                     continue
                 premium = (tier == 'SWEET-1' and field_size >= 12)
+                diamond = False  # eski branch'te diamond yok
             altin = premium and is_istanbul
             firsat = (tier == 'FIRSAT')
             # Phase 5.8.54 — Segment booster (audit/144):
@@ -461,6 +470,7 @@ def _collect_value_picks(race_legs, hippo='', agf_max=0.30, max_picks=10):
                     'mp_raw': mp, 'gap': gap,
                     'field_size': field_size, 'tier': tier,
                     'premium': premium, 'altin': altin, 'firsat': firsat,
+                    'diamond': diamond,
                     # Phase 5.8.54 — Segment booster flags (audit/144)
                     'subset_booster': subset_booster,
                     'subset_avoid': subset_avoid,
