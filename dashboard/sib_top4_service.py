@@ -196,22 +196,50 @@ def format_telegram_message(payload):
     L = [f'🎯 <b>BUNU OYNA — İLK 4 SİB</b> · {payload.get("date","")}', '']
 
     def _line_for(p):
-        """Tek pick için sade satırlar — saat · hipo · koşu · at · halk/model · jokey."""
+        """Tek pick için AÇIKLAYICI satırlar (Berkay 2026-06-20):
+        saat, hipodrom, koşu no, altılı kaçıncı ayağı, at no + ismi, halk/model,
+        jokey + conditional, mesafe + pist + sınıf bilgisi (pool'dan)."""
         rt = p.get('race_time') or p.get('first_time') or ''
-        hp = p.get('hippo_base') or (p.get('pool') or '').split('·')[0].strip()
+        # pool = 'İstanbul · 2. Altılı (3-8)' → hipo + altılı
+        pool = p.get('pool', '') or ''
+        hp = p.get('hippo_base') or pool.split('·')[0].strip()
+        # altılı bilgisini pool'dan çıkar
+        altili_info = ''
+        if '·' in pool:
+            altili_part = pool.split('·', 1)[1].strip()
+            altili_info = altili_part  # '2. Altılı (3-8)'
+        leg_idx = p.get('leg')
+        race_no = p.get('race_no')
+        # At ismi parse — 'AT_ADI(2)' formatı
+        name_raw = p.get('name', '')
+        import re as _re
+        m = _re.search(r'\((\d+)\)', name_raw or '')
+        display_no = int(m.group(1)) if m else None
+        clean_name = (name_raw[:m.start()].strip() if m else name_raw)[:20]
+
         out = [
-            f"🕐 <b>{rt}</b> · {hp} · <b>{p['race_no']}. koşu</b>",
-            f"   #{p['horse_no']} <b>{p['name']}</b>  ·  halk %{p['agf']:.0f} · model %{p['mp']:.0f}",
+            f"🕐 <b>{rt}</b>",
+            f"<b>{hp}</b> · <b>{race_no}. koşu</b>"
+            + (f" ({altili_info} {leg_idx}. ayak)" if altili_info and leg_idx else ""),
         ]
+        # At no + ismi
+        prog_info = f" (programda {display_no}.)" if display_no else ""
+        out.append(f"<b>#{p['horse_no']} {clean_name}</b>{prog_info}")
+        # Halk/model + field
+        field_part = f" · {p['field_size']} atlı" if p.get('field_size') else ''
+        out.append(f"   model <b>%{p['mp']:.0f}</b>  ·  halk %{p['agf']:.0f}{field_part}")
+        # Jokey + conditional
         jct4 = p.get('jockey_cond_top4')
+        jov = p.get('jockey_overall_top4')
         jn = p.get('jockey_name') or ''
-        if jct4 is not None and jn:
-            tag = '🔥 ' if jct4 >= 0.65 else ('✓ ' if jct4 >= 0.50 else '')
-            out.append(f"   {tag}jokey {jn} · mesafe %{jct4*100:.0f}")
-        elif jn:
-            jov = p.get('jockey_overall_top4')
+        if jn:
+            j_parts = [f"🏇 {jn}"]
+            if jct4 is not None:
+                tag = '🔥' if jct4 >= 0.65 else ('✓' if jct4 >= 0.50 else '')
+                j_parts.append(f"{tag} mesafe %{jct4*100:.0f}".strip())
             if jov is not None:
-                out.append(f"   jokey {jn} · genel %{jov*100:.0f}")
+                j_parts.append(f"genel %{jov*100:.0f}")
+            out.append(f"   {' · '.join(j_parts)}")
         return out
 
     def _section(emoji_title, lst):

@@ -199,59 +199,136 @@ def build_coupon(race: Dict) -> Dict:
     }
 
 
+def _parse_group_name(g: str) -> dict:
+    """TJK group_name = 'ŞARTLI 3, 3 Yaşlı İngilizler, 58 kg, 1800 Çim, E.İ.D. :1.46.66'.
+    İlk 4 parçayı yapısal ayır."""
+    if not g: return {}
+    parts = [p.strip() for p in g.split(',') if p.strip()]
+    return {
+        'race_class': parts[0] if parts else '',         # 'ŞARTLI 3' / 'G3 Handikap' / 'Maiden' / 'KV-7'
+        'age_breed': parts[1] if len(parts) > 1 else '',  # '3 Yaşlı İngilizler'
+        'weight_ref': parts[2] if len(parts) > 2 else '', # '58 kg'
+        'eid': next((p for p in parts if 'E.İ.D' in p or 'E.I.D' in p), ''),  # pist rekoru
+    }
+
+
+def _clean_horse_name(name: str) -> tuple:
+    """At adı 'AT_İSMİ(7)' → ('AT_İSMİ', 7) (görünüş sırası).
+    Format dışı ise (name, None)."""
+    if not name: return ('', None)
+    m = _NO_RE.search(name)
+    if m:
+        try:
+            display_no = int(m.group(1))
+            clean = name[:m.start()].strip()
+            return (clean, display_no)
+        except Exception: pass
+    return (name, None)
+
+
 def format_telegram(coupon: Dict) -> str:
-    """Kupon dict → sade Telegram metni."""
+    """Kupon dict → AÇIKLAYICI Telegram metni (Berkay 2026-06-20 direktifi)."""
     r = coupon['race']
     rt = r.get('race_time') or ''
     hippo = r.get('hippodrome', '').replace(' Hipodromu', '')
     distance = r.get('distance', '?')
     track = r.get('track_type', '')
-    klass = r.get('class') or ''
     leg = r.get('leg_idx')
     altili = r.get('altili_no')
-    head = (f"🎯 <b>T-3 KUPON</b> · {hippo} · "
-            f"<b>{altili}. Altılı {leg}. ayak</b> · <b>{rt}</b>\n"
-            f"<i>{distance}m {track} {klass}</i>\n")
-    L = [head]
+    race_no = r.get('race_no')
+    n_runners = len((r.get('all_horses') or []))
+    gn = _parse_group_name(r.get('group_name', ''))
+    klass = gn.get('race_class', '') or (r.get('class') or '')
+    age_breed = gn.get('age_breed', '')
+
+    L = []
+    # Başlık — saat büyük, sonra koşu hiyerarşisi
+    L.append(f"🎯 <b>T-3 KUPON</b> · <b>{rt}</b>")
+    L.append(f"<b>{hippo}</b> · <b>{race_no}. koşu</b> "
+             f"({altili}. Altılı {leg}. ayak)")
+    # Yarış meta
+    klass_line = klass
+    if age_breed: klass_line += f" · {age_breed}"
+    if klass_line:
+        L.append(f"<i>{klass_line}</i>")
+    track_line = f"{distance}m {track}"
+    if n_runners > 0: track_line += f" · {n_runners} atlı"
+    L.append(f"<i>{track_line}</i>")
+    if gn.get('weight_ref') or gn.get('eid'):
+        meta_parts = []
+        if gn.get('weight_ref'): meta_parts.append(gn['weight_ref'])
+        if gn.get('eid'):
+            eid_clean = gn['eid'].replace('E.İ.D.', 'E.İ.D.').strip()
+            meta_parts.append(eid_clean)
+        L.append(f"<i>({' · '.join(meta_parts)})</i>")
+
     scored = coupon['horses_scored']
     if not scored:
-        L.append('<i>(at verisi yok)</i>')
+        L.append('\n<i>(at verisi yok)</i>')
         return '\n'.join(L)
 
-    L.append('\n⭐ <b>TOP-3 SİB</b>')
+    L.append('')
+    L.append('⭐ <b>TOP-3 SİB ÖNERİSİ</b> (hibrit: model + AGF drift + insider)')
     for i, no in enumerate(coupon['top3_sib'], 1):
         s = next((x for x in scored if x['no'] == no), None)
         if not s: continue
-        nm = s['name'][:18]
-        insider = ' 🔥 INSIDER' if s['insider_flag'] else ''
-        drift = f"→{s['agf_now']:.0f}%" if abs(s['agf_drift_pp']) >= 1 else ''
-        L.append(f"  {i}. #{s['no']} <b>{nm}</b>  mp=<b>{s['mp']:.0f}%</b> "
-                 f"agf={s['agf_morning']:.0f}%{drift}{insider}")
+        clean_nm, display_no = _clean_horse_name(s['name'])
+        insider = ' 🔥 <b>INSIDER</b>' if s['insider_flag'] else ''
+        drift_str = ''
+        if abs(s['agf_drift_pp']) >= 1:
+            sign = '+' if s['agf_drift_pp'] > 0 else ''
+            drift_str = f"→<b>{s['agf_now']:.0f}%</b> ({sign}{s['agf_drift_pp']:.0f}pp)"
+        else:
+            drift_str = ''
+
+        L.append('')
+        L.append(f"<b>{i}. #{s['no']} {clean_nm}</b>"
+                 + (f" (programda {display_no}.)" if display_no else ""))
+        L.append(f"   model <b>%{s['mp']:.0f}</b>  ·  halk %{s['agf_morning']:.0f}{drift_str}{insider}")
+        # Jokey + conditional
         if s.get('jockey_name'):
             jct4 = s.get('jockey_cond_top4')
-            jstr = f" · cond %{jct4*100:.0f}" if jct4 is not None else ''
-            L.append(f"     <i>jokey {s['jockey_name']}{jstr}</i>")
+            jov = s.get('jockey_overall_top4') if 'jockey_overall_top4' in s else None
+            j_parts = [f"🏇 {s['jockey_name']}"]
+            if jct4 is not None:
+                tag = '🔥' if jct4 >= 0.65 else ('✓' if jct4 >= 0.50 else '')
+                j_parts.append(f"{tag} mesafe %{jct4*100:.0f}".strip())
+            if jov is not None:
+                j_parts.append(f"genel %{jov*100:.0f}")
+            L.append(f"   {' · '.join(j_parts)}")
 
-    L.append('\n🎯 <b>TOP-4 SİB</b>')
+    # TOP-4 ekstra at
     extras = [no for no in coupon['top4_sib'] if no not in coupon['top3_sib']]
-    for no in extras:
-        s = next((x for x in scored if x['no'] == no), None)
-        if not s: continue
-        nm = s['name'][:18]
-        drift = f"→{s['agf_now']:.0f}%" if abs(s['agf_drift_pp']) >= 1 else ''
-        L.append(f"  + #{s['no']} <b>{nm}</b>  mp={s['mp']:.0f}% "
-                 f"agf={s['agf_morning']:.0f}%{drift}")
+    if extras:
+        L.append('')
+        L.append('🎯 <b>TOP-4 SİB</b> (genişletme)')
+        for no in extras:
+            s = next((x for x in scored if x['no'] == no), None)
+            if not s: continue
+            clean_nm, dn = _clean_horse_name(s['name'])
+            drift_str = ''
+            if abs(s['agf_drift_pp']) >= 1:
+                sign = '+' if s['agf_drift_pp'] > 0 else ''
+                drift_str = f"→<b>{s['agf_now']:.0f}%</b> ({sign}{s['agf_drift_pp']:.0f}pp)"
+            L.append(f"   + <b>#{s['no']} {clean_nm}</b>  ·  "
+                     f"model %{s['mp']:.0f}  ·  halk %{s['agf_morning']:.0f}{drift_str}")
 
+    # UPSIDE
     if coupon['upside']:
-        # model top1 vs agf top1 farklı
         mtop = next((x for x in scored if x['no'] == coupon['model_top1']), None)
         atop = next((x for x in scored if x['no'] == coupon['agf_top1']), None)
         if mtop and atop:
-            L.append(f"\n⚠ <b>UPSIDE</b>: model top1 (#{mtop['no']} "
-                     f"<b>{mtop['name'][:14]}</b> mp={mtop['mp']:.0f}%) "
-                     f"≠ halk top1 (#{atop['no']} agf={atop['agf_now']:.0f}%)")
-            L.append(f"<i>Genişletme önerisi: halk favorisini 1-2 olarak ekle</i>")
+            mclean, _ = _clean_horse_name(mtop['name'])
+            aclean, _ = _clean_horse_name(atop['name'])
+            L.append('')
+            L.append(f"⚠ <b>UPSIDE</b> — model ile halk farklı düşünüyor:")
+            L.append(f"   <b>Model:</b> #{mtop['no']} {mclean} (mp %{mtop['mp']:.0f})")
+            L.append(f"   <b>Halk:</b> #{atop['no']} {aclean} (agf %{atop['agf_now']:.0f})")
+            L.append(f"   <i>Genişletme: halk favorisini 1-2 sıraya da ekleyebilirsin → TOP-5</i>")
+    # INSIDER
     if coupon['insider_alerts_in_race']:
-        L.append(f"\n🔍 <b>INSIDER</b>: bu yarışta {len(coupon['insider_alerts_in_race'])} "
-                 f"at AGF crash + deep longshot → audit/139 paterni")
+        nos = ', '.join(f"#{n}" for n in coupon['insider_alerts_in_race'])
+        L.append('')
+        L.append(f"🔍 <b>INSIDER PATERN</b>: {nos} → audit/139 deep longshot CRASH "
+                 f"(backtest n=54 win %44)")
     return '\n'.join(L)
