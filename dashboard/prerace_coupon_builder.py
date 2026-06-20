@@ -313,6 +313,23 @@ def format_telegram(coupon: Dict) -> str:
             L.append(f"   + <b>#{s['no']} {clean_nm}</b>  ·  "
                      f"model %{s['mp']:.0f}  ·  halk %{s['agf_morning']:.0f}{drift_str}")
 
+    # Phase 5.8.53 — MULTI-AT BAHIS önerileri (audit/143 EV matrisi)
+    # İKİLİ sırasız: +%128 EV @ medyan, TABELA SIRASIZ: +%91 EV
+    if len(scored) >= 2:
+        # İKİLİ (top-2 sırasız, EV +%128.7 walk-forward)
+        ikili = scored[:2]
+        L.append('')
+        L.append('💰 <b>İKİLİ (sırasız)</b> — audit/143 EV +%128')
+        nos = ' / '.join(f"#{s['no']}" for s in ikili)
+        L.append(f"   <b>{nos}</b>  (medyan payout ~12.75×)")
+    if len(scored) >= 4:
+        # TABELA SIRASIZ (top-4 set, EV +%91)
+        tabela = scored[:4]
+        L.append('')
+        L.append('🎰 <b>TABELA SIRASIZ</b> — audit/143 EV +%91')
+        nos = ' / '.join(f"#{s['no']}" for s in tabela)
+        L.append(f"   <b>{nos}</b>  (medyan payout ~13.13×, riskli ama yüksek değer)")
+
     # UPSIDE
     if coupon['upside']:
         mtop = next((x for x in scored if x['no'] == coupon['model_top1']), None)
