@@ -32,7 +32,7 @@ from .experimental_coupon import (
     is_telegram_enabled,
 )
 from .experimental_logger import log_prediction, log_result, rebuild_summary
-from .experimental_telegram import safe_render
+from .experimental_telegram import safe_render, safe_render_chunked
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +166,99 @@ def build_shadow_coupons(
                            snap.get("race_label"), exc)
             continue
     return out
+
+
+def extract_race_snapshots_from_pool(pool: Mapping) -> list[dict]:
+    """Adapter for the smart_coupon_service pool shape used by
+    coupon_scheduler.morning_job. Each pool carries `race_legs` — a
+    list of legs, each leg a list of horse dicts (`horse_number`,
+    `horse_name`, `agf_value`, `model_prob` in 0..1, `tier_mark`,
+    `breed`, `race_number`, `start_time`).
+    """
+    out: list[dict] = []
+    try:
+        hippo = pool.get("hippo") or pool.get("hippodrome") or "?"
+        legs = pool.get("race_legs") or []
+        for leg in legs:
+            if not leg:
+                continue
+            head = leg[0] or {}
+            race_no = head.get("race_number")
+            race_time = str(head.get("start_time") or "")[:5]
+            horses = []
+            for h in leg:
+                horses.append({
+                    "horse_no": h.get("horse_number") or h.get("number"),
+                    "horse_name": h.get("horse_name") or h.get("name") or "?",
+                    "mp": h.get("model_prob") or 0.0,
+                    "agf": h.get("agf_value"),
+                    "tier": h.get("tier_mark") or "",
+                    "breed": h.get("breed") or "",
+                })
+            out.append({
+                "race_label": f"{hippo} {race_no}. koşu",
+                "race_id": f"{hippo}_{race_no}",
+                "race_time": race_time,
+                "hippodrome": hippo,
+                "horses": horses,
+            })
+    except Exception as exc:
+        logger.debug("extract_race_snapshots_from_pool: %s", exc)
+    return out
+
+
+def build_shadow_coupons_from_pools(
+    pools: Iterable[Mapping], cutoff: str = "latest",
+) -> dict[str, list[dict]]:
+    """Build shadow coupons grouped by hippodrome. Returns
+    `{hippo_name: [coupon, ...], ...}`. Honors `TJK_TOP4_BERKAY_SHADOW`.
+    """
+    if not is_shadow_enabled():
+        return {}
+    out: dict[str, list[dict]] = {}
+    for pool in pools:
+        try:
+            snaps = extract_race_snapshots_from_pool(pool)
+            if not snaps:
+                continue
+            hippo = pool.get("hippo") or pool.get("hippodrome") or "?"
+            coupons: list[dict] = []
+            for snap in snaps:
+                agf = _build_agf_snapshots(snap.get("horses") or [])
+                coupon = build_berkay_scientific_top4_coupon(
+                    snap, agf_snapshot=agf, cutoff=cutoff,
+                )
+                coupons.append(coupon)
+                if is_forward_log_enabled():
+                    log_prediction(coupon)
+            if coupons:
+                out[hippo] = coupons
+        except Exception as exc:
+            logger.warning("shadow pool build failed for %s: %s",
+                           pool.get("hippo"), exc)
+            continue
+    return out
+
+
+def render_pool_shadow_messages(pools: Iterable[Mapping],
+                                cutoff: str = "latest",
+                                max_chars: int = 3500) -> list[str]:
+    """Telegram-safe messages, chunked. Returns one or more strings per
+    hippodrome (each under `max_chars`). Empty list if shadow flag is
+    off or nothing renders.
+    """
+    try:
+        coupons_by_hippo = build_shadow_coupons_from_pools(pools, cutoff=cutoff)
+        out: list[str] = []
+        for hippo, coupons in coupons_by_hippo.items():
+            chunks = safe_render_chunked(coupons, max_chars=max_chars)
+            for c in chunks:
+                if c:
+                    out.append(c)
+        return out
+    except Exception as exc:
+        logger.warning("render_pool_shadow_messages failed: %s", exc)
+        return []
 
 
 def maybe_append_telegram(

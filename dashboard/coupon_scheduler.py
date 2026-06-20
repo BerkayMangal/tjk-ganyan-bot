@@ -245,6 +245,63 @@ def _send(p, prefix, logger):
     return tg
 
 
+def _maybe_send_berkay_top4_shadow(pools_or_st, now, logger):
+    """BERKAY BİLİMSEL DENEME TOP4 — env-gated shadow Telegram emit.
+
+    Env flags:
+      TJK_TOP4_BERKAY_SHADOW=1   → build coupons
+      TJK_TOP4_BERKAY_TELEGRAM=1 → also send to Telegram
+      TJK_TOP4_FORWARD_LOG=1     → also write JSONL forward log
+
+    All three default OFF. Never raises. The morning daily kupon goes
+    via _svc().send_telegram() (smart_coupon_service) — this helper
+    appends one extra Telegram message per hippodrome AFTER the prod
+    kupon series, clearly labeled as 'BERKAY BİLİMSEL DENEME TOP4'.
+    """
+    if os.environ.get('TJK_TOP4_BERKAY_SHADOW', '0') != '1':
+        return
+    try:
+        try:
+            from top4.experimental_integration import (
+                render_pool_shadow_messages, build_shadow_coupons_from_pools,
+            )
+            from top4.experimental_coupon import is_telegram_enabled
+        except Exception as _e_imp:
+            _log(logger, f"[berkay-top4] import skip: {repr(_e_imp)[:160]}")
+            return
+        # pools_or_st may be the raw pool list or scheduler state dict
+        pools: list = []
+        if isinstance(pools_or_st, list):
+            pools = pools_or_st
+        elif isinstance(pools_or_st, dict):
+            # try to rebuild from svc since state['pools'] is a flattened
+            # form without race_legs
+            try:
+                pools = _build_pools(now)
+            except Exception:
+                pools = []
+        if not pools:
+            return
+        # Always build/log (honors TJK_TOP4_FORWARD_LOG inside)
+        built = build_shadow_coupons_from_pools(pools)
+        if not is_telegram_enabled():
+            _log(logger, f"[berkay-top4] built {sum(len(v) for v in built.values())} "
+                          f"coupons (Telegram off)")
+            return
+        msgs = render_pool_shadow_messages(pools)
+        if not msgs:
+            _log(logger, "[berkay-top4] no message rendered")
+            return
+        for m in msgs:
+            try:
+                _svc().send_telegram(m)
+            except Exception as _e_tg:
+                _log(logger, f"[berkay-top4] send fail: {repr(_e_tg)[:160]}")
+        _log(logger, f"[berkay-top4] sent {len(msgs)} shadow message(s)")
+    except Exception as e:
+        _log(logger, f"[berkay-top4] skip: {repr(e)[:200]}")
+
+
 def morning_job(logger=None):
     """09:00 İst — build; AGF'si taze havuzları gönder, bayatları beklet."""
     if not _LOCK.acquire(blocking=False):
@@ -289,6 +346,9 @@ def _morning_locked(logger, bootstrap=False):
                 p['sent_fp'] = p['sel_fp']
             # SİB BUNU OYNA — kupon serisi gittikten sonra ayrı mesaj
             _maybe_send_sib_top4(st, now, logger)
+            # BERKAY BİLİMSEL DENEME TOP4 — env-gated shadow extra message
+            _maybe_send_berkay_top4_shadow(pools, now, logger)
+            st['berkay_top4_sent_today'] = True
     elif stale:
         tag = "yeniden başlatma" if bootstrap else "sabah"
         _svc().send_telegram(
@@ -383,6 +443,13 @@ def _tick_locked(logger):
                 p['sent_stale'] = True
     _maybe_send_anomalies(st, now, logger)
     _maybe_send_sib_top4(st, now, logger)
+    # BERKAY BİLİMSEL DENEME TOP4 — refresh path: try once per gun-sonu
+    if not st.get('berkay_top4_sent_today'):
+        try:
+            _maybe_send_berkay_top4_shadow(st, now, logger)
+            st['berkay_top4_sent_today'] = True
+        except Exception:
+            pass
     _save_state(day, st)
 
 

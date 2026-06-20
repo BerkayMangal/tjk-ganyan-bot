@@ -160,9 +160,72 @@ def render_experimental_block(coupons: Iterable[Mapping]) -> str:
     return text
 
 
+def render_experimental_messages_chunked(
+    coupons: Iterable[Mapping], max_chars: int = 3500,
+) -> list[str]:
+    """Render the experimental section as one OR MORE Telegram messages,
+    each safely under Telegram's 4096-char limit.
+
+    Header is repeated on every chunk; disclaimer is appended to every
+    chunk. The forbidden-language scan runs on the FINAL text of each
+    chunk; if any chunk fails the scan, that chunk is replaced with a
+    safe notice (the other chunks still send).
+    """
+    coupons = list(coupons)
+    if not coupons:
+        return []
+    rendered_races = [_render_race(c) for c in coupons]
+    sep = "\n\n" + ("─" * 24) + "\n\n"
+    footer = f"\n\n<i>{DISCLAIMER}</i>"
+    header_len = len(HEADER) + 2  # "\n\n"
+    footer_len = len(footer)
+    budget = max(800, max_chars - header_len - footer_len)
+
+    chunks: list[list[str]] = []
+    current: list[str] = []
+    current_len = 0
+    for race_text in rendered_races:
+        add_len = len(race_text) + (len(sep) if current else 0)
+        if current and current_len + add_len > budget:
+            chunks.append(current)
+            current = [race_text]
+            current_len = len(race_text)
+        else:
+            current.append(race_text)
+            current_len += add_len
+    if current:
+        chunks.append(current)
+
+    out: list[str] = []
+    for chunk in chunks:
+        text = HEADER + "\n\n" + sep.join(chunk) + footer
+        bad = has_forbidden_language(text)
+        if bad:
+            text = (
+                f"{HEADER}\n\n"
+                f"<i>Deneme kupon render hatası: yasaklı dil tespit edildi "
+                f"({', '.join(bad)}). Bu mesaj gönderilmedi.</i>"
+            )
+        out.append(text[:4000])
+    return out
+
+
 def safe_render(coupons: Iterable[Mapping]) -> str:
-    """Never raises; returns "" on any internal error."""
+    """Never raises; returns "" on any internal error.
+
+    Single concatenated text — kept for backwards compatibility. Prefer
+    `safe_render_chunked()` for production sends.
+    """
     try:
         return render_experimental_block(coupons)
     except Exception:
         return ""
+
+
+def safe_render_chunked(coupons: Iterable[Mapping],
+                        max_chars: int = 3500) -> list[str]:
+    """Never raises; returns [] on any internal error."""
+    try:
+        return render_experimental_messages_chunked(coupons, max_chars=max_chars)
+    except Exception:
+        return []

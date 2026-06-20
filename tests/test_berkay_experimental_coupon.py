@@ -335,6 +335,87 @@ class TestIntegration(unittest.TestCase):
             _set_flags(None, None, None)
 
 
+class TestPoolAdapter(unittest.TestCase):
+    """Adapter for the smart_coupon_service pool shape used by
+    coupon_scheduler. The morning Telegram goes via THIS path, not
+    via send_telegram_simple."""
+
+    def _mock_pool(self):
+        legs = []
+        for race_no in (1, 2, 3, 4, 5, 6):
+            horses = []
+            for i in range(1, 11):
+                horses.append({
+                    "horse_number": i,
+                    "horse_name": f"H{i}_R{race_no}",
+                    "agf_value": max(2.0, 40.0 - i * 4.0),
+                    "model_prob": 0.5 - i * 0.04,
+                    "tier_mark": "DIAMOND" if i == 1 and race_no == 1 else "",
+                    "breed": "EN" if i % 2 == 0 else "AR",
+                    "race_number": race_no,
+                    "start_time": f"15:{30 + race_no*2:02d}",
+                })
+            legs.append(horses)
+        return {"hippo": "İstanbul", "race_legs": legs, "status": "ok"}
+
+    def test_extract_from_pool(self):
+        from top4.experimental_integration import (
+            extract_race_snapshots_from_pool,
+        )
+        snaps = extract_race_snapshots_from_pool(self._mock_pool())
+        self.assertEqual(len(snaps), 6)
+        self.assertEqual(snaps[0]["hippodrome"], "İstanbul")
+        self.assertEqual(len(snaps[0]["horses"]), 10)
+        h0 = snaps[0]["horses"][0]
+        self.assertEqual(h0["horse_no"], 1)
+        self.assertAlmostEqual(h0["mp"], 0.46, places=2)
+        self.assertEqual(h0["agf"], 36.0)
+
+    def test_build_from_pools_off(self):
+        from top4.experimental_integration import (
+            build_shadow_coupons_from_pools,
+        )
+        _set_flags(None, None, None)
+        out = build_shadow_coupons_from_pools([self._mock_pool()])
+        self.assertEqual(out, {})
+
+    def test_build_from_pools_on(self):
+        from top4.experimental_integration import (
+            build_shadow_coupons_from_pools,
+        )
+        _set_flags(shadow="1", telegram=None, log=None)
+        try:
+            out = build_shadow_coupons_from_pools([self._mock_pool()])
+            self.assertIn("İstanbul", out)
+            self.assertEqual(len(out["İstanbul"]), 6)
+            c0 = out["İstanbul"][0]
+            self.assertEqual(c0["hippodrome"], "İstanbul")
+            self.assertIn("BANKER", " ".join(
+                r["role"] for r in c0["horses"]
+            ) + " BANKER_PRESENT")
+        finally:
+            _set_flags(None, None, None)
+
+    def test_render_pool_shadow_messages_off_empty(self):
+        from top4.experimental_integration import render_pool_shadow_messages
+        _set_flags(None, None, None)
+        self.assertEqual(render_pool_shadow_messages([self._mock_pool()]), [])
+
+    def test_render_pool_shadow_messages_on(self):
+        from top4.experimental_integration import render_pool_shadow_messages
+        _set_flags(shadow="1", telegram=None, log=None)
+        try:
+            msgs = render_pool_shadow_messages([self._mock_pool()])
+            self.assertGreaterEqual(len(msgs), 1)
+            self.assertIn("BERKAY BİLİMSEL DENEME TOP4", msgs[0])
+            self.assertIn("Deneme", msgs[0])
+            self.assertLess(len(msgs[0]), 4096,
+                            "Telegram message must fit in single send")
+            self.assertEqual(has_forbidden_language(msgs[0]), [])
+        finally:
+            _set_flags(None, None, None)
+
+
 class TestProductionUnchangedWhenFlagsOff(unittest.TestCase):
     def test_existing_messages_passthrough(self):
         _set_flags(None, None, None)
