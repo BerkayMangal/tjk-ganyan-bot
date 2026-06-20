@@ -249,23 +249,29 @@ def _maybe_send_berkay_top4_shadow(pools_or_st, now, logger):
     """BERKAY BİLİMSEL DENEME TOP4 — env-gated shadow Telegram emit.
 
     Env flags:
-      TJK_TOP4_BERKAY_SHADOW=1   → build coupons
-      TJK_TOP4_BERKAY_TELEGRAM=1 → also send to Telegram
-      TJK_TOP4_FORWARD_LOG=1     → also write JSONL forward log
+      TJK_TOP4_BERKAY_SHADOW=1     → build coupons (no Telegram, no log)
+      TJK_TOP4_BERKAY_TELEGRAM=1   → also send to Telegram
+      TJK_TOP4_FORWARD_LOG=1       → also write durable prediction log
+      TJK_TOP4_RETRO_STORE=jsonl|db|both (default jsonl)
+                                     → controls log fan-out
 
-    All three default OFF. Never raises. The morning daily kupon goes
-    via _svc().send_telegram() (smart_coupon_service) — this helper
-    appends one extra Telegram message per hippodrome AFTER the prod
-    kupon series, clearly labeled as 'BERKAY BİLİMSEL DENEME TOP4'.
+    All flags default OFF. NEVER raises into the caller. Hardened path:
+    log rows are written AFTER each Telegram send so `telegram_sent`
+    accurately reflects delivery. If Telegram send succeeds but the
+    log write fails, a visible WARNING is logged. If the log fails
+    silently, the official prod kupon path is still untouched.
     """
     if os.environ.get('TJK_TOP4_BERKAY_SHADOW', '0') != '1':
         return
     try:
         try:
             from top4.experimental_integration import (
-                render_pool_shadow_messages, build_shadow_coupons_from_pools,
+                build_shadow_coupons_from_pools,
+                log_predictions_for_chunk,
+                render_pool_shadow_messages_with_coupons,
             )
             from top4.experimental_coupon import is_telegram_enabled
+            from top4.experimental_logger import is_forward_log_enabled
         except Exception as _e_imp:
             _log(logger, f"[berkay-top4] import skip: {repr(_e_imp)[:160]}")
             return
@@ -274,30 +280,52 @@ def _maybe_send_berkay_top4_shadow(pools_or_st, now, logger):
         if isinstance(pools_or_st, list):
             pools = pools_or_st
         elif isinstance(pools_or_st, dict):
-            # try to rebuild from svc since state['pools'] is a flattened
-            # form without race_legs
             try:
                 pools = _build_pools(now)
             except Exception:
                 pools = []
         if not pools:
             return
-        # Always build/log (honors TJK_TOP4_FORWARD_LOG inside)
-        built = build_shadow_coupons_from_pools(pools)
         if not is_telegram_enabled():
+            # Build + log with telegram_sent=False so retro audit knows
+            # the coupon was generated even though no Telegram went out.
+            built = build_shadow_coupons_from_pools(
+                pools, log_with_send_status=False,
+            )
             _log(logger, f"[berkay-top4] built {sum(len(v) for v in built.values())} "
                           f"coupons (Telegram off)")
             return
-        msgs = render_pool_shadow_messages(pools)
+        msgs = render_pool_shadow_messages_with_coupons(pools)
         if not msgs:
             _log(logger, "[berkay-top4] no message rendered")
             return
-        for m in msgs:
+        sent_total = 0
+        failed_total = 0
+        for text, chunk_coupons in msgs:
+            ok = False
+            err = None
             try:
-                _svc().send_telegram(m)
+                tg = _svc().send_telegram(text)
+                ok = bool(tg)
             except Exception as _e_tg:
-                _log(logger, f"[berkay-top4] send fail: {repr(_e_tg)[:160]}")
-        _log(logger, f"[berkay-top4] sent {len(msgs)} shadow message(s)")
+                err = repr(_e_tg)[:160]
+                _log(logger, f"[berkay-top4] send fail: {err}")
+            if ok:
+                sent_total += 1
+            else:
+                failed_total += 1
+            if is_forward_log_enabled() and chunk_coupons:
+                try:
+                    log_predictions_for_chunk(
+                        chunk_coupons,
+                        telegram_sent=ok,
+                        telegram_send_error=err,
+                    )
+                except Exception as _e_lg:
+                    _log(logger, f"[berkay-top4] LOG WRITE FAILED but "
+                                  f"TELEGRAM SENT — divergence! err={repr(_e_lg)[:160]}")
+        _log(logger, f"[berkay-top4] sent={sent_total} failed={failed_total} "
+                      f"chunks={len(msgs)}")
     except Exception as e:
         _log(logger, f"[berkay-top4] skip: {repr(e)[:200]}")
 

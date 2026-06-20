@@ -40,6 +40,8 @@ VALID_EVENT_TYPES = {
     "bet_decision",
     "daily_snapshot",   # Phase 7: snapshot persistence (Railway ephemeral disk fix)
     "horse_derece",     # Phase 9: at-form cache (TJK DetayliDereceIst kayıtları)
+    "berkay_top4_prediction",  # BERKAY BİLİMSEL DENEME TOP4 — shadow prediction row
+    "berkay_top4_result",      # BERKAY BİLİMSEL DENEME TOP4 — retro result row
 }
 
 

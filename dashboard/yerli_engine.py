@@ -6355,12 +6355,48 @@ def send_telegram_simple(results_dict):
 
     # BERKAY BİLİMSEL DENEME TOP4 (shadow) — env: TJK_TOP4_BERKAY_SHADOW=1,
     # TJK_TOP4_BERKAY_TELEGRAM=1. Default OFF. Never alters existing
-    # messages; only appends a separate experimental block as an extra
-    # Telegram message. Wrapped in try/except so any failure here cannot
-    # disrupt the production send.
+    # messages; only appends separate experimental block(s) as extra
+    # Telegram messages. Wrapped in try/except so any failure here cannot
+    # disrupt the production send. Hardened: tracks which extra messages
+    # are shadow blocks so log rows can be written with the correct
+    # telegram_sent status AFTER each send.
+    _berkay_shadow_blocks: list[tuple[str, list]] = []
     try:
-        from top4.experimental_integration import maybe_append_telegram
-        messages = maybe_append_telegram(messages, results_dict)
+        from top4.experimental_integration import (
+            extract_race_snapshots, build_shadow_coupons,
+            render_pool_shadow_messages_with_coupons,
+        )
+        from top4.experimental_coupon import (
+            is_shadow_enabled, is_telegram_enabled,
+        )
+        if is_shadow_enabled() and is_telegram_enabled():
+            # Wrap yerli results into pool-like adapter so we can use
+            # the with_coupons renderer and track per-chunk coupons.
+            snaps = extract_race_snapshots(results_dict)
+            if snaps:
+                fake_pool = {
+                    'hippo': 'YERLI',
+                    'status': 'ok',
+                    'race_legs': [[
+                        {
+                            'horse_number': h.get('horse_no'),
+                            'horse_name': h.get('horse_name'),
+                            'agf_value': h.get('agf'),
+                            'model_prob': h.get('mp'),
+                            'race_number': i + 1,
+                            'start_time': s.get('race_time') or '',
+                            'breed': h.get('breed') or '',
+                            'tier_mark': h.get('tier') or '',
+                        }
+                        for h in s.get('horses') or []
+                    ] for i, s in enumerate(snaps)],
+                }
+                _berkay_shadow_blocks = render_pool_shadow_messages_with_coupons(
+                    [fake_pool],
+                )
+                for text, _coupons in _berkay_shadow_blocks:
+                    if text:
+                        messages.append(text)
     except Exception as _e_berkay:
         logger.warning(f"[berkay-top4] shadow append skipped: {repr(_e_berkay)[:120]}")
 
@@ -6374,7 +6410,11 @@ def send_telegram_simple(results_dict):
 
     import requests as req
     sent = 0
+    shadow_texts = {t for t, _c in _berkay_shadow_blocks} if _berkay_shadow_blocks else set()
+    shadow_text_to_coupons = {t: c for t, c in _berkay_shadow_blocks} if _berkay_shadow_blocks else {}
     for msg in messages:
+        ok = False
+        err_txt = None
         try:
             resp = req.post(
                 f"https://api.telegram.org/bot{token}/sendMessage",
@@ -6383,10 +6423,26 @@ def send_telegram_simple(results_dict):
             )
             if resp.status_code == 200:
                 sent += 1
+                ok = True
             else:
-                logger.warning(f"Telegram HTTP {resp.status_code}: {resp.text[:200]}")
+                err_txt = f"HTTP {resp.status_code}: {resp.text[:120]}"
+                logger.warning(f"Telegram {err_txt}")
         except Exception as e:
+            err_txt = repr(e)[:160]
             logger.error(f"Telegram error: {e}")
+        if msg in shadow_texts:
+            try:
+                from top4.experimental_integration import log_predictions_for_chunk
+                chunk_coupons = shadow_text_to_coupons.get(msg) or []
+                if chunk_coupons:
+                    log_predictions_for_chunk(
+                        chunk_coupons,
+                        telegram_sent=ok,
+                        telegram_send_error=err_txt,
+                    )
+            except Exception as _e_lg:
+                logger.warning(f"[berkay-top4] LOG WRITE FAILED but "
+                               f"TELEGRAM ok={ok} — divergence! err={repr(_e_lg)[:160]}")
         if len(messages) > 1:
             _time.sleep(1.5)
     logger.info(f"Telegram: {sent}/{len(messages)} messages sent")

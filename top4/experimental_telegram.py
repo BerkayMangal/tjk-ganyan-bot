@@ -80,58 +80,98 @@ def _line_for(h: Mapping) -> str:
 
 
 def _render_race(coupon: Mapping) -> str:
+    """Compact, Berkay-friendly per-race renderer.
+
+    - Skip listing obvious favorites where AGF is already dominant
+      (no informational value — Berkay said: "çok favori atları
+      vermenin bir anlamı yok").
+    - Always show: 1-2 BANKER (only if model+AGF agree strongly) +
+      VALUE picks (model > AGF significantly) + AVOID picks +
+      estimated top-4 capture per ticket width.
+    - Hide boring CORE/NO_SIGNAL rows.
+    """
     lines: list[str] = []
     when = coupon.get("race_time") or ""
     hippo = coupon.get("hippodrome") or ""
-    head = f"Koşu: {when} {hippo}".strip()
+    fs = coupon.get("field_size") or 0
+    head = f"🏇 <b>{hippo} {when}</b> — {fs} at"
     lines.append(head)
     lines.append(
         f"Güven: {coupon.get('confidence')} · "
-        f"Varyans: {coupon.get('variance')} · "
         f"Mod: {coupon.get('recommended_mode')}"
     )
+
+    cap = coupon.get("expected_top4_capture") or {}
+    if cap and "small_pct" in cap:
+        lines.append(
+            f"İlk-4 yakalama tahmini → "
+            f"Small ({cap.get('small_set_size')} at) "
+            f"%{cap.get('small_pct', 0):.0f} · "
+            f"Balanced ({cap.get('balanced_set_size')} at) "
+            f"%{cap.get('balanced_pct', 0):.0f} · "
+            f"Wide ({cap.get('wide_set_size')} at) "
+            f"%{cap.get('wide_pct', 0):.0f}"
+        )
 
     if coupon.get("recommended_mode") == "NO_BET":
         reason = coupon.get("no_bet_reason") or "yapısal belirsizlik"
         lines.append(f"🛑 NO_BET — Sebep: {reason}")
         return "\n".join(lines)
 
-    def _block(title: str, key: str):
-        items = coupon.get(key) or []
-        if not items:
-            return
-        lines.append(f"\n<b>{title}</b>")
-        for h in items:
-            lines.append(_line_for(h))
-
-    _block("BANKER", "bankers")
-    _block("CORE", "core")
-    _block("SPREAD", "spread")
-    _block("CHAOS", "chaos")
-    avoid = coupon.get("avoid") or []
-    if avoid:
-        lines.append("\n<b>AVOID</b>")
-        for h in avoid:
+    bankers = coupon.get("bankers") or []
+    if bankers:
+        lines.append("\n🎯 <b>ANA AT</b> (model + halk uyumlu)")
+        for h in bankers[:2]:
             no = h.get("horse_no")
             name = h.get("horse_name") or "?"
-            reason = h.get("reason") or "halk tuzağı"
-            lines.append(f"#{no} {name} — {reason}")
+            p = h.get("p_top4_cal")
+            agf = h.get("agf_now")
+            ptxt = f"pTop4 {p:.2f}" if p is not None else "pTop4 —"
+            atxt = f"AGF %{agf:.0f}" if agf is not None else "AGF —"
+            lines.append(f"  #{no} {name} — {ptxt} · {atxt}")
 
-    # ticket proposals — never aggressive
-    small_t = coupon.get("small_ticket") or {}
-    bal_t = coupon.get("balanced_ticket") or {}
-    wide_t = coupon.get("wide_ticket") or {}
-    if not small_t.get("skip"):
-        lines.append("\n<b>Önerilen deneme kuponu</b> (paper, küçük, risk yüksek)")
-        for t_label, t in (("Small", small_t), ("Balanced", bal_t), ("Wide", wide_t)):
-            horses = []
-            for k in ("banker", "core", "spread", "chaos"):
-                horses.extend(t.get(k) or [])
-            if horses:
-                lines.append(
-                    f"  {t_label}: {sorted(set(horses))} "
-                    f"(~{t.get('estimated_combinations', 0)} komb.)"
-                )
+    # VALUE: spread/chaos/core where model > AGF significantly
+    value_pool = []
+    for h in (coupon.get("spread") or []) + (coupon.get("chaos") or []) \
+              + (coupon.get("core") or []):
+        if h.get("value_tag") == "DEĞER":
+            value_pool.append(h)
+    if value_pool:
+        lines.append("\n💎 <b>DEĞER</b> (model halktan güçlü)")
+        # Sort by gap descending, limit to top 4 to avoid clutter
+        value_pool.sort(key=lambda x: x.get("value_gap_pct") or 0,
+                        reverse=True)
+        for h in value_pool[:4]:
+            no = h.get("horse_no")
+            name = h.get("horse_name") or "?"
+            p = h.get("p_top4_cal")
+            agf = h.get("agf_now")
+            gap = h.get("value_gap_pct")
+            ptxt = f"pTop4 {p:.2f}" if p is not None else "pTop4 —"
+            atxt = f"AGF %{agf:.0f}" if agf is not None else "AGF —"
+            gtxt = f" · gap +{gap:.0f}pp" if gap is not None else ""
+            lines.append(f"  #{no} {name} — {ptxt} · {atxt}{gtxt}")
+
+    avoid = coupon.get("avoid") or []
+    if avoid:
+        lines.append("\n⚠ <b>AVOID</b> (halk yüksek, model düşük)")
+        for h in avoid[:3]:
+            no = h.get("horse_no")
+            name = h.get("horse_name") or "?"
+            agf = h.get("agf_now")
+            mr = h.get("model_rank")
+            atxt = f"AGF %{agf:.0f}" if agf is not None else "AGF —"
+            mtxt = f"model rank {mr}" if mr else "model zayıf"
+            lines.append(f"  #{no} {name} — {atxt} ama {mtxt}")
+
+    # candidate set listing (compact)
+    cs = coupon.get("candidate_set") or []
+    if cs:
+        lines.append(
+            f"\n📋 Aday kümesi ({len(cs)}): "
+            f"{', '.join('#' + str(x) for x in cs)}"
+        )
+
     return "\n".join(lines)
 
 

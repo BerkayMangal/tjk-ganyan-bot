@@ -215,11 +215,13 @@ class TestForwardLog(unittest.TestCase):
         self._orig_log_dir = LOG_DIR
         import top4.experimental_logger as L
         L.LOG_DIR = self.tmp_dir
+        L._reset_seen_cache_for_test()
         _set_flags(shadow="1", telegram=None, log="1")
 
     def tearDown(self):
         import top4.experimental_logger as L
         L.LOG_DIR = self._orig_log_dir
+        L._reset_seen_cache_for_test()
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
         _set_flags(None, None, None)
 

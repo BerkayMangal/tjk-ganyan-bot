@@ -330,6 +330,61 @@ def build_berkay_scientific_top4_coupon(
                                     "race_label": race_label,
                                     "cutoff": cutoff})
 
+        # Expected top-4 capture: P(actual top-4 ⊆ candidate set) via
+        # Plackett-Luce sim on calibrated p_win_cal (or mp as utility).
+        try:
+            from .simulation import set_coverage_probability
+            small_set = set([h["horse_no"] for h in bankers]
+                            + [h["horse_no"] for h in core][:2]
+                            + [h["horse_no"] for h in spread][:1])
+            bal_set = set([h["horse_no"] for h in bankers]
+                          + [h["horse_no"] for h in core][:3]
+                          + [h["horse_no"] for h in spread][:2]
+                          + [h["horse_no"] for h in chaos][:1])
+            wide_set = set([h["horse_no"] for h in bankers]
+                           + [h["horse_no"] for h in core][:4]
+                           + [h["horse_no"] for h in spread][:3]
+                           + [h["horse_no"] for h in chaos][:2])
+            source = "p_win_cal" if any(n.get("p_win_cal") is not None
+                                         for n in normalized) else "mp"
+            cov_small = set_coverage_probability(normalized, small_set,
+                                                 n_iter=1500, source=source)
+            cov_bal = set_coverage_probability(normalized, bal_set,
+                                               n_iter=1500, source=source)
+            cov_wide = set_coverage_probability(normalized, wide_set,
+                                                n_iter=1500, source=source)
+            expected_capture = {
+                "small_pct": round(cov_small.get("p_full_coverage_approx",
+                                                 0.0) * 100, 1),
+                "small_expected_hits": round(cov_small.get(
+                    "expected_hits_approx", 0.0), 2),
+                "small_set_size": len(small_set),
+                "balanced_pct": round(cov_bal.get("p_full_coverage_approx",
+                                                  0.0) * 100, 1),
+                "balanced_expected_hits": round(cov_bal.get(
+                    "expected_hits_approx", 0.0), 2),
+                "balanced_set_size": len(bal_set),
+                "wide_pct": round(cov_wide.get("p_full_coverage_approx",
+                                               0.0) * 100, 1),
+                "wide_expected_hits": round(cov_wide.get(
+                    "expected_hits_approx", 0.0), 2),
+                "wide_set_size": len(wide_set),
+                "source": source,
+                "note": "expected_hits_approx (top-10 set table); pct is "
+                        "Plackett-Luce simulation estimate, conservative.",
+            }
+        except Exception:
+            expected_capture = {"error": "simulation_failed"}
+
+        # Identify VALUE picks (model significantly stronger than AGF)
+        for h in (spread + chaos + core):
+            mp = h.get("mp") or 0.0
+            agf = h.get("agf_now") or 0.0
+            gap = mp - (agf / 100.0)
+            if gap >= 0.08:
+                h["value_tag"] = "DEĞER"
+                h["value_gap_pct"] = round(gap * 100, 1)
+
         coupon = {
             "label": EXPERIMENTAL_LABEL,
             "label_display": EXPERIMENTAL_LABEL_DISPLAY,
@@ -356,6 +411,7 @@ def build_berkay_scientific_top4_coupon(
             "small_ticket": small_t,
             "balanced_ticket": balanced_t,
             "wide_ticket": wide_t,
+            "expected_top4_capture": expected_capture,
             "no_bet_reason": ("; ".join(decision.reasons)
                               if decision.skip else None),
             "notes": notes,

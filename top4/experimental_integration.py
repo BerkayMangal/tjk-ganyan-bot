@@ -209,9 +209,20 @@ def extract_race_snapshots_from_pool(pool: Mapping) -> list[dict]:
 
 def build_shadow_coupons_from_pools(
     pools: Iterable[Mapping], cutoff: str = "latest",
+    log_with_send_status: Optional[bool] = None,
 ) -> dict[str, list[dict]]:
     """Build shadow coupons grouped by hippodrome. Returns
     `{hippo_name: [coupon, ...], ...}`. Honors `TJK_TOP4_BERKAY_SHADOW`.
+
+    `log_with_send_status`:
+      - None  -> if forward log enabled, write with telegram_sent=None
+                  (status unknown — caller may not send Telegram).
+      - True/False -> write with that telegram_sent value.
+
+    For the hardened scheduler path, the caller passes None here and
+    later writes log rows AFTER send via `log_predictions_for_chunk`.
+    To preserve backwards behavior, the default still writes a row
+    with telegram_sent=None when the forward log flag is on.
     """
     if not is_shadow_enabled():
         return {}
@@ -230,7 +241,9 @@ def build_shadow_coupons_from_pools(
                 )
                 coupons.append(coupon)
                 if is_forward_log_enabled():
-                    log_prediction(coupon)
+                    # Write row even if status unknown — preserves the
+                    # "generated coupon implies log row" guarantee.
+                    log_prediction(coupon, telegram_sent=log_with_send_status)
             if coupons:
                 out[hippo] = coupons
         except Exception as exc:
@@ -245,20 +258,116 @@ def render_pool_shadow_messages(pools: Iterable[Mapping],
                                 max_chars: int = 3500) -> list[str]:
     """Telegram-safe messages, chunked. Returns one or more strings per
     hippodrome (each under `max_chars`). Empty list if shadow flag is
-    off or nothing renders.
+    off or nothing renders. Backwards-compatible wrapper around
+    `render_pool_shadow_messages_with_coupons`.
+    """
+    return [text for text, _coupons in
+            render_pool_shadow_messages_with_coupons(pools, cutoff, max_chars)]
+
+
+def render_pool_shadow_messages_with_coupons(
+    pools: Iterable[Mapping],
+    cutoff: str = "latest",
+    max_chars: int = 3500,
+) -> list[tuple[str, list[dict]]]:
+    """Like `render_pool_shadow_messages`, but also returns the list
+    of coupon dicts that each rendered message contains. This is the
+    HARDENED path used by the scheduler to attach `telegram_sent`
+    status to the prediction log row of each coupon in the chunk.
+
+    Returns list of `(text, [coupon, ...])` tuples. NEVER raises.
     """
     try:
-        coupons_by_hippo = build_shadow_coupons_from_pools(pools, cutoff=cutoff)
-        out: list[str] = []
-        for hippo, coupons in coupons_by_hippo.items():
-            chunks = safe_render_chunked(coupons, max_chars=max_chars)
-            for c in chunks:
-                if c:
-                    out.append(c)
+        # Build (without writing log here — logging happens at send-time)
+        from .experimental_telegram import (
+            render_experimental_messages_chunked,
+            _render_race,
+            HEADER,
+        )
+        from .experimental_coupon import DISCLAIMER
+        if not is_shadow_enabled():
+            return []
+        out: list[tuple[str, list[dict]]] = []
+        for pool in pools:
+            snaps = extract_race_snapshots_from_pool(pool)
+            if not snaps:
+                continue
+            hippo = pool.get("hippo") or pool.get("hippodrome") or "?"
+            coupons: list[dict] = []
+            for snap in snaps:
+                agf = _build_agf_snapshots(snap.get("horses") or [])
+                coupon = build_berkay_scientific_top4_coupon(
+                    snap, agf_snapshot=agf, cutoff=cutoff,
+                )
+                coupons.append(coupon)
+            if not coupons:
+                continue
+            # Chunk: we need to track which coupons are in each chunk
+            sep_len = len("\n\n" + ("─" * 24) + "\n\n")
+            header_len = len(HEADER) + 2
+            footer_len = len("\n\n<i>" + DISCLAIMER + "</i>")
+            budget = max(800, max_chars - header_len - footer_len)
+            chunks_coupons: list[list[dict]] = []
+            current: list[dict] = []
+            current_len = 0
+            for coupon in coupons:
+                race_text = _render_race(coupon)
+                add_len = len(race_text) + (sep_len if current else 0)
+                if current and current_len + add_len > budget:
+                    chunks_coupons.append(current)
+                    current = [coupon]
+                    current_len = len(race_text)
+                else:
+                    current.append(coupon)
+                    current_len += add_len
+            if current:
+                chunks_coupons.append(current)
+
+            for chunk in chunks_coupons:
+                texts = render_experimental_messages_chunked(
+                    chunk, max_chars=max_chars,
+                )
+                # in practice render_experimental_messages_chunked
+                # for our chunk of coupons returns exactly 1 message;
+                # if it returns more (shouldn't), we associate ALL
+                # coupons with the first message and write empties.
+                for i, text in enumerate(texts):
+                    if i == 0:
+                        out.append((text, chunk))
+                    else:
+                        out.append((text, []))
         return out
     except Exception as exc:
-        logger.warning("render_pool_shadow_messages failed: %s", exc)
+        logger.warning("render_pool_shadow_messages_with_coupons failed: %s",
+                       exc)
         return []
+
+
+def log_predictions_for_chunk(coupons: Iterable[Mapping],
+                              telegram_sent: bool,
+                              telegram_send_error: Optional[str] = None,
+                              ) -> int:
+    """Write a log_prediction row for every coupon in a chunk, with the
+    same telegram_sent / error status. Returns count of rows written.
+    NEVER raises.
+    """
+    try:
+        from .experimental_logger import log_prediction
+    except Exception:
+        return 0
+    written = 0
+    for c in coupons:
+        try:
+            r = log_prediction(
+                c,
+                telegram_sent=telegram_sent,
+                telegram_send_error=telegram_send_error,
+            )
+            if r:
+                written += 1
+        except Exception as exc:
+            logger.warning("log_predictions_for_chunk: %s", exc)
+    return written
 
 
 def maybe_append_telegram(
@@ -271,6 +380,13 @@ def maybe_append_telegram(
     mutates `existing_messages`.
 
     Safe to call unconditionally from production paths.
+
+    Note on logging: when this path emits a Telegram block, we do not
+    yet know if Telegram delivered it (the actual send happens in the
+    caller). build_shadow_coupons writes log rows with
+    telegram_sent=None to preserve the "coupon implies log row"
+    guarantee. The send_telegram_simple wrapper records true delivery
+    status via a separate hook in production (`log_after_send_simple`).
     """
     if not is_telegram_enabled() or not is_shadow_enabled():
         return list(existing_messages)

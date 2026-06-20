@@ -82,6 +82,10 @@ def assign_roles(
             continue
 
         # ---- BANKER ----
+        # Conservative: only when model and market both strongly agree.
+        # Banker has informational value only when calibrated p_top4 is
+        # high AND the horse is the obvious favorite; otherwise the
+        # listing is just "Berkay zaten biliyor" noise.
         banker_ok = (
             p_t4 is not None
             and p_t4 >= 0.55
@@ -100,7 +104,9 @@ def assign_roles(
             continue
 
         # ---- AVOID: public trap (high AGF, low model) ----
-        if agf is not None and agf >= 35 and rank >= 5 and (p_t4 is None or p_t4 < 0.30):
+        # Lowered threshold so more public traps surface (Berkay wants
+        # actionable AVOID hints).
+        if agf is not None and agf >= 28 and rank >= 4 and (p_t4 is None or p_t4 < 0.30):
             reasons.append("public_trap")
             reasons.append(f"agf={agf:.1f} but rank={rank}")
             out.append(RoleAssignment(int(row.get("horse_no", i + 1)),
