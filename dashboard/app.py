@@ -831,6 +831,83 @@ def send_yerli_telegram():
     except Exception as e:
         return jsonify({"error": str(e)})
 
+
+@app.route("/api/berkay_top4_shadow")
+def get_berkay_top4_shadow():
+    """BERKAY BİLİMSEL DENEME TOP4 — shadow/experimental coupon view.
+
+    Returns the experimental coupon list under
+    `berkay_scientific_top4_shadow`. Production keys NEVER mutated.
+
+    Behavior is gated by `TJK_TOP4_BERKAY_SHADOW=1`. When the flag is
+    off, the response includes a `disabled` field and an empty list.
+    """
+    from flask import request as _req
+    cutoff = _req.args.get('cutoff', 'latest')
+    try:
+        from top4.experimental_coupon import (
+            DISCLAIMER, EXPERIMENTAL_LABEL_DISPLAY, is_shadow_enabled,
+        )
+        from top4.experimental_integration import build_shadow_coupons
+    except Exception as e:
+        return jsonify({"error": f"import: {repr(e)[:200]}"}), 500
+
+    if not YERLI_ENGINE_OK:
+        return jsonify({
+            "berkay_scientific_top4_shadow": {
+                "label_display": EXPERIMENTAL_LABEL_DISPLAY,
+                "disabled": True,
+                "reason": "engine off",
+                "coupons": [],
+                "disclaimer": DISCLAIMER,
+            }
+        })
+    with _yerli_lock:
+        data = _yerli_cache.get('data')
+    if not data:
+        return jsonify({
+            "berkay_scientific_top4_shadow": {
+                "label_display": EXPERIMENTAL_LABEL_DISPLAY,
+                "disabled": True,
+                "reason": "no production snapshot yet — call /api/yerli_kupon first",
+                "coupons": [],
+                "disclaimer": DISCLAIMER,
+            }
+        })
+
+    if not is_shadow_enabled():
+        return jsonify({
+            "berkay_scientific_top4_shadow": {
+                "label_display": EXPERIMENTAL_LABEL_DISPLAY,
+                "disabled": True,
+                "reason": "shadow flag off — set TJK_TOP4_BERKAY_SHADOW=1",
+                "coupons": [],
+                "disclaimer": DISCLAIMER,
+            }
+        })
+
+    try:
+        coupons = build_shadow_coupons(data, cutoff=cutoff)
+    except Exception as e:
+        return jsonify({
+            "berkay_scientific_top4_shadow": {
+                "label_display": EXPERIMENTAL_LABEL_DISPLAY,
+                "error": "Bilimsel Top4 deneme kuponu şu an üretilemedi.",
+                "detail": repr(e)[:200],
+                "coupons": [],
+                "disclaimer": DISCLAIMER,
+            }
+        }), 200
+    return jsonify({
+        "berkay_scientific_top4_shadow": {
+            "label_display": EXPERIMENTAL_LABEL_DISPLAY,
+            "coupons": coupons,
+            "count": len(coupons),
+            "cutoff": cutoff,
+            "disclaimer": DISCLAIMER,
+        }
+    })
+
 @app.route("/api/manual-trigger", methods=["POST"])
 def manual_trigger():
     # Pipeline+Telegram'ı ARKA PLAN THREAD'inde koşar: senkron request ~120s'i aşıp

@@ -6353,6 +6353,17 @@ def send_telegram_simple(results_dict):
     except Exception:
         pass
 
+    # BERKAY BİLİMSEL DENEME TOP4 (shadow) — env: TJK_TOP4_BERKAY_SHADOW=1,
+    # TJK_TOP4_BERKAY_TELEGRAM=1. Default OFF. Never alters existing
+    # messages; only appends a separate experimental block as an extra
+    # Telegram message. Wrapped in try/except so any failure here cannot
+    # disrupt the production send.
+    try:
+        from top4.experimental_integration import maybe_append_telegram
+        messages = maybe_append_telegram(messages, results_dict)
+    except Exception as _e_berkay:
+        logger.warning(f"[berkay-top4] shadow append skipped: {repr(_e_berkay)[:120]}")
+
     token = os.environ.get('TELEGRAM_BOT_TOKEN', '')
     chat_id = os.environ.get('TELEGRAM_CHAT_ID', '')
     if not token or not chat_id:
