@@ -297,33 +297,16 @@ def format_telegram(coupon: Dict) -> str:
                 j_parts.append(f"genel %{jov*100:.0f}")
             L.append(f"   {' · '.join(j_parts)}")
 
-    # TOP-4 ekstra at
-    extras = [no for no in coupon['top4_sib'] if no not in coupon['top3_sib']]
-    if extras:
-        L.append('')
-        L.append('🎯 <b>TOP-4 SİB</b> (genişletme)')
-        for no in extras:
-            s = next((x for x in scored if x['no'] == no), None)
-            if not s: continue
-            clean_nm, dn = _clean_horse_name(s['name'])
-            drift_str = ''
-            if abs(s['agf_drift_pp']) >= 1:
-                sign = '+' if s['agf_drift_pp'] > 0 else ''
-                drift_str = f"→<b>{s['agf_now']:.0f}%</b> ({sign}{s['agf_drift_pp']:.0f}pp)"
-            L.append(f"   + <b>#{s['no']} {clean_nm}</b>  ·  "
-                     f"model %{s['mp']:.0f}  ·  halk %{s['agf_morning']:.0f}{drift_str}")
-
-    # Phase 5.8.53 — MULTI-AT BAHIS önerileri (audit/143 EV matrisi)
-    # İKİLİ sırasız: +%128 EV @ medyan, TABELA SIRASIZ: +%91 EV
+    # Phase 5.8.57 — Berkay: "SİB top4 ayrı mesaj, en son gelsin, karışmasın".
+    # TOP-4 SİB bölümü ayrı format_telegram_sib_top4()'e taşındı.
+    # Burada SADECE multi-at BAHIS önerileri (İKİLİ + TABELA SIRASIZ).
     if len(scored) >= 2:
-        # İKİLİ (top-2 sırasız, EV +%128.7 walk-forward)
         ikili = scored[:2]
         L.append('')
         L.append('💰 <b>İKİLİ (sırasız)</b> — audit/143 EV +%128')
         nos = ' / '.join(f"#{s['no']}" for s in ikili)
         L.append(f"   <b>{nos}</b>  (medyan payout ~12.75×)")
     if len(scored) >= 4:
-        # TABELA SIRASIZ (top-4 set, EV +%91)
         tabela = scored[:4]
         L.append('')
         L.append('🎰 <b>TABELA SIRASIZ</b> — audit/143 EV +%91')
@@ -348,4 +331,40 @@ def format_telegram(coupon: Dict) -> str:
         L.append('')
         L.append(f"🔍 <b>INSIDER PATERN</b>: {nos} → audit/139 deep longshot CRASH "
                  f"(backtest n=54 win %44)")
+    return '\n'.join(L)
+
+
+def format_telegram_sib_top4(coupon: Dict) -> str:
+    """SADE SİB TOP-4 mesajı — analiz mesajından AYRI, en son gönderilir.
+
+    Berkay (2026-06-20): "SİB top4 ayrı bir gönderi yapalım, en son o gelsin,
+    karışmasın".
+
+    Eyleme yönelik kısa mesaj: 4 at + tier rozeti.
+    """
+    r = coupon.get('race', {})
+    rt = r.get('race_time') or ''
+    hippo = r.get('hippodrome', '').replace(' Hipodromu', '')
+    leg = r.get('leg_idx')
+    altili = r.get('altili_no')
+    race_no = r.get('race_no')
+    scored = coupon.get('horses_scored') or []
+    if not scored:
+        return ''
+    top4 = coupon.get('top4_sib') or []
+    if not top4:
+        return ''
+
+    L = []
+    L.append(f"🎯 <b>SİB TOP-4 — BUNU OYNA</b>")
+    L.append(f"<b>{rt}</b>  ·  <b>{hippo}</b>  ·  <b>{race_no}. koşu</b>"
+             + (f"  ({altili}. Altılı {leg}. ayak)" if altili and leg else ""))
+    L.append('')
+    for i, no in enumerate(top4, 1):
+        s = next((x for x in scored if x['no'] == no), None)
+        if not s: continue
+        clean_nm, display_no = _clean_horse_name(s['name'])
+        prog = f" (prog {display_no}.)" if display_no else ""
+        L.append(f"<b>{i}. #{s['no']} {clean_nm}</b>{prog}  ·  "
+                 f"model %{s['mp']:.0f} · halk %{s['agf_morning']:.0f}")
     return '\n'.join(L)

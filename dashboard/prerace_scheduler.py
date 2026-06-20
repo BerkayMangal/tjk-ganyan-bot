@@ -112,8 +112,10 @@ def _trigger_coupon(race: Dict) -> bool:
         # Scan'i bir kere daha çağır (en güncel AGF için)
         _trigger_targeted_scan()
         coupon = pcb.build_coupon(race)
-        text = pcb.format_telegram(coupon)
-        # Phase 5.8.56 — forward validation log (audit/147)
+        # Phase 5.8.57 — Berkay: 2 ayrı mesaj (analiz + SİB TOP-4 sade)
+        text_analysis = pcb.format_telegram(coupon)
+        text_sib = pcb.format_telegram_sib_top4(coupon)
+        # Forward log (audit/147)
         try:
             from dashboard import prerace_logger as plog
         except ImportError:
@@ -121,7 +123,11 @@ def _trigger_coupon(race: Dict) -> bool:
             except ImportError: plog = None
         if plog is not None:
             plog.write_pick_log(coupon)
-        return _send_telegram(text)
+        ok1 = _send_telegram(text_analysis)
+        # 2 sn bekle (Telegram rate limit + Berkay önce analizi okuyacak)
+        time.sleep(2)
+        ok2 = _send_telegram(text_sib) if text_sib else True
+        return ok1 and ok2
     except Exception as e:
         logger.warning(f'[prerace] coupon build fail: {e}')
         return False
