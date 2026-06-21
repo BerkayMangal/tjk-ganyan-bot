@@ -6243,6 +6243,56 @@ def _berkay_attach_results(target_date_str, raw_results):
     return status
 
 
+def _berkay_send_retro_telegram(target_date_str):
+    """BERKAY DENEME RETRO — günlük summary'den compact Telegram özet.
+
+    Env: TJK_TOP4_BERKAY_RETRO_TELEGRAM=1 (default OFF).
+    NEVER raises. Returns a small status dict for logging.
+
+    Mevcut V7 retro mesajını DEĞİŞTİRMEZ — onun yanına ek bir
+    özet mesajı atılır. Forward log boşsa (TJK_TOP4_FORWARD_LOG=0
+    veya hiç tahmin yapılmamışsa) mesaj atılmaz.
+    """
+    status = {"sent": False, "reason": None}
+    try:
+        from top4.digest_retro import (
+            is_retro_telegram_enabled, safe_build_retro_message,
+        )
+        if not is_retro_telegram_enabled():
+            status["reason"] = "TJK_TOP4_BERKAY_RETRO_TELEGRAM != 1"
+            return status
+        msg = safe_build_retro_message(target_date_str)
+        if not msg:
+            status["reason"] = "no summary or empty message"
+            return status
+
+        token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+        if not token or not chat_id:
+            logger.warning("[berkay-top4] retro: telegram creds yok — print only")
+            print(msg)
+            status["reason"] = "no creds"
+            return status
+
+        import requests as _req
+        resp = _req.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": msg[:4096],
+                  "parse_mode": "HTML"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            status["sent"] = True
+            logger.info("[berkay-top4] retro telegram sent")
+        else:
+            status["reason"] = f"HTTP {resp.status_code}"
+            logger.warning(f"[berkay-top4] retro HTTP {resp.status_code}: {resp.text[:120]}")
+    except Exception as exc:
+        status["reason"] = repr(exc)[:160]
+        logger.warning(f"[berkay-top4] retro send: {exc}")
+    return status
+
+
 def run_daily_recap(target_date_str=None, send_telegram=False):
     """PATCH_V7_PHASE2_RECAP_v1. Top-level entry — runs the full recap loop.
     Never raises — returns structured dict with status."""
@@ -6318,6 +6368,14 @@ def run_daily_recap(target_date_str=None, send_telegram=False):
                 _berkay_attach_results(target_date_str, raw_results)
             except Exception as _e_berkay_r:
                 logger.warning(f"[berkay-top4] retro attach failed: {_e_berkay_r}")
+
+            # BERKAY DENEME RETRO — send a separate compact Telegram summary
+            # AFTER the official V7 recap. Honors TJK_TOP4_BERKAY_RETRO_TELEGRAM
+            # (default OFF). Never raises into the recap path.
+            try:
+                _berkay_send_retro_telegram(target_date_str)
+            except Exception as _e_berkay_rtg:
+                logger.warning(f"[berkay-top4] retro telegram failed: {_e_berkay_rtg}")
 
         # Phase 6: hybrid eşleşme — önce race_number (robust, snapshot'ın altılı tanımına
         # bağımsız), fallback altılı_no. Winner'ların yeni 'race_number' alanı eklendi (tjk_sehir).
