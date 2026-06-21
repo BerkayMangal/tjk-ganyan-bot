@@ -65,9 +65,8 @@ def assign_roles(
         mp = float(row.get("mp", 0.0))
         agf = row.get("agf")
         p_t4 = row.get("p_top4_cal")
-        p_win = row.get("p_win_cal")
-        tier = row.get("tier", "")
-
+        # NOTE (audit 2026-06-21): `p_win_cal` and `tier` were read here
+        # previously but never used downstream; removed as dead vars.
         reasons: list[str] = []
         confidence = "MEDIUM"
         gap = _model_vs_agf_gap(mp, agf)

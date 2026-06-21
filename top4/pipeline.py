@@ -7,7 +7,7 @@ function is pure and side-effect free; logging is the caller's job.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Iterable, Mapping, Optional
+from typing import Iterable, Mapping
 
 from .calibration import calibrate_race
 from .candidate_sets import coverage_required_for_target

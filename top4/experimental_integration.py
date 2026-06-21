@@ -32,7 +32,7 @@ from .experimental_coupon import (
     is_telegram_enabled,
 )
 from .experimental_logger import log_prediction, log_result, rebuild_summary
-from .experimental_telegram import safe_render, safe_render_chunked
+from .experimental_telegram import safe_render
 
 logger = logging.getLogger(__name__)
 
@@ -259,7 +259,6 @@ ENV_VIEW = "TJK_TOP4_BERKAY_VIEW"
 
 
 def _view_mode() -> str:
-    import os
     val = (os.environ.get(ENV_VIEW) or VIEW_DIGEST).strip().lower()
     if val not in {VIEW_DIGEST, VIEW_FULL}:
         return VIEW_DIGEST
@@ -314,9 +313,9 @@ def render_pool_shadow_messages_with_coupons(
         if not is_shadow_enabled():
             return []
         view = force_view or _view_mode()
+        out: list[tuple[str, list[dict]]] = []
         if view == VIEW_DIGEST:
             from .digest_renderer import render_hippo_digest
-            out: list[tuple[str, list[dict]]] = []
             for pool in pools:
                 snaps = extract_race_snapshots_from_pool(pool)
                 if not snaps:
@@ -336,7 +335,6 @@ def render_pool_shadow_messages_with_coupons(
                 if text:
                     out.append((text, coupons))
             return out
-        out: list[tuple[str, list[dict]]] = []
         for pool in pools:
             snaps = extract_race_snapshots_from_pool(pool)
             if not snaps:
@@ -508,6 +506,7 @@ def record_results_for_date(
                         payouts={},
                         notes=["auto_attached_from_retro"],
                         force=True,
+                        rebuild=False,  # batch — single rebuild at end
                     )
         else:
             for r in race_results:
@@ -518,7 +517,9 @@ def record_results_for_date(
                     payouts=r.get("payouts") or {},
                     notes=r.get("notes") or [],
                     force=True,
+                    rebuild=False,  # batch — single rebuild at end
                 )
+        # Single summary rebuild for the whole batch.
         return rebuild_summary(date_str)
     except Exception as exc:
         logger.warning("record_results_for_date failed: %s", exc)

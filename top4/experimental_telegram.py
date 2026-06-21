@@ -8,9 +8,7 @@ from __future__ import annotations
 
 from typing import Iterable, Mapping
 
-from .experimental_coupon import (
-    DISCLAIMER, EXPERIMENTAL_LABEL_DISPLAY,
-)
+from .experimental_coupon import DISCLAIMER
 from .report import has_forbidden_language
 
 HEADER = (

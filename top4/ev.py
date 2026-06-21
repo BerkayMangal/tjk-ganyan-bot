@@ -83,7 +83,6 @@ def _max_drawdown(returns: Sequence[float]) -> float:
 def _risk_of_ruin(returns: Sequence[float], bankroll: float = 100.0) -> float:
     if not returns:
         return 1.0
-    equity = bankroll
     floor_hits = 0
     trials = 500
     rng = random.Random(99)

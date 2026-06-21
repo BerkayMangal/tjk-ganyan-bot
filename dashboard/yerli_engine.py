@@ -6173,7 +6173,9 @@ def _berkay_attach_results(target_date_str, raw_results):
             status["skipped"] = True
             status["reason"] = "TJK_TOP4_FORWARD_LOG != 1"
             return status
-        from top4.experimental_logger import log_result, read_predictions
+        from top4.experimental_logger import (
+            log_result, read_predictions, rebuild_summary,
+        )
         preds = read_predictions(target_date_str)
         pred_by_race_id = {p.get("race_id"): p for p in preds
                            if p.get("race_id")}
@@ -6221,10 +6223,16 @@ def _berkay_attach_results(target_date_str, raw_results):
                             f"agf_rank_at_finish={w.get('agf_rank')}",
                         ],
                         force=True,
+                        rebuild=False,  # batch — single rebuild after loop
                     )
                     status["attached"] += 1
                 except Exception as exc:
                     status["errors"].append(repr(exc)[:120])
+        # Single summary rebuild after the batch (60 races → 1 rebuild vs 60).
+        try:
+            rebuild_summary(target_date_str)
+        except Exception as _e_rb:
+            status["errors"].append(f"rebuild_summary: {repr(_e_rb)[:80]}")
         logger.info(
             f"[berkay-top4] retro attach: {status['attached']}/"
             f"{status['races']} races logged (skipped={status['skipped']})"

@@ -10,10 +10,9 @@ backtest can crank to 50k.
 """
 from __future__ import annotations
 
-import math
 import random
 from dataclasses import dataclass
-from typing import Iterable, Mapping, Optional
+from typing import Iterable, Mapping
 
 
 @dataclass
@@ -108,25 +107,69 @@ def simulate_race(
 
 def set_coverage_probability(
     rows: Iterable[Mapping], candidate_set: set[int], n_iter: int = 2000,
-    source: str = "p_win_cal",
+    source: str = "p_win_cal", seed: int = 42,
 ) -> dict:
     """Probability that the simulated top-4 is a subset of `candidate_set`.
-    Also returns expected number of top-4 finishers within the set."""
-    sim = simulate_race(rows, n_iter=n_iter, source=source)
-    if sim.n_iter == 0:
-        return {"p_full_coverage": 0.0, "expected_hits": 0.0, "n_iter": 0}
-    # we lost full ordering, recompute from set frequency table
-    full = 0
-    expected = 0.0
-    for s, cnt in sim.most_frequent_top4_sets:
-        contained = len(s & candidate_set)
-        if contained == 4:
-            full += cnt
-        expected += contained * cnt
-    # adjust expected to be averaged over n_iter (set table is truncated to top-10)
+    Also returns expected number of top-4 finishers within the set.
+
+    FIX (audit 2026-06-21): the previous implementation read from
+    simulate_race().most_frequent_top4_sets, which is truncated to the
+    top-10 most-frequent sets. For a 2000-iter run with 50+ unique
+    top-4 sets, that means ~75% of the iterations were silently
+    dropped from the coverage estimate. We now run the Plackett-Luce
+    sampler inline and count subset membership on EVERY iteration.
+
+    Backwards-compatible keys (`*_approx`) are kept so existing
+    callers continue to work.
+    """
+    rows = list(rows)
+    if not rows:
+        return {"p_full_coverage": 0.0, "p_full_coverage_approx": 0.0,
+                "expected_hits": 0.0, "expected_hits_approx": 0.0,
+                "n_iter": 0}
+    util = _utilities(rows, source)
+    horses = list(util.keys())
+    if not horses:
+        return {"p_full_coverage": 0.0, "p_full_coverage_approx": 0.0,
+                "expected_hits": 0.0, "expected_hits_approx": 0.0,
+                "n_iter": 0}
+    rng = random.Random(seed)
+    full_count = 0
+    total_hits = 0
+    eligible_iters = 0
+    for _ in range(n_iter):
+        remaining = dict(util)
+        order: list[int] = []
+        for _pos in range(min(4, len(horses))):
+            total_w = sum(remaining.values())
+            if total_w <= 0:
+                break
+            r = rng.random() * total_w
+            acc = 0.0
+            pick = None
+            for h, w in remaining.items():
+                acc += w
+                if r <= acc:
+                    pick = h
+                    break
+            if pick is None:
+                pick = next(iter(remaining))
+            order.append(pick)
+            del remaining[pick]
+        if len(order) >= min(4, len(horses)):
+            eligible_iters += 1
+            top4 = set(order[:4])
+            contained = len(top4 & candidate_set)
+            total_hits += contained
+            if contained == min(4, len(horses)):
+                full_count += 1
+    n_eff = eligible_iters or n_iter
+    p_full = full_count / n_eff
+    exp_hits = total_hits / n_eff
     return {
-        "p_full_coverage_approx": full / sim.n_iter,
-        "expected_hits_approx": expected / sim.n_iter,
-        "n_iter": sim.n_iter,
-        "warning": "expected_hits is approximate (top-10 sets only)",
+        "p_full_coverage": p_full,
+        "p_full_coverage_approx": p_full,
+        "expected_hits": exp_hits,
+        "expected_hits_approx": exp_hits,
+        "n_iter": n_eff,
     }

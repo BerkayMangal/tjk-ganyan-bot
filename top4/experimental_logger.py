@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from typing import Iterable, Mapping, Optional
 
 from .experimental_coupon import EXPERIMENTAL_LABEL, is_forward_log_enabled
-from .prediction_id import LABEL, make_prediction_id_for_coupon
+from .prediction_id import make_prediction_id_for_coupon
 
 logger = logging.getLogger(__name__)
 
@@ -315,6 +315,7 @@ def log_result(
     payouts: Optional[Mapping] = None,
     notes: Optional[list[str]] = None,
     force: bool = False,
+    rebuild: bool = True,
 ) -> Optional[str]:
     """Write a result row keyed by prediction_id (or race_id fallback).
     Idempotent: existing matching result row is not duplicated.
@@ -340,8 +341,8 @@ def log_result(
             r.get("prediction_id") == prediction_id for r in existing_results
         ):
             logger.debug("log_result skip dupe pid=%s", prediction_id)
-            # still rebuild summary
-            rebuild_summary(date_str)
+            if rebuild:
+                rebuild_summary(date_str)
             return _path_for(date_str)
 
         latest_pred = {}
@@ -395,7 +396,11 @@ def log_result(
                 write_result(result_row)
             except Exception as exc:
                 logger.warning("log_result DB path failed: %s", exc)
-        rebuild_summary(date_str)
+        # FIX (audit 2026-06-21): batch callers can pass rebuild=False
+        # and call rebuild_summary() once after the loop, turning a
+        # per-result O(N) rebuild into a single O(1) at end of batch.
+        if rebuild:
+            rebuild_summary(date_str)
         return _path_for(date_str)
     except Exception as exc:
         logger.warning("log_result failed: %s", exc)
@@ -494,7 +499,15 @@ def rebuild_summary(date_str: Optional[str] = None) -> Optional[str]:
                         continue
                     if abs(rel) >= 0.20:
                         agf_drift_signal_total += 1
-                        if (rel > 0 and h.get("horse_no") in top4):
+                        # FIX (audit 2026-06-21): drift fires as a top-4
+                        # signal in BOTH directions:
+                        #  - rising drift  + horse in top4  → correct
+                        #  - falling drift + horse in top4  → correct
+                        #    ("sharp money was already positioned despite
+                        #    public flight")
+                        # Previous code only counted rising-drift hits,
+                        # zeroing falling-drift even when it was right.
+                        if h.get("horse_no") in top4:
                             agf_drift_signal_correct += 1
 
         summary = {

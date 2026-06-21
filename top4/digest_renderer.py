@@ -13,9 +13,10 @@ Group structure (sırasıyla):
 """
 from __future__ import annotations
 
-from typing import Iterable, Mapping, Optional
+import re
+from typing import Mapping, Optional
 
-from .experimental_coupon import DISCLAIMER, EXPERIMENTAL_LABEL_DISPLAY
+from .experimental_coupon import DISCLAIMER
 from .report import has_forbidden_language
 
 
@@ -61,17 +62,26 @@ def _format_horse_line(coupon: Mapping, horse: Mapping, kind: str) -> str:
     return head
 
 
+_RACE_NUM_RE = re.compile(r"(\d+)")
+
+
 def _race_number(coupon: Mapping) -> str:
     """Pull race number from race_id or race_label. Returns '?' if not
-    parseable."""
-    rid = coupon.get("race_id") or coupon.get("race_label") or ""
-    # race_id format: "İstanbul_3" or "İstanbul 3. koşu"
-    for sep in ("_", " "):
-        if sep in rid:
-            tail = rid.rsplit(sep, 1)[-1]
-            digits = "".join(ch for ch in tail if ch.isdigit())
-            if digits:
-                return digits
+    parseable.
+
+    FIX (audit 2026-06-21): the previous heuristic (rsplit on '_' or ' ')
+    failed for the "İstanbul 3. koşu" race_label format because rsplit
+    yields ('İstanbul 3.', 'koşu') and the tail has no digits. Now we
+    take the LAST numeric token in race_id (preferred) or race_label.
+    """
+    rid = str(coupon.get("race_id") or "").strip()
+    label = str(coupon.get("race_label") or "").strip()
+    for source in (rid, label):
+        if not source:
+            continue
+        nums = _RACE_NUM_RE.findall(source)
+        if nums:
+            return nums[-1]
     return "?"
 
 

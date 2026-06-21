@@ -24,7 +24,9 @@ def decide(uncertainty: UncertaintyReport, roles: Iterable[RoleAssignment]) -> N
     n_banker = sum(1 for r in roles if r.role == ROLE_BANKER)
     n_core = sum(1 for r in roles if r.role == ROLE_CORE)
     n_spread = sum(1 for r in roles if r.role == ROLE_SPREAD)
-    reasons: list[str] = []
+    # NOTE (audit 2026-06-21): the previous `reasons: list[str] = []`
+    # local was never appended to; each branch returned its own inline
+    # list. Removed.
 
     if uncertainty.level == LEVEL_NO_BET:
         return NoBetDecision(True, "no_bet",

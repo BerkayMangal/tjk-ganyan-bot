@@ -13,8 +13,8 @@ Language safety: do NOT label any rumor/drift as "insider". Use
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Iterable, Mapping, Optional
+from dataclasses import dataclass
+from typing import Iterable, Mapping
 
 
 SAFE_TERMS = {
@@ -66,8 +66,7 @@ def benchmark(
 
 
 def _bench_bucket(races: list[Mapping]) -> BenchmarkRow:
-    n = len(races)
-    if n == 0:
+    if not races:
         return BenchmarkRow(note="no races")
     agf_top1_in_top4 = 0
     model_top1_in_top4 = 0
@@ -75,12 +74,14 @@ def _bench_bucket(races: list[Mapping]) -> BenchmarkRow:
     model_set_hit = 0
     blended_top1_in_top4 = 0
     blended_set_hit = 0
+    processed = 0
 
     for race in races:
         rows = race.get("rows", [])
         observed = set(int(h) for h in race.get("observed_top4", []))
         if not rows or not observed:
             continue
+        processed += 1
         agf_sorted = sorted(rows, key=lambda r: r.get("agf", 0.0) or 0.0, reverse=True)
         model_sorted = sorted(rows, key=lambda r: r.get("mp", 0.0) or 0.0, reverse=True)
         # blend rank: avg position
@@ -111,13 +112,19 @@ def _bench_bucket(races: list[Mapping]) -> BenchmarkRow:
         if blend_set == observed:
             blended_set_hit += 1
 
+    # FIX (audit 2026-06-21): denominator was `len(races)` which counted
+    # skipped races (empty rows / empty observed) as failures. Use the
+    # actual processed count instead.
+    n_eff = processed or 1
     return BenchmarkRow(
-        n_races=n,
-        agf_top1_top4_hit=agf_top1_in_top4 / n,
-        agf_top4_set_hit=agf_set_hit / n,
-        model_top1_top4_hit=model_top1_in_top4 / n,
-        model_top4_set_hit=model_set_hit / n,
-        blended_top1_top4_hit=blended_top1_in_top4 / n,
-        blended_top4_set_hit=blended_set_hit / n,
-        lift_model_over_agf=(model_top1_in_top4 - agf_top1_in_top4) / n,
+        n_races=processed,
+        agf_top1_top4_hit=agf_top1_in_top4 / n_eff,
+        agf_top4_set_hit=agf_set_hit / n_eff,
+        model_top1_top4_hit=model_top1_in_top4 / n_eff,
+        model_top4_set_hit=model_set_hit / n_eff,
+        blended_top1_top4_hit=blended_top1_in_top4 / n_eff,
+        blended_top4_set_hit=blended_set_hit / n_eff,
+        lift_model_over_agf=(model_top1_in_top4 - agf_top1_in_top4) / n_eff,
+        note=(f"skipped {len(races) - processed} empty race(s)"
+              if processed < len(races) else ""),
     )

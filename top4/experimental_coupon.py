@@ -22,9 +22,8 @@ import hashlib
 import json
 import os
 import traceback
-from dataclasses import asdict
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Mapping, Optional
 
 from .agf_drift import compute_drift, drift_reason_for
 from .calibration import calibrate_race
@@ -86,6 +85,18 @@ def _coerce_float(x: Any) -> Optional[float]:
         return float(x)
     except (TypeError, ValueError):
         return None
+
+
+def _first_present(*vals: Any) -> Any:
+    """Return the first value that is not None. Differs from `or` chain:
+    treats 0/0.0/'' as PRESENT (not falsy). Used for field-resolution
+    where 0 is a meaningful value (e.g. AGF=0.0 is "halk umursamıyor"
+    longshot, NOT missing).
+    """
+    for v in vals:
+        if v is not None:
+            return v
+    return None
 
 
 def _label_variance(uncertainty_level: str, field_size: int, required_set: int) -> str:
@@ -194,15 +205,17 @@ def build_berkay_scientific_top4_coupon(
 
         normalized: list[dict] = []
         for h in horses_raw:
+            # FIX (audit 2026-06-21): use _first_present so that AGF=0.0
+            # (extreme longshot, e.g. 0.4% rounded) is NOT silently
+            # treated as missing by the falsy `or` chain.
             normalized.append({
                 "horse_no": _coerce_int(h.get("horse_no"), 0),
                 "horse_name": str(h.get("horse_name") or "?"),
                 "mp": _coerce_float(h.get("mp")) or 0.0,
-                "agf": _coerce_float(h.get("agf")
-                                     or h.get("agf_now")
-                                     or h.get("agf_value")),
-                "agf_open": _coerce_float(h.get("agf_open")
-                                          or h.get("agf_morning")),
+                "agf": _coerce_float(_first_present(
+                    h.get("agf"), h.get("agf_now"), h.get("agf_value"))),
+                "agf_open": _coerce_float(_first_present(
+                    h.get("agf_open"), h.get("agf_morning"))),
                 "tier": str(h.get("tier") or ""),
                 "breed": str(h.get("breed") or race_snapshot.get("breed") or ""),
                 "race_class": str(h.get("race_class")
@@ -234,21 +247,24 @@ def build_berkay_scientific_top4_coupon(
         unc = evaluate(normalized, required_set_size=required)
         roles = assign_roles(normalized, field_size=field_size,
                              uncertainty=unc.level)
+
+        # FIX (audit 2026-06-21): precompute model rank map ONCE outside
+        # the drift loop. The previous code re-sorted the entire field
+        # for EVERY role on EVERY iteration (O(N² log N) and dead code).
+        _model_rank_sorted = sorted(range(len(normalized)),
+                                    key=lambda i: normalized[i]["mp"],
+                                    reverse=True)
+        _horse_to_rank: dict[int, int] = {}
+        for _r, _idx in enumerate(_model_rank_sorted, start=1):
+            _horse_to_rank[normalized[_idx]["horse_no"]] = _r
+
         # AGF drift can add a conservative reason to existing roles
         for role in roles:
             d = drift_map.get(role.horse_no)
             if d is None:
                 continue
-            model_rank = None
-            for idx, n in enumerate(normalized):
-                if n["horse_no"] == role.horse_no:
-                    sorted_idx = sorted(range(len(normalized)),
-                                        key=lambda i: normalized[i]["mp"],
-                                        reverse=True)
-                    rank_map = {oi: r for r, oi in enumerate(sorted_idx, start=1)}
-                    model_rank = rank_map.get(idx)
-                    break
-            reason_extra = drift_reason_for(d, model_rank or 99)
+            model_rank = _horse_to_rank.get(role.horse_no, 99)
+            reason_extra = drift_reason_for(d, model_rank)
             if reason_extra:
                 role.reasons.append(reason_extra)
 
@@ -271,10 +287,8 @@ def build_berkay_scientific_top4_coupon(
         variance = _label_variance(unc.level, field_size, required)
 
         # per-role lists with rich horse detail
-        sorted_idx = sorted(range(len(normalized)),
-                            key=lambda i: normalized[i]["mp"], reverse=True)
-        model_rank_map = {normalized[oi]["horse_no"]: r
-                          for r, oi in enumerate(sorted_idx, start=1)}
+        # Reuse precomputed rank map (was duplicated as `sorted_idx` below).
+        model_rank_map = _horse_to_rank
 
         def _horse_detail(role) -> dict:
             n = next((x for x in normalized
@@ -376,11 +390,17 @@ def build_berkay_scientific_top4_coupon(
         except Exception:
             expected_capture = {"error": "simulation_failed"}
 
-        # Identify VALUE picks (model significantly stronger than AGF)
+        # Identify VALUE picks (model significantly stronger than AGF).
+        # FIX (audit 2026-06-21): require an actual AGF value. Without
+        # AGF the "model > halk" comparison is meaningless, but the old
+        # code coerced agf=None to 0.0 and produced fake +50pp gaps for
+        # horses that simply lacked market data.
         for h in (spread + chaos + core):
-            mp = h.get("mp") or 0.0
-            agf = h.get("agf_now") or 0.0
-            gap = mp - (agf / 100.0)
+            mp_v = h.get("mp")
+            agf_v = h.get("agf_now")
+            if mp_v is None or agf_v is None:
+                continue
+            gap = float(mp_v) - (float(agf_v) / 100.0)
             if gap >= 0.08:
                 h["value_tag"] = "DEĞER"
                 h["value_gap_pct"] = round(gap * 100, 1)
