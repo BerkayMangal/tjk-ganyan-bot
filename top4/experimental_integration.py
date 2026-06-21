@@ -406,22 +406,70 @@ def maybe_append_telegram(
 def record_results_for_date(
     date_str: str, race_results: Iterable[Mapping],
 ) -> Optional[str]:
-    """Walk a list of race results and write retro rows. Each race
-    result must include `race_id` and `finish_order`. Returns the
-    summary path on success.
+    """Walk a list of race results and write retro rows.
+
+    Accepts TWO shapes:
+
+      (a) Direct shadow shape — each item:
+          `{race_id, race_label?, finish_order, payouts?, notes?}`
+
+      (b) engine.retro shape — each item:
+          `{hippodrome, altili_no, winners: [{race_number, horse_number, ...}]}`
+          For this shape we build race_id candidates as
+          `f"{hippo}_{race_number}"` and `f"{hippo} {race_number}. koşu"`
+          and call `log_result` with `finish_order=[horse_number]`.
+
+    Returns the summary path on success.
     """
     if not is_forward_log_enabled():
         return None
     try:
-        for r in race_results:
-            log_result(
-                race_id=str(r.get("race_id") or ""),
-                race_label=r.get("race_label"),
-                finish_order=r.get("finish_order") or [],
-                payouts=r.get("payouts") or {},
-                notes=r.get("notes") or [],
-                force=True,
-            )
+        from .experimental_logger import read_predictions
+        race_results = list(race_results)
+        # Detect shape: presence of `winners` array → engine.retro shape
+        is_retro_shape = any("winners" in (r or {}) for r in race_results)
+        if is_retro_shape:
+            preds = read_predictions(date_str)
+            pred_by_id = {p.get("race_id"): p for p in preds
+                          if p.get("race_id")}
+            for r in race_results:
+                hippo = (r.get("hippodrome") or "").strip()
+                for w in (r.get("winners") or []):
+                    rn = w.get("race_number")
+                    horse_no = w.get("horse_number")
+                    if rn is None or horse_no is None:
+                        continue
+                    cands = [f"{hippo}_{rn}", f"{hippo} {rn}. koşu"]
+                    race_id = next((c for c in cands if c in pred_by_id), None)
+                    if not race_id:
+                        for k in pred_by_id:
+                            if (k.startswith(hippo)
+                                    and (k.endswith(f"_{rn}")
+                                         or k.endswith(f" {rn}. koşu"))):
+                                race_id = k
+                                break
+                    if not race_id:
+                        continue
+                    pid = pred_by_id[race_id].get("prediction_id")
+                    log_result(
+                        race_id=race_id,
+                        race_label=pred_by_id[race_id].get("race_label"),
+                        prediction_id=pid,
+                        finish_order=[int(horse_no)],
+                        payouts={},
+                        notes=["auto_attached_from_retro"],
+                        force=True,
+                    )
+        else:
+            for r in race_results:
+                log_result(
+                    race_id=str(r.get("race_id") or ""),
+                    race_label=r.get("race_label"),
+                    finish_order=r.get("finish_order") or [],
+                    payouts=r.get("payouts") or {},
+                    notes=r.get("notes") or [],
+                    force=True,
+                )
         return rebuild_summary(date_str)
     except Exception as exc:
         logger.warning("record_results_for_date failed: %s", exc)

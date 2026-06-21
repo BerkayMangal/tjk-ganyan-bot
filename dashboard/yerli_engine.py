@@ -6146,6 +6146,95 @@ def _send_telegram_recap_v7(text):
         return False
 
 
+def _berkay_attach_results(target_date_str, raw_results):
+    """BERKAY BİLİMSEL DENEME TOP4 — retro hook.
+
+    Walk every leg winner from `raw_results` (engine.retro shape:
+    `[{hippodrome, altili_no, winners:[{leg_number, race_number,
+    horse_number, agf_rank, ...}]}]`), match against the shadow log's
+    prediction rows by race_id (constructed identically to the build
+    path: `f"{hippo}_{race_number}"` for scheduler-emitted rows; for
+    yerli-engine rows we also try `f"{hippo} {race_number}. koşu"`).
+
+    Calls `log_result(race_id=..., finish_order=[winner])` for each
+    matched leg. This is intentionally minimal: we only know the
+    winner from retro, NOT the full top-4 order. The shadow log
+    records `finish_order=[winner]` and `top4_actual=[winner]` so
+    the integrity audit can still answer "did our banker survive?"
+    and "was the winner in our candidate set?". When TJK supplies
+    richer top-4 data later, the same hook can pass the full list.
+
+    NEVER raises. Returns a small status dict for logging.
+    """
+    status = {"attached": 0, "races": 0, "errors": [], "skipped": False}
+    try:
+        from top4.experimental_logger import is_forward_log_enabled
+        if not is_forward_log_enabled():
+            status["skipped"] = True
+            status["reason"] = "TJK_TOP4_FORWARD_LOG != 1"
+            return status
+        from top4.experimental_logger import log_result, read_predictions
+        preds = read_predictions(target_date_str)
+        pred_by_race_id = {p.get("race_id"): p for p in preds
+                           if p.get("race_id")}
+        if not pred_by_race_id:
+            status["skipped"] = True
+            status["reason"] = "no predictions for date"
+            return status
+
+        for r in raw_results or []:
+            hippo = (r.get("hippodrome") or "").strip()
+            for w in (r.get("winners") or []):
+                status["races"] += 1
+                rn = w.get("race_number")
+                horse_no = w.get("horse_number")
+                if rn is None or horse_no is None:
+                    continue
+                # Candidate race_id keys (we try both schemes)
+                candidates = [
+                    f"{hippo}_{rn}",
+                    f"{hippo} {rn}. koşu",
+                ]
+                race_id = next((rid for rid in candidates
+                                if rid in pred_by_race_id), None)
+                if not race_id:
+                    # also try fuzzy: any pred whose race_id ends with f"_{rn}"
+                    # and starts with the hippo prefix.
+                    for k in pred_by_race_id:
+                        if (k.startswith(hippo)
+                                and (k.endswith(f"_{rn}")
+                                     or k.endswith(f" {rn}. koşu"))):
+                            race_id = k
+                            break
+                if not race_id:
+                    continue
+                try:
+                    pid = pred_by_race_id[race_id].get("prediction_id")
+                    log_result(
+                        race_id=race_id,
+                        race_label=pred_by_race_id[race_id].get("race_label"),
+                        prediction_id=pid,
+                        finish_order=[int(horse_no)],
+                        payouts={},  # retro doesn't carry payouts here
+                        notes=[
+                            "auto_attached_from_retro",
+                            f"agf_rank_at_finish={w.get('agf_rank')}",
+                        ],
+                        force=True,
+                    )
+                    status["attached"] += 1
+                except Exception as exc:
+                    status["errors"].append(repr(exc)[:120])
+        logger.info(
+            f"[berkay-top4] retro attach: {status['attached']}/"
+            f"{status['races']} races logged (skipped={status['skipped']})"
+        )
+    except Exception as exc:
+        status["errors"].append(repr(exc)[:160])
+        logger.warning(f"[berkay-top4] _berkay_attach_results: {exc}")
+    return status
+
+
 def run_daily_recap(target_date_str=None, send_telegram=False):
     """PATCH_V7_PHASE2_RECAP_v1. Top-level entry — runs the full recap loop.
     Never raises — returns structured dict with status."""
@@ -6212,6 +6301,15 @@ def run_daily_recap(target_date_str=None, send_telegram=False):
                 logger.info(f"[recap] bet_diary outcomes: {_bo}")
             except Exception as _e_bo:
                 logger.warning(f"[recap] bet_diary outcome update failed: {_e_bo}")
+
+            # BERKAY BİLİMSEL DENEME TOP4 — auto-attach result rows so the
+            # shadow log has finish_order for every predicted race. Honors
+            # TJK_TOP4_FORWARD_LOG; safe no-op when flag is off. NEVER
+            # raises into the recap path.
+            try:
+                _berkay_attach_results(target_date_str, raw_results)
+            except Exception as _e_berkay_r:
+                logger.warning(f"[berkay-top4] retro attach failed: {_e_berkay_r}")
 
         # Phase 6: hybrid eşleşme — önce race_number (robust, snapshot'ın altılı tanımına
         # bağımsız), fallback altılı_no. Winner'ların yeni 'race_number' alanı eklendi (tjk_sehir).
