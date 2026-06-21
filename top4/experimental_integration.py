@@ -253,22 +253,48 @@ def build_shadow_coupons_from_pools(
     return out
 
 
+VIEW_DIGEST = "digest"
+VIEW_FULL = "full"
+ENV_VIEW = "TJK_TOP4_BERKAY_VIEW"
+
+
+def _view_mode() -> str:
+    import os
+    val = (os.environ.get(ENV_VIEW) or VIEW_DIGEST).strip().lower()
+    if val not in {VIEW_DIGEST, VIEW_FULL}:
+        return VIEW_DIGEST
+    return val
+
+
 def render_pool_shadow_messages(pools: Iterable[Mapping],
                                 cutoff: str = "latest",
                                 max_chars: int = 3500) -> list[str]:
-    """Telegram-safe messages, chunked. Returns one or more strings per
-    hippodrome (each under `max_chars`). Empty list if shadow flag is
-    off or nothing renders. Backwards-compatible wrapper around
-    `render_pool_shadow_messages_with_coupons`.
+    """Telegram-safe messages. By default uses the compact daily DIGEST
+    renderer (one message per hippodrome, grouped picks, no clutter).
+    Override with `TJK_TOP4_BERKAY_VIEW=full` for the legacy per-race
+    chunked format.
+
+    NEVER raises. Empty list if shadow flag is off or nothing renders.
     """
-    return [text for text, _coupons in
-            render_pool_shadow_messages_with_coupons(pools, cutoff, max_chars)]
+    if _view_mode() == VIEW_FULL:
+        return [text for text, _coupons in
+                render_pool_shadow_messages_with_coupons(pools, cutoff,
+                                                        max_chars)]
+    try:
+        from .digest_renderer import render_digest_messages
+        coupons_by_hippo = build_shadow_coupons_from_pools(pools,
+                                                           cutoff=cutoff)
+        return render_digest_messages(coupons_by_hippo)
+    except Exception as exc:
+        logger.warning("render_pool_shadow_messages(digest) failed: %s", exc)
+        return []
 
 
 def render_pool_shadow_messages_with_coupons(
     pools: Iterable[Mapping],
     cutoff: str = "latest",
     max_chars: int = 3500,
+    force_view: Optional[str] = None,
 ) -> list[tuple[str, list[dict]]]:
     """Like `render_pool_shadow_messages`, but also returns the list
     of coupon dicts that each rendered message contains. This is the
@@ -287,6 +313,29 @@ def render_pool_shadow_messages_with_coupons(
         from .experimental_coupon import DISCLAIMER
         if not is_shadow_enabled():
             return []
+        view = force_view or _view_mode()
+        if view == VIEW_DIGEST:
+            from .digest_renderer import render_hippo_digest
+            out: list[tuple[str, list[dict]]] = []
+            for pool in pools:
+                snaps = extract_race_snapshots_from_pool(pool)
+                if not snaps:
+                    continue
+                hippo = pool.get("hippo") or pool.get("hippodrome") or "?"
+                coupons: list[dict] = []
+                for snap in snaps:
+                    agf = _build_agf_snapshots(snap.get("horses") or [])
+                    coupons.append(
+                        build_berkay_scientific_top4_coupon(
+                            snap, agf_snapshot=agf, cutoff=cutoff,
+                        )
+                    )
+                if not coupons:
+                    continue
+                text = render_hippo_digest(hippo, coupons)
+                if text:
+                    out.append((text, coupons))
+            return out
         out: list[tuple[str, list[dict]]] = []
         for pool in pools:
             snaps = extract_race_snapshots_from_pool(pool)

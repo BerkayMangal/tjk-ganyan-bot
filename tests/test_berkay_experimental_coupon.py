@@ -409,12 +409,26 @@ class TestPoolAdapter(unittest.TestCase):
         try:
             msgs = render_pool_shadow_messages([self._mock_pool()])
             self.assertGreaterEqual(len(msgs), 1)
-            self.assertIn("BERKAY BİLİMSEL DENEME TOP4", msgs[0])
-            self.assertIn("Deneme", msgs[0])
+            # Default view is digest (hipodrom başına tek mesaj)
+            self.assertIn("İstanbul", msgs[0])
+            self.assertIn("deneme", msgs[0])
+            self.assertIn("Deneme", msgs[0])  # disclaimer
             self.assertLess(len(msgs[0]), 4096,
                             "Telegram message must fit in single send")
             self.assertEqual(has_forbidden_language(msgs[0]), [])
         finally:
+            _set_flags(None, None, None)
+
+    def test_render_pool_shadow_messages_full_view(self):
+        from top4.experimental_integration import render_pool_shadow_messages
+        _set_flags(shadow="1", telegram=None, log=None)
+        os.environ["TJK_TOP4_BERKAY_VIEW"] = "full"
+        try:
+            msgs = render_pool_shadow_messages([self._mock_pool()])
+            self.assertGreaterEqual(len(msgs), 1)
+            self.assertIn("BERKAY BİLİMSEL DENEME TOP4", msgs[0])
+        finally:
+            os.environ.pop("TJK_TOP4_BERKAY_VIEW", None)
             _set_flags(None, None, None)
 
 
