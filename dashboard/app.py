@@ -832,6 +832,44 @@ def send_yerli_telegram():
         return jsonify({"error": str(e)})
 
 
+@app.route("/berkay-deneme")
+def berkay_deneme_page():
+    """HTML dashboard for BERKAY DENEME — shadow + SiB picks + retro.
+
+    Berkay'ın talebi: Telegram'da kalabalık var, SiB picks'in
+    sonucunu göremiyorum. Tek sayfada bugünün picks + retro renkleri +
+    son 14 günün özeti.
+    """
+    return send_from_directory("templates", "berkay_deneme.html")
+
+
+@app.route("/api/berkay_deneme/today")
+def api_berkay_deneme_today():
+    """JSON payload powering the dashboard. NEVER raises into Flask."""
+    from flask import request as _req
+    date_str = _req.args.get("date") or None
+    try:
+        from top4.dashboard_api import build_today_view
+        return jsonify(build_today_view(date_str))
+    except Exception as exc:
+        return jsonify({"error": repr(exc)[:300]}), 500
+
+
+@app.route("/api/berkay_deneme/history")
+def api_berkay_deneme_history():
+    """Last N days summary table feed."""
+    from flask import request as _req
+    try:
+        days = int(_req.args.get("days") or 14)
+    except (TypeError, ValueError):
+        days = 14
+    try:
+        from top4.dashboard_api import build_history_view
+        return jsonify(build_history_view(days=days))
+    except Exception as exc:
+        return jsonify({"error": repr(exc)[:300]}), 500
+
+
 @app.route("/api/berkay_top4_shadow")
 def get_berkay_top4_shadow():
     """BERKAY BİLİMSEL DENEME TOP4 — shadow/experimental coupon view.

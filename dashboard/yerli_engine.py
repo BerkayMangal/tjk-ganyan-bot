@@ -6369,6 +6369,15 @@ def run_daily_recap(target_date_str=None, send_telegram=False):
             except Exception as _e_berkay_r:
                 logger.warning(f"[berkay-top4] retro attach failed: {_e_berkay_r}")
 
+            # SİB BUNU OYNA — attach results to logged picks so the
+            # dashboard can show "won / lost / pending" per pick.
+            try:
+                from top4.sib_log import attach_sib_results
+                _sib_status = attach_sib_results(target_date_str, raw_results)
+                logger.info(f"[sib_top4] retro attach: {_sib_status}")
+            except Exception as _e_sib_r:
+                logger.warning(f"[sib_top4] retro attach failed: {_e_sib_r}")
+
             # BERKAY DENEME RETRO — send a separate compact Telegram summary
             # AFTER the official V7 recap. Honors TJK_TOP4_BERKAY_RETRO_TELEGRAM
             # (default OFF). Never raises into the recap path.

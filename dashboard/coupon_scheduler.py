@@ -230,6 +230,12 @@ def _maybe_send_sib_top4(st, now, logger):
             return
         text = format_telegram_message(payload)
         tg = _svc().send_telegram(text)
+        # BERKAY DENEME — log SiB picks for retro & dashboard.
+        try:
+            from top4.sib_log import log_sib_picks
+            log_sib_picks(payload, telegram_sent=bool(tg))
+        except Exception as _e_lg:
+            _log(logger, f"[sib_top4] log skip: {repr(_e_lg)[:160]}")
         _log(logger, f"[sib_top4] BUNU OYNA gönderildi · ALTIN={payload['totals']['altin']} "
                      f"PREMIUM={payload['totals']['premium']} · TG={tg}")
         st['sib_top4_sent'] = True

@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🧪 BERKAY DENEME TOP4</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 sans-serif;
+    background: #0d1117;
+    color: #e6edf3;
+    margin: 0; padding: 16px;
+    line-height: 1.5;
+  }
+  header {
+    max-width: 1200px; margin: 0 auto 24px;
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 12px;
+  }
+  h1 {
+    font-size: 1.4em; margin: 0;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .badge {
+    background: #1f6feb; color: white;
+    padding: 2px 8px; border-radius: 12px; font-size: 0.75em;
+    font-weight: 600;
+  }
+  .disclaimer {
+    color: #8b949e; font-size: 0.8em; font-style: italic;
+  }
+  main { max-width: 1200px; margin: 0 auto; }
+  section {
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 8px; padding: 16px; margin-bottom: 20px;
+  }
+  section h2 {
+    font-size: 1.05em; margin: 0 0 12px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .count {
+    background: #21262d; color: #8b949e;
+    padding: 1px 8px; border-radius: 8px; font-size: 0.8em;
+    font-weight: 500;
+  }
+  table {
+    width: 100%; border-collapse: collapse; font-size: 0.88em;
+  }
+  th, td {
+    padding: 7px 8px; text-align: left;
+    border-bottom: 1px solid #21262d;
+  }
+  th {
+    background: #21262d; color: #8b949e;
+    font-weight: 600; font-size: 0.78em;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  tr.tier-diamond { background: rgba(255, 215, 0, 0.05); }
+  tr.tier-altin   { background: rgba(255, 165, 0, 0.05); }
+  tr.tier-premium { background: rgba(120, 180, 255, 0.05); }
+  tr.outcome-won  { background: rgba(86, 211, 100, 0.10); }
+  tr.outcome-lost { background: rgba(248, 81, 73, 0.06); }
+  tr.pending td.outcome-cell { color: #8b949e; }
+  .pill {
+    display: inline-block; padding: 1px 8px; border-radius: 10px;
+    font-size: 0.75em; font-weight: 600;
+  }
+  .pill-DIAMOND { background: #ffd700; color: #1c1c1c; }
+  .pill-ALTIN   { background: #f0883e; color: #1c1c1c; }
+  .pill-PREMIUM { background: #58a6ff; color: #1c1c1c; }
+  .pill-FIRSAT  { background: #a371f7; color: #1c1c1c; }
+  .pill-BANKER  { background: #56d364; color: #1c1c1c; }
+  .pill-CORE    { background: #58a6ff; color: white; }
+  .pill-SPREAD  { background: #d29922; color: #1c1c1c; }
+  .pill-CHAOS   { background: #db6d28; color: white; }
+  .pill-AVOID   { background: #f85149; color: white; }
+  .pill-NO_SIGNAL { background: #6e7681; color: white; }
+  .outcome-cell { text-align: center; min-width: 70px; }
+  .check { color: #56d364; font-weight: 700; font-size: 1.1em; }
+  .cross { color: #f85149; font-weight: 700; font-size: 1.1em; }
+  .dash  { color: #6e7681; }
+  .stats-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px; margin-bottom: 16px;
+  }
+  .stat-card {
+    background: #21262d; padding: 12px; border-radius: 6px;
+  }
+  .stat-card .label {
+    color: #8b949e; font-size: 0.75em;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .stat-card .value {
+    font-size: 1.4em; font-weight: 700; color: #e6edf3;
+    margin-top: 4px;
+  }
+  .stat-card .sub { color: #8b949e; font-size: 0.8em; }
+  .controls {
+    display: flex; gap: 8px; align-items: center;
+    flex-wrap: wrap; margin-bottom: 12px;
+  }
+  button {
+    background: #21262d; color: #e6edf3;
+    border: 1px solid #30363d; padding: 6px 12px;
+    border-radius: 6px; cursor: pointer; font-size: 0.85em;
+  }
+  button:hover { background: #30363d; }
+  input[type=date] {
+    background: #21262d; color: #e6edf3;
+    border: 1px solid #30363d; padding: 5px 8px;
+    border-radius: 6px; font-size: 0.85em;
+  }
+  .loading {
+    text-align: center; padding: 30px; color: #8b949e;
+    font-style: italic;
+  }
+  .horses-detail {
+    color: #8b949e; font-size: 0.85em;
+    margin-top: 4px;
+  }
+  .horses-detail .role-row {
+    display: inline-block; margin-right: 12px;
+  }
+  details { margin-top: 4px; }
+  details summary {
+    cursor: pointer; color: #58a6ff; font-size: 0.85em;
+  }
+  details[open] summary { margin-bottom: 4px; }
+  @media (max-width: 720px) {
+    body { padding: 8px; }
+    h1 { font-size: 1.15em; }
+    section { padding: 10px; }
+    th, td { padding: 5px 6px; font-size: 0.82em; }
+    .stat-card .value { font-size: 1.15em; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>🧪 BERKAY DENEME TOP4 <span class="badge">shadow</span></h1>
+    <div class="disclaimer">
+      Deneme / shadow kuponudur. Resmi bot kuponu değildir. Otomatik
+      bahis değildir.
+    </div>
+  </div>
+  <div class="controls">
+    <label for="date-picker" style="font-size:0.85em; color:#8b949e;">
+      Tarih:
+    </label>
+    <input type="date" id="date-picker">
+    <button id="refresh-btn">↻ Yenile</button>
+  </div>
+</header>
+
+<main>
+  <section id="sib-section">
+    <h2>
+      📊 SİB BUNU OYNA pick'leri
+      <span class="count" id="sib-count">…</span>
+    </h2>
+    <div id="sib-summary" class="stats-grid"></div>
+    <div id="sib-content">
+      <div class="loading">Yükleniyor…</div>
+    </div>
+  </section>
+
+  <section id="shadow-section">
+    <h2>
+      🧪 BERKAY DENEME shadow kuponları
+      <span class="count" id="shadow-count">…</span>
+    </h2>
+    <div id="shadow-summary" class="stats-grid"></div>
+    <div id="shadow-content">
+      <div class="loading">Yükleniyor…</div>
+    </div>
+  </section>
+
+  <section id="history-section">
+    <h2>
+      📈 Son 14 günün özeti
+      <span class="count" id="history-count">…</span>
+    </h2>
+    <div id="history-content">
+      <div class="loading">Yükleniyor…</div>
+    </div>
+  </section>
+</main>
+
+<script>
+// --- helpers --------------------------------------------------------------
+function $(id) { return document.getElementById(id); }
+function el(tag, props, ...children) {
+  const e = document.createElement(tag);
+  if (props) Object.assign(e, props);
+  for (const c of children) {
+    if (c == null) continue;
+    if (typeof c === "string") e.appendChild(document.createTextNode(c));
+    else e.appendChild(c);
+  }
+  return e;
+}
+function pct(num, den) {
+  if (!den || den <= 0) return "—";
+  return "%" + Math.round(100 * num / den);
+}
+function check(val) {
+  if (val === true) return el("span", { className: "check", textContent: "✓" });
+  if (val === false) return el("span", { className: "cross", textContent: "✗" });
+  return el("span", { className: "dash", textContent: "—" });
+}
+function statCard(label, value, sub) {
+  return el("div", { className: "stat-card" },
+    el("div", { className: "label", textContent: label }),
+    el("div", { className: "value", textContent: value }),
+    sub ? el("div", { className: "sub", textContent: sub }) : null,
+  );
+}
+
+// --- SiB rendering --------------------------------------------------------
+function renderSibSummary(summary, count) {
+  $("sib-count").textContent = count + " pick";
+  const grid = $("sib-summary");
+  grid.innerHTML = "";
+  if (!summary || !summary.picks_total) return;
+  const wr = summary.win_rate_by_tier || {};
+  const total = summary.by_tier_total || {};
+  const won = summary.by_tier_won || {};
+  for (const tier of ["DIAMOND", "ALTIN", "PREMIUM", "FIRSAT"]) {
+    const t = total[tier] || 0;
+    if (!t) continue;
+    const w = won[tier] || 0;
+    const r = wr[tier];
+    const rateLabel = r == null ? "bekleniyor" : (Math.round(r * 100) + "%");
+    grid.appendChild(statCard(
+      tier, w + "/" + t,
+      "kazanma oranı: " + rateLabel,
+    ));
+  }
+  if (summary.picks_pending) {
+    grid.appendChild(statCard(
+      "Bekleyen", summary.picks_pending, "sonuç gelmedi",
+    ));
+  }
+}
+
+function renderSibRows(rows) {
+  const box = $("sib-content");
+  box.innerHTML = "";
+  if (!rows || rows.length === 0) {
+    box.appendChild(el("div", {
+      className: "loading",
+      textContent: "Bugün SİB pick'i yok ya da henüz çekilmedi.",
+    }));
+    return;
+  }
+  const tbl = el("table");
+  const thead = el("thead");
+  thead.appendChild(el("tr", null,
+    el("th", { textContent: "Tier" }),
+    el("th", { textContent: "Hipodrom" }),
+    el("th", { textContent: "Ayak" }),
+    el("th", { textContent: "Saat" }),
+    el("th", { textContent: "At" }),
+    el("th", { textContent: "AGF" }),
+    el("th", { textContent: "MP" }),
+    el("th", { textContent: "Jokey" }),
+    el("th", { textContent: "Sonuç" }),
+  ));
+  tbl.appendChild(thead);
+  const tbody = el("tbody");
+  for (const r of rows) {
+    const tier = (r.tier || "").toUpperCase();
+    const won = r.outcome && r.outcome.won;
+    let trCls = "tier-" + tier.toLowerCase();
+    if (won === true) trCls += " outcome-won";
+    else if (won === false) trCls += " outcome-lost";
+    else trCls += " pending";
+    const winnerCell = r.outcome && r.outcome.winner_horse_no != null
+      ? " (kazanan: #" + r.outcome.winner_horse_no + ")" : "";
+    tbody.appendChild(el("tr", { className: trCls },
+      el("td", null, el("span", {
+        className: "pill pill-" + tier, textContent: tier,
+      })),
+      el("td", { textContent: r.hippo || "" }),
+      el("td", { textContent: r.race_no != null ? r.race_no + ". koşu" : "" }),
+      el("td", { textContent: r.race_time || "" }),
+      el("td", { textContent: "#" + r.horse_no + " " + (r.horse_name || "") }),
+      el("td", { textContent: r.agf != null ? "%" + r.agf : "" }),
+      el("td", { textContent: r.mp != null ? r.mp : "" }),
+      el("td", { textContent: r.jockey_name || "—" }),
+      el("td", { className: "outcome-cell",
+                 innerHTML: "" },
+        check(won),
+        winnerCell ? document.createTextNode(winnerCell) : null,
+      ),
+    ));
+  }
+  tbl.appendChild(tbody);
+  box.appendChild(tbl);
+}
+
+// --- Shadow rendering -----------------------------------------------------
+function renderShadowSummary(summary, count) {
+  $("shadow-count").textContent = count + " yarış";
+  const grid = $("shadow-summary");
+  grid.innerHTML = "";
+  if (!summary || !summary.predictions) return;
+  const p = summary.predictions || 0;
+  const r = summary.results || 0;
+  grid.appendChild(statCard("Tahmin / Sonuç", r + "/" + p,
+    p && r === p ? "eksik yok" : (p - r) + " bekliyor"));
+  grid.appendChild(statCard("Ana at hayatta",
+    (summary.banker_survived_count || 0) + "/" + r,
+    pct(summary.banker_survived_count || 0, r)));
+  grid.appendChild(statCard("Aday top-4 tuttu",
+    (summary.candidate_set_full_top4_capture || 0) + "/" + r,
+    pct(summary.candidate_set_full_top4_capture || 0, r)));
+  grid.appendChild(statCard("Small hit",
+    (summary.small_ticket_hit_count || 0) + "/" + r,
+    pct(summary.small_ticket_hit_count || 0, r)));
+  grid.appendChild(statCard("Balanced hit",
+    (summary.balanced_ticket_hit_count || 0) + "/" + r,
+    pct(summary.balanced_ticket_hit_count || 0, r)));
+  grid.appendChild(statCard("Wide hit",
+    (summary.wide_ticket_hit_count || 0) + "/" + r,
+    pct(summary.wide_ticket_hit_count || 0, r)));
+  if (summary.no_bet_count) {
+    grid.appendChild(statCard("PAS verdik",
+      summary.no_bet_count, pct(summary.no_bet_count, p) + " (toplam)"));
+  }
+  if (summary.agf_drift_signal_total) {
+    grid.appendChild(statCard("AGF drift hit",
+      (summary.agf_drift_signal_correct || 0) + "/" + summary.agf_drift_signal_total,
+      pct(summary.agf_drift_signal_correct || 0, summary.agf_drift_signal_total)));
+  }
+}
+
+function renderShadowRows(rows) {
+  const box = $("shadow-content");
+  box.innerHTML = "";
+  if (!rows || rows.length === 0) {
+    box.appendChild(el("div", {
+      className: "loading",
+      textContent: "Bugün shadow tahmini yok.",
+    }));
+    return;
+  }
+  const tbl = el("table");
+  const thead = el("thead");
+  thead.appendChild(el("tr", null,
+    el("th", { textContent: "Hipodrom · Ayak" }),
+    el("th", { textContent: "Saat" }),
+    el("th", { textContent: "Field" }),
+    el("th", { textContent: "Güven · Mod" }),
+    el("th", { textContent: "Roller" }),
+    el("th", { textContent: "Banker" }),
+    el("th", { textContent: "Aday" }),
+    el("th", { textContent: "S/B/W" }),
+  ));
+  tbl.appendChild(thead);
+  const tbody = el("tbody");
+  for (const r of rows) {
+    const o = r.outcome || {};
+    let trCls = "";
+    if (o.candidate_hit) trCls = "outcome-won";
+    else if (o.status === "graded" && !o.candidate_hit) trCls = "outcome-lost";
+    else trCls = "pending";
+    const rolesPills = [];
+    for (const h of (r.horses || [])) {
+      if (!h.role || h.role === "NO_SIGNAL") continue;
+      rolesPills.push(el("span", {
+        className: "pill pill-" + h.role,
+        title: "#" + h.horse_no + " " + (h.horse_name || ""),
+        textContent: "#" + h.horse_no,
+        style: "margin-right:3px; margin-bottom:2px;",
+      }));
+    }
+    const bankerCell = (r.bankers && r.bankers.length)
+      ? r.bankers.map(n => "#" + n).join(", ") : "—";
+    const cands = (r.candidate_set || []).map(n => "#" + n).join(", ");
+    const sbw = [
+      check(o.small_hit), document.createTextNode(" "),
+      check(o.balanced_hit), document.createTextNode(" "),
+      check(o.wide_hit),
+    ];
+    tbody.appendChild(el("tr", { className: trCls },
+      el("td", { textContent: (r.hippodrome || "") + " · " +
+                   (r.race_label ? r.race_label.replace(/^.*?(\d+)/, "$1") + ".k" : "") }),
+      el("td", { textContent: r.race_time || "" }),
+      el("td", { textContent: r.field_size || "" }),
+      el("td", { textContent: (r.confidence || "?") + " · " + (r.recommended_mode || "?") }),
+      el("td", null, ...rolesPills),
+      el("td", { textContent: bankerCell }),
+      el("td", { textContent: cands || "—",
+                 style: "max-width:180px; font-size:0.82em;" }),
+      el("td", { className: "outcome-cell" }, ...sbw),
+    ));
+  }
+  tbl.appendChild(tbody);
+  box.appendChild(tbl);
+}
+
+// --- History rendering ----------------------------------------------------
+function renderHistory(data) {
+  const box = $("history-content");
+  box.innerHTML = "";
+  $("history-count").textContent = data.days_present + " gün";
+  if (!data.rows || data.rows.length === 0) {
+    box.appendChild(el("div", {
+      className: "loading",
+      textContent: "Henüz tarihsel veri yok.",
+    }));
+    return;
+  }
+  const tbl = el("table");
+  const thead = el("thead");
+  thead.appendChild(el("tr", null,
+    el("th", { textContent: "Tarih" }),
+    el("th", { textContent: "Shadow tahmin/sonuç" }),
+    el("th", { textContent: "Banker hayatta" }),
+    el("th", { textContent: "Aday top-4" }),
+    el("th", { textContent: "Wide hit" }),
+    el("th", { textContent: "SİB pick/win" }),
+    el("th", { textContent: "PAS" }),
+  ));
+  tbl.appendChild(thead);
+  const tbody = el("tbody");
+  for (const r of data.rows) {
+    const s = r.shadow || {}, si = r.sib || {};
+    const sibWonTotal = Object.values(si.by_tier_won || {})
+      .reduce((a, b) => a + b, 0);
+    tbody.appendChild(el("tr", null,
+      el("td", { textContent: r.date }),
+      el("td", { textContent: (s.predictions || 0) + " / " + (s.results || 0) }),
+      el("td", { textContent: (s.banker_survived || 0) + " ("
+                 + pct(s.banker_survived, s.results) + ")" }),
+      el("td", { textContent: (s.candidate_hit || 0) + " ("
+                 + pct(s.candidate_hit, s.results) + ")" }),
+      el("td", { textContent: (s.wide_hit || 0) + " ("
+                 + pct(s.wide_hit, s.results) + ")" }),
+      el("td", { textContent: (si.picks || 0) + " / " + sibWonTotal }),
+      el("td", { textContent: s.no_bet || 0 }),
+    ));
+  }
+  tbl.appendChild(tbody);
+  box.appendChild(tbl);
+}
+
+// --- fetcher --------------------------------------------------------------
+async function load(dateStr) {
+  try {
+    const url = dateStr
+      ? "/api/berkay_deneme/today?date=" + encodeURIComponent(dateStr)
+      : "/api/berkay_deneme/today";
+    const r = await fetch(url);
+    const data = await r.json();
+    renderSibSummary(data.sib && data.sib.summary, data.sib && data.sib.count || 0);
+    renderSibRows(data.sib && data.sib.rows || []);
+    renderShadowSummary(data.shadow && data.shadow.summary,
+                        data.shadow && data.shadow.count || 0);
+    renderShadowRows(data.shadow && data.shadow.rows || []);
+  } catch (e) {
+    $("sib-content").innerHTML =
+      '<div class="loading">Yüklenemedi: ' + e + '</div>';
+    $("shadow-content").innerHTML =
+      '<div class="loading">Yüklenemedi: ' + e + '</div>';
+  }
+  try {
+    const r = await fetch("/api/berkay_deneme/history?days=14");
+    const data = await r.json();
+    renderHistory(data);
+  } catch (e) {
+    $("history-content").innerHTML =
+      '<div class="loading">Geçmiş yüklenemedi: ' + e + '</div>';
+  }
+}
+
+document.addEventListener("DOMContentLoaded", function () {
+  const today = new Date().toISOString().slice(0, 10);
+  $("date-picker").value = today;
+  $("date-picker").addEventListener("change", function () {
+    load(this.value);
+  });
+  $("refresh-btn").addEventListener("click", function () {
+    load($("date-picker").value);
+  });
+  load(today);
+});
+</script>
+</body>
+</html>
