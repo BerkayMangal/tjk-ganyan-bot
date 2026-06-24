@@ -234,17 +234,10 @@ def build_today_view(date_str: Optional[str] = None) -> dict:
         logger.debug("sib_log read: %s", exc)
         sib_picks, sib_results = [], []
 
-    # Live SiB fallback: if today's picks are empty AND we're looking
-    # at "today", try fetching them on-demand (cached). This solves
-    # the case where the morning scheduler ran BEFORE the forward-log
-    # env var was set, so picks were sent to Telegram but never logged.
-    if not sib_picks and date_str == _today_str():
-        try:
-            stat = refresh_sib_today(date_str)
-            if stat.get("status") in ("fresh", "cached"):
-                sib_picks = sib_log.read_picks(date_str)
-        except Exception as exc:
-            logger.debug("live sib fallback: %s", exc)
+    # NOTE (2026-06-24): live SiB fallback was removed from the
+    # default GET path — it took 30+ seconds per render and locked
+    # the page on "Yükleniyor…". User must now press the "↻ SİB
+    # picks'i yeniden çek" button which calls /refresh_sib explicitly.
     sib_res_by_key = {r.get("pick_key"): r for r in sib_results
                       if r.get("pick_key")}
     sib_rows: list[dict] = []
