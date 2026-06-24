@@ -229,8 +229,22 @@
       📊 SİB BUNU OYNA pick'leri
       <span class="count" id="sib-count">…</span>
     </h2>
+    <div style="margin-bottom: 10px;">
+      <button id="sib-refresh-btn" title="Bugünkü SİB picks'leri yeniden çek (env eklenmeden önce gönderilenler için)">↻ SİB picks'i yeniden çek (~30s)</button>
+      <span id="sib-refresh-status" style="margin-left: 10px; font-size: 0.85em; color: #8b949e;"></span>
+    </div>
     <div id="sib-summary" class="stats-grid"></div>
     <div id="sib-content">
+      <div class="loading">Yükleniyor…</div>
+    </div>
+  </section>
+
+  <section id="tg-section">
+    <h2>
+      📨 Telegram'a giden mesajlar
+      <span class="count" id="tg-count">…</span>
+    </h2>
+    <div id="tg-content">
       <div class="loading">Yükleniyor…</div>
     </div>
   </section>
@@ -481,6 +495,52 @@ function renderShadowRows(rows) {
   box.appendChild(tbl);
 }
 
+// --- Telegram messages rendering ------------------------------------------
+function renderTelegramMessages(msgs) {
+  const box = $("tg-content");
+  box.innerHTML = "";
+  $("tg-count").textContent = (msgs ? msgs.length : 0) + " mesaj";
+  if (!msgs || msgs.length === 0) {
+    box.appendChild(el("div", {
+      className: "empty-state",
+      textContent: "Henüz Telegram'a giden mesaj kaydı yok " +
+                   "(pipeline çalışınca dolar).",
+    }));
+    return;
+  }
+  const _categoryColor = {
+    "V5.1 KUPON": "#58a6ff",
+    "SİB BUNU OYNA": "#f0883e",
+    "BERKAY DENEME": "#a371f7",
+    "RETRO": "#56d364",
+    "GÜNLÜK": "#d29922",
+  };
+  for (const m of msgs) {
+    const card = el("div", { className: "hippo-card" });
+    const head = el("div", { className: "hippo-head" },
+      el("div", { className: "hippo-title" },
+        el("span", { className: "chevron", textContent: "▶" }),
+        el("span", {
+          className: "pill",
+          style: "background:" + (_categoryColor[m.category] || "#30363d")
+                 + "; color:white; margin-right:8px;",
+          textContent: m.category || "MSG",
+        }),
+        document.createTextNode(" " + (m.title || "")),
+      ),
+    );
+    head.addEventListener("click", () => card.classList.toggle("open"));
+    card.appendChild(head);
+    const body = el("div", { className: "hippo-body" });
+    const pre = el("pre", { className: "coupon-text" });
+    // Strip HTML for plain readability
+    pre.textContent = (m.text || "").replace(/<[^>]+>/g, "");
+    body.appendChild(pre);
+    card.appendChild(body);
+    box.appendChild(card);
+  }
+}
+
 // --- Model outputs rendering (all hippos + races + horses + coupon text) --
 function fmtPct(v) {
   if (v == null) return "—";
@@ -531,19 +591,21 @@ function renderHippoCard(hippo) {
   // Race_legs has rich data (model_prob, tier_mark); agf_snapshot only AGF.
   const legSource = hippo.race_legs || hippo.agf_snapshot || [];
   const hasModel = (hippo.race_legs && hippo.race_legs.length > 0);
+  let legIdx = 0;
   for (const legGroup of legSource) {
+    legIdx++;
     let legNo, raceNo, time, horses;
     if (Array.isArray(legGroup)) {
       // race_legs: list of leg arrays (per-horse dicts)
       if (!legGroup.length) continue;
       const h0 = legGroup[0];
-      legNo = h0.leg_no || h0.leg_number;
+      legNo = h0.leg_no || h0.leg_number || h0.ayak || legIdx;
       raceNo = h0.race_number;
       time = (h0.start_time || "").substring(0, 5);
       horses = legGroup;
     } else {
       // agf_snapshot: dict with horses list
-      legNo = legGroup.leg_no;
+      legNo = legGroup.leg_no || legIdx;
       raceNo = legGroup.race_no;
       time = legGroup.time;
       horses = legGroup.horses || [];
@@ -690,7 +752,7 @@ function renderHistory(data) {
 
 // --- fetcher --------------------------------------------------------------
 async function load(dateStr) {
-  // SiB + shadow (Berkay deneme endpoint)
+  // SiB + shadow + telegram messages (Berkay deneme endpoint)
   try {
     const url = dateStr
       ? "/api/berkay_deneme/today?date=" + encodeURIComponent(dateStr)
@@ -702,10 +764,13 @@ async function load(dateStr) {
     renderShadowSummary(data.shadow && data.shadow.summary,
                         data.shadow && data.shadow.count || 0);
     renderShadowRows(data.shadow && data.shadow.rows || []);
+    renderTelegramMessages(data.telegram_messages || []);
   } catch (e) {
     $("sib-content").innerHTML =
       '<div class="loading">Yüklenemedi: ' + e + '</div>';
     $("shadow-content").innerHTML =
+      '<div class="loading">Yüklenemedi: ' + e + '</div>';
+    $("tg-content").innerHTML =
       '<div class="loading">Yüklenemedi: ' + e + '</div>';
   }
 
@@ -731,6 +796,42 @@ async function load(dateStr) {
   }
 }
 
+async function refreshSib(force) {
+  const status = $("sib-refresh-status");
+  const btn = $("sib-refresh-btn");
+  btn.disabled = true;
+  status.textContent = "Yenileniyor (30s kadar sürebilir)…";
+  status.style.color = "#d29922";
+  try {
+    const url = "/api/berkay_deneme/refresh_sib"
+                + (force ? "?force=1" : "");
+    const r = await fetch(url, { method: "POST" });
+    const data = await r.json();
+    if (data.status === "fresh") {
+      const totals = (data.diamond || 0) + (data.altin || 0)
+                     + (data.premium || 0) + (data.firsat || 0);
+      status.textContent = "✓ Bitti — " + totals + " pick eklendi";
+      status.style.color = "#56d364";
+      // Reload main view
+      load($("date-picker").value);
+    } else if (data.status === "cached") {
+      status.textContent = "Cache'den geldi (zorla yenilemek için tıkla)";
+      status.style.color = "#8b949e";
+    } else if (data.status === "empty") {
+      status.textContent = "Bugün için pick bulunamadı";
+      status.style.color = "#8b949e";
+    } else {
+      status.textContent = "Hata: " + (data.reason || data.status);
+      status.style.color = "#f85149";
+    }
+  } catch (e) {
+    status.textContent = "Hata: " + e;
+    status.style.color = "#f85149";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 document.addEventListener("DOMContentLoaded", function () {
   const today = new Date().toISOString().slice(0, 10);
   $("date-picker").value = today;
@@ -739,6 +840,9 @@ document.addEventListener("DOMContentLoaded", function () {
   });
   $("refresh-btn").addEventListener("click", function () {
     load($("date-picker").value);
+  });
+  $("sib-refresh-btn").addEventListener("click", function () {
+    refreshSib(true);
   });
   load(today);
 });

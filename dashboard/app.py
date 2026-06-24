@@ -870,6 +870,23 @@ def api_berkay_deneme_history():
         return jsonify({"error": repr(exc)[:300]}), 500
 
 
+@app.route("/api/berkay_deneme/refresh_sib", methods=["GET", "POST"])
+def api_berkay_deneme_refresh_sib():
+    """Live-fetch today's SiB picks and persist them.
+
+    Called when the dashboard sees an empty SiB list — picks may have
+    been sent to Telegram before the forward log env was set.
+    """
+    from flask import request as _req
+    date_str = _req.args.get("date") or None
+    force = (_req.args.get("force") or "").lower() in ("1", "true", "yes")
+    try:
+        from top4.dashboard_api import refresh_sib_today
+        return jsonify(refresh_sib_today(date_str, force=force))
+    except Exception as exc:
+        return jsonify({"status": "error", "reason": repr(exc)[:300]}), 500
+
+
 @app.route("/api/berkay_top4_shadow")
 def get_berkay_top4_shadow():
     """BERKAY BİLİMSEL DENEME TOP4 — shadow/experimental coupon view.
