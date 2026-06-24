@@ -6543,29 +6543,40 @@ def send_telegram_simple(results_dict):
             is_shadow_enabled, is_telegram_enabled,
         )
         if is_shadow_enabled() and is_telegram_enabled():
-            # Wrap yerli results into pool-like adapter so we can use
-            # the with_coupons renderer and track per-chunk coupons.
+            # FIX (2026-06-24): group snapshots by REAL hippodrome.
+            # The previous fake_pool with 'hippo': 'YERLI' caused every
+            # shadow log row to carry hippodrome="YERLI" — dashboard
+            # cards all collapsed into one fake group.
             snaps = extract_race_snapshots(results_dict)
             if snaps:
-                fake_pool = {
-                    'hippo': 'YERLI',
-                    'status': 'ok',
-                    'race_legs': [[
-                        {
-                            'horse_number': h.get('horse_no'),
-                            'horse_name': h.get('horse_name'),
-                            'agf_value': h.get('agf'),
-                            'model_prob': h.get('mp'),
-                            'race_number': i + 1,
-                            'start_time': s.get('race_time') or '',
-                            'breed': h.get('breed') or '',
-                            'tier_mark': h.get('tier') or '',
-                        }
-                        for h in s.get('horses') or []
-                    ] for i, s in enumerate(snaps)],
-                }
+                from collections import defaultdict as _defaultdict
+                by_hippo = _defaultdict(list)
+                for s in snaps:
+                    by_hippo[s.get('hippodrome') or '?'].append(s)
+                pools = []
+                for hippo_name, hippo_snaps in by_hippo.items():
+                    pools.append({
+                        'hippo': hippo_name,
+                        'status': 'ok',
+                        'race_legs': [[
+                            {
+                                'horse_number': h.get('horse_no'),
+                                'horse_name': h.get('horse_name'),
+                                'agf_value': h.get('agf'),
+                                'model_prob': h.get('mp'),
+                                'race_number': (s.get('race_label', '')
+                                                .replace('. koşu', '')
+                                                .rsplit(' ', 1)[-1]
+                                                if s.get('race_label') else i + 1),
+                                'start_time': s.get('race_time') or '',
+                                'breed': h.get('breed') or '',
+                                'tier_mark': h.get('tier') or '',
+                            }
+                            for h in s.get('horses') or []
+                        ] for i, s in enumerate(hippo_snaps)],
+                    })
                 _berkay_shadow_blocks = render_pool_shadow_messages_with_coupons(
-                    [fake_pool],
+                    pools,
                 )
                 for text, _coupons in _berkay_shadow_blocks:
                     if text:
