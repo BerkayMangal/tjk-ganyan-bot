@@ -447,3 +447,64 @@ class TestProductionUnchangedWhenFlagsOff(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLegsSummaryShape(unittest.TestCase):
+    """REGRESSION (bug found in prod 2026-06-24): yerli_engine returns
+    `legs_summary` not `altili`/`legs`/`races`. extract_race_snapshots
+    was returning [] for the real yerli payload."""
+
+    def test_extracts_from_legs_summary(self):
+        from top4.experimental_integration import extract_race_snapshots
+        results = {
+            "hippodromes": [{
+                "hippodrome": "İstanbul",
+                "altili_no": 1,
+                "legs_summary": [{
+                    "race_number": 1,
+                    "ayak": 1,
+                    "all_horses_with_mp": [
+                        {"number": 1, "name": "ATIM",
+                         "agf_pct": 35.0, "model_prob": 0.46},
+                        {"number": 2, "name": "RUZGAR",
+                         "agf_pct": 18.0, "model_prob": 0.30},
+                        {"number": 3, "name": "YILDIZ",
+                         "agf_pct": 8.0, "model_prob": 0.20},
+                        {"number": 4, "name": "ORAL",
+                         "agf_pct": 5.0, "model_prob": 0.04},
+                    ],
+                }],
+            }],
+        }
+        snaps = extract_race_snapshots(results)
+        self.assertEqual(len(snaps), 1, f"expected 1 snapshot, got {snaps}")
+        s0 = snaps[0]
+        self.assertEqual(s0["hippodrome"], "İstanbul")
+        self.assertEqual(s0["altili_no"], 1)
+        self.assertEqual(len(s0["horses"]), 4)
+        h0 = s0["horses"][0]
+        self.assertEqual(h0["horse_no"], 1)
+        self.assertEqual(h0["horse_name"], "ATIM")
+        self.assertAlmostEqual(h0["mp"], 0.46, places=2)
+        self.assertEqual(h0["agf"], 35.0)
+
+    def test_mp_pct_scale_detected(self):
+        """If model_prob is in 0..100 (legacy format), auto-rescale to 0..1."""
+        from top4.experimental_integration import extract_race_snapshots
+        results = {
+            "hippodromes": [{
+                "hippodrome": "Bursa",
+                "legs_summary": [{
+                    "race_number": 5,
+                    "all_horses_with_mp": [
+                        {"number": 1, "name": "A",
+                         "agf_pct": 40.0, "model_prob": 46.0},  # 0..100
+                        {"number": 2, "name": "B",
+                         "agf_pct": 25.0, "model_prob": 30.0},
+                    ],
+                }],
+            }],
+        }
+        snaps = extract_race_snapshots(results)
+        self.assertEqual(len(snaps), 1)
+        self.assertAlmostEqual(snaps[0]["horses"][0]["mp"], 0.46, places=2)

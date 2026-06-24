@@ -86,10 +86,19 @@ def extract_race_snapshots(results_dict: Mapping) -> list[dict]:
     """Normalize whatever shape the yerli_engine results carry into a
     list of race snapshots compatible with the experimental builder.
 
-    Accepted shapes (best-effort):
-      - results_dict['hippodromes'] -> list of dicts with 'tracks' or
-        'altili' or 'legs' or direct 'horses'
+    Accepted shapes (best-effort, all fields tried in priority order):
+      - results_dict['hippodromes'] -> list of dicts with one of:
+        * `legs_summary` (REAL yerli_engine shape — each leg has
+          `all_horses_with_mp` with keys {number, name, agf_pct,
+          model_prob})
+        * `altili` / `legs` / `races` with `horses` / `at_list`
       - results_dict['races'] -> direct race list
+
+    Horse field aliases tried in priority:
+      horse_no   ← horse_no | no | horse_number | number
+      horse_name ← horse_name | name
+      mp         ← mp | model_prob (and rescaled from 0..100 if needed)
+      agf        ← agf | agf_now | agf_value | agf_pct | pct
 
     Always returns a list (possibly empty). Never raises.
     """
@@ -99,34 +108,65 @@ def extract_race_snapshots(results_dict: Mapping) -> list[dict]:
         for hp in hippos:
             hippo_name = (hp.get("hippodrome") or hp.get("name")
                           or hp.get("track") or "")
-            altililer = (hp.get("altili") or hp.get("legs")
-                         or hp.get("races") or [])
+            altili_no = hp.get("altili_no") or 1
+            # 1) yerli_engine REAL shape: legs_summary
+            # 2) fallback: altili / legs / races
+            altililer = (hp.get("legs_summary") or hp.get("altili")
+                         or hp.get("legs") or hp.get("races") or [])
             for race in altililer:
-                horses = (race.get("horses") or race.get("at_list") or [])
+                horses = (race.get("all_horses_with_mp")
+                          or race.get("horses")
+                          or race.get("at_list") or [])
                 if not horses:
                     continue
                 normalized = []
+                # detect whether model_prob is already 0..1 or 0..100
+                _mp_vals = [h.get("model_prob") for h in horses
+                            if h.get("model_prob") is not None]
+                _mp_max = max(_mp_vals) if _mp_vals else 0
+                _mp_scale = 0.01 if _mp_max > 1.5 else 1.0
                 for h in horses:
+                    mp_raw = (h.get("mp")
+                              if h.get("mp") is not None
+                              else h.get("model_prob"))
+                    if mp_raw is not None:
+                        try:
+                            mp_v = float(mp_raw) * _mp_scale
+                        except (TypeError, ValueError):
+                            mp_v = 0.0
+                    else:
+                        mp_v = 0.0
                     normalized.append({
-                        "horse_no": h.get("horse_no") or h.get("no")
-                                    or h.get("horse_number"),
-                        "horse_name": h.get("horse_name") or h.get("name") or "?",
-                        "mp": h.get("mp") or h.get("model_prob") or 0.0,
-                        "agf": h.get("agf") or h.get("agf_now") or h.get("pct"),
+                        "horse_no": (h.get("horse_no") or h.get("no")
+                                     or h.get("horse_number")
+                                     or h.get("number")),
+                        "horse_name": (h.get("horse_name") or h.get("name")
+                                       or "?"),
+                        "mp": mp_v,
+                        "agf": (h.get("agf") if h.get("agf") is not None
+                                else h.get("agf_now") if h.get("agf_now") is not None
+                                else h.get("agf_value") if h.get("agf_value") is not None
+                                else h.get("agf_pct") if h.get("agf_pct") is not None
+                                else h.get("pct")),
                         "agf_open": h.get("agf_open") or h.get("agf_morning"),
-                        "tier": h.get("tier") or "",
+                        "tier": (h.get("tier") or h.get("tier_mark") or ""),
                         "breed": h.get("breed") or race.get("breed") or "",
                     })
+                race_no = (race.get("race_number") or race.get("race_no")
+                           or race.get("ayak"))
                 out.append({
                     "race_label": (race.get("race_label")
-                                   or f"{hippo_name} {race.get('race_no')}"),
+                                   or f"{hippo_name} {race_no}. koşu"),
                     "race_id": (str(race.get("race_id"))
                                 if race.get("race_id") is not None
-                                else f"{hippo_name}_{race.get('race_no')}"),
+                                else f"{hippo_name}_{race_no}"),
                     "race_time": (race.get("time") or race.get("race_time")
-                                  or race.get("first_time") or ""),
+                                  or race.get("first_time")
+                                  or race.get("start_time") or ""),
                     "hippodrome": hippo_name,
-                    "race_class": race.get("race_class") or "",
+                    "altili_no": altili_no,
+                    "race_class": (race.get("race_class")
+                                   or race.get("group_name") or ""),
                     "horses": normalized,
                 })
         # Fallback to flat 'races'
