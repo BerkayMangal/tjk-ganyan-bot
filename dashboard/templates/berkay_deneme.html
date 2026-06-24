@@ -215,13 +215,26 @@
   </div>
 </div>
 
-<!-- MAIN PICKS TABLE -->
+<!-- EXPLAINER -->
+<div style="background:#1f2630; border:1px solid #30363d; border-radius:8px;
+            padding:10px 12px; margin-bottom:14px; font-size:0.84em;
+            color:#c9d1d9;">
+  <strong>Nasıl okunacak:</strong>
+  Her satır = 1 yarış. Sistemin tahmini: bu atların TJK ALTILI'da
+  <em>üst 4'e (İLK-4)</em> girme olasılığı yüksek.
+  <span style="color:#56d364;">⭐ Ana At</span> = model + halk uyumlu en güvenli aday.
+  <span style="color:#58a6ff;">💎 Değer</span> = model halktan daha güçlü görüyor.
+  <span style="color:#f85149;">⚠ Tuzak</span> = halk yüksek tutmuş, model zayıf.
+  <span style="color:#8b949e;">🛑 PAS</span> = belirsizlik yüksek, sistem öneri yapmıyor.
+</div>
+
+<!-- RACES TABLE (1 row per race) -->
 <div class="section">
   <h2>
-    🎯 Bugünkü Picks
+    🏇 Bugünkü Yarışlar
     <span id="picks-result">…</span>
   </h2>
-  <div class="body" id="picks-body">
+  <div class="body" id="races-body">
     <div class="empty loading">Yükleniyor</div>
   </div>
 </div>
@@ -343,84 +356,129 @@ function renderStats(s) {
   }
 }
 
-function renderPicks(picks) {
-  const body = $("picks-body");
+function renderRaces(races) {
+  const body = $("races-body");
   body.innerHTML = "";
-  if (!picks || picks.length === 0) {
+  if (!races || races.length === 0) {
     body.appendChild(el("div", {
       className: "empty",
-      textContent: "Bugün için pick yok ya da pipeline henüz çalışmadı.",
+      textContent: "Bugün için yarış yok ya da pipeline henüz çalışmadı.",
     }));
     return;
   }
   const tbl = el("table", { className: "picks-table" });
   const thead = el("thead");
   thead.appendChild(el("tr", null,
-    el("th", { textContent: "" }),  // icon
     el("th", { textContent: "Yarış" }),
-    el("th", { textContent: "At" }),
-    el("th", { textContent: "AGF" }),
-    el("th", { textContent: "Sebep" }),
-    el("th", { textContent: "Sonuç", style: "text-align:center;" }),
+    el("th", { textContent: "Öneri" }),
+    el("th", { textContent: "Adaylar" }),
+    el("th", { style: "text-align:center;", textContent: "Sonuç" }),
   ));
   tbl.appendChild(thead);
   const tbody = el("tbody");
-  for (const p of picks) {
-    const won = (p.outcome || {}).won;
+  for (const race of races) {
+    const out = race.outcome || {};
     let trCls = "";
-    if (won === true) trCls = "won";
-    else if (won === false) trCls = "lost";
-
-    const horseCell = p.horse_no == null
-      ? el("td", null, el("span", { className: "pick-meta", textContent: "—" }))
-      : el("td", null,
-          el("div", { className: "pick-horse",
-            textContent: "#" + p.horse_no + " " + (p.horse_name || "?") }),
-          p.tier
-            ? el("span", {
-                className: "tier-badge tier-" + p.tier,
-                textContent: p.tier,
-              })
-            : null,
-        );
+    const ourWin = (out.our_winners || []).length;
+    if (out.status === "graded") {
+      trCls = ourWin > 0 ? "won" : "lost";
+    }
 
     const raceCell = el("td", null,
-      el("div", { textContent: (p.race_time || "") }),
+      el("div", { style: "font-weight:600;",
+        textContent: (race.race_time || "") }),
       el("div", { className: "pick-meta",
-        textContent: (p.hippo || "?") + " " + (p.race_no || "?") + ".k" }),
+        textContent: (race.hippo || "?") + " " + (race.race_no || "?")
+                     + ".k · " + (race.field_size || "?") + " at" }),
     );
 
+    let suggestCell;
+    if (race.mode === "NO_BET") {
+      suggestCell = el("td", null,
+        el("span", { style: "color:#8b949e;",
+          textContent: race.headline || "🛑 PAS" }),
+      );
+    } else {
+      suggestCell = el("td", null,
+        el("span", { style: "font-weight:600;",
+          textContent: race.headline || "" }),
+      );
+    }
+
+    // Candidates cell — chip list (banker, value, etc.)
+    const candCell = el("td", null);
+    if (race.mode === "NO_BET") {
+      candCell.appendChild(el("span", { className: "pick-meta",
+        textContent: "—" }));
+    } else {
+      for (const p of (race.main_picks || [])) {
+        const colors = {
+          banker: "#56d364", value: "#58a6ff",
+          chaos: "#d29922", avoid: "#f85149",
+        };
+        const c = colors[p.kind] || "#8b949e";
+        const wonMark = p.won === true ? " ✓" : (p.won === false ? " ✗" : "");
+        const chip = el("span", {
+          style: "display:inline-block; background:#0a0e13; "
+                 + "border:1px solid " + c + "; "
+                 + "color:" + c + "; padding:2px 7px; "
+                 + "border-radius:12px; margin:2px 3px 2px 0; "
+                 + "font-size:0.82em; font-weight:600;",
+          textContent: (p.label ? p.label.split(" ")[0] : "")
+                       + " #" + p.horse_no + " " + (p.horse_name || "?")
+                       + (p.agf != null
+                          ? " (%" + Math.round(p.agf) + ")" : "")
+                       + (p.detail ? " · " + p.detail : "")
+                       + wonMark,
+        });
+        candCell.appendChild(chip);
+      }
+      for (const p of (race.other_picks || [])) {
+        const c = p.kind === "avoid" ? "#f85149" : "#8b949e";
+        const wonMark = p.won === true ? " ✓" : (p.won === false ? " ✗" : "");
+        const chip = el("span", {
+          style: "display:inline-block; background:transparent; "
+                 + "border:1px solid " + c + "; "
+                 + "color:" + c + "; padding:1px 6px; "
+                 + "border-radius:10px; margin:2px 3px 2px 0; "
+                 + "font-size:0.74em;",
+          textContent: (p.label ? p.label.split(" ")[0] : "")
+                       + " #" + p.horse_no + wonMark,
+        });
+        candCell.appendChild(chip);
+      }
+    }
+
+    // Outcome
     let outcomeCell;
-    if (p.kind === "no_bet") {
-      outcomeCell = el("td", { className: "pick-outcome pending",
-        textContent: "—" });
-    } else if (won === true) {
-      outcomeCell = el("td", { className: "pick-outcome won",
-        textContent: "✓" });
-    } else if (won === false) {
-      outcomeCell = el("td", { className: "pick-outcome lost",
-        textContent: "✗" });
+    if (out.status === "graded") {
+      if (out.winner_horse_no != null) {
+        const ourWinTxt = ourWin > 0 ? "✓ " + ourWin : "✗";
+        const winColor = ourWin > 0 ? "#56d364" : "#f85149";
+        outcomeCell = el("td", { className: "pick-outcome",
+          style: "color:" + winColor + ";",
+          textContent: ourWinTxt,
+        });
+      } else {
+        outcomeCell = el("td", { className: "pick-outcome pending",
+          textContent: "—" });
+      }
     } else {
       outcomeCell = el("td", { className: "pick-outcome pending",
         textContent: "—" });
     }
 
     tbody.appendChild(el("tr", { className: trCls },
-      el("td", { className: "kind-cell",
-        textContent: KIND_ICON[p.kind] || "" }),
-      raceCell,
-      horseCell,
-      el("td", null,
-        el("span", { className: "pick-meta",
-          textContent: p.agf != null ? "%" + p.agf.toFixed(0) : "—" }),
-      ),
-      el("td", { className: "pick-reason",
-        textContent: p.reason || "" }),
-      outcomeCell,
+      raceCell, suggestCell, candCell, outcomeCell,
     ));
   }
   tbl.appendChild(tbody);
   body.appendChild(tbl);
+}
+
+// Backwards-compat (eski payload pick list ile kullanılabilir)
+function renderPicks(picks) {
+  // No-op: yeni şablon races view kullanır.
 }
 
 function renderHistory(data) {
@@ -633,7 +691,7 @@ async function load(dateStr) {
     const r = await fetch(url);
     const data = await r.json();
     renderStats(data.stats);
-    renderPicks(data.picks);
+    renderRaces(data.races || []);
     renderTelegramMessages(data.telegram_messages || []);
     renderSibContent((data.sib && data.sib.rows) || []);
     $("disclaimer").textContent = data.disclaimer || "";

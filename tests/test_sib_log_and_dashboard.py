@@ -298,3 +298,71 @@ class TestUnifiedPicksBuilder(unittest.TestCase):
                   "banker_count", "value_count", "avoid_count",
                   "won", "lost", "pending"):
             self.assertIn(k, s)
+
+
+class TestRacesView(unittest.TestCase):
+    """Race-by-race view — 1 row per race, multi-pick combined."""
+
+    def test_one_row_per_race(self):
+        from top4.dashboard_api import _build_races_view
+        shadow = [{
+            "hippodrome": "Elazığ", "race_id": "Elazığ_2",
+            "race_label": "Elazığ 2. koşu", "race_time": "15:30",
+            "field_size": 12, "recommended_mode": "BALANCED",
+            "confidence": "MEDIUM",
+            "outcome": {"status": "pending"},
+            "horses": [
+                {"horse_no": 2, "horse_name": "KING", "role": "BANKER",
+                 "p_top4_cal": 0.85, "agf_now": 45, "mp": 0.30},
+                {"horse_no": 1, "horse_name": "ETIQUETTE", "role": "BANKER",
+                 "p_top4_cal": 0.74, "agf_now": 39, "mp": 0.28},
+                {"horse_no": 8, "horse_name": "LORD", "role": "CHAOS",
+                 "agf_now": 1, "mp": 0.05},
+                {"horse_no": 6, "horse_name": "INFERNO", "role": "CHAOS",
+                 "agf_now": 1.4, "mp": 0.06},
+            ],
+        }]
+        races = _build_races_view(shadow, [])
+        # 4 picks → 1 race row
+        self.assertEqual(len(races), 1)
+        r = races[0]
+        self.assertEqual(r["hippo"], "Elazığ")
+        self.assertEqual(r["race_no"], 2)
+        self.assertEqual(len(r["main_picks"]), 2)  # 2 BANKER
+        self.assertEqual(len(r["other_picks"]), 2)  # 2 CHAOS
+        self.assertIn("⭐", r["headline"])
+
+    def test_no_bet_race_collapses(self):
+        from top4.dashboard_api import _build_races_view
+        shadow = [{
+            "hippodrome": "X", "race_id": "X_1",
+            "race_label": "X 1. koşu",
+            "recommended_mode": "NO_BET", "confidence": "CHAOS",
+            "horses": [],
+        }]
+        races = _build_races_view(shadow, [])
+        self.assertEqual(len(races), 1)
+        self.assertIn("PAS", races[0]["headline"])
+
+    def test_sib_picks_attach_to_same_race(self):
+        from top4.dashboard_api import _build_races_view
+        shadow = [{
+            "hippodrome": "İstanbul", "race_id": "İstanbul_3",
+            "race_label": "İstanbul 3. koşu",
+            "recommended_mode": "BALANCED",
+            "outcome": {"status": "pending"},
+            "horses": [
+                {"horse_no": 4, "horse_name": "ATIM", "role": "BANKER",
+                 "p_top4_cal": 0.7, "agf_now": 30, "mp": 0.4},
+            ],
+        }]
+        sib = [{
+            "tier": "DIAMOND", "hippo": "İstanbul", "race_no": 3,
+            "horse_no": 7, "horse_name": "RUZGAR",
+            "agf": 8, "mp": 0.3,
+            "outcome": {"status": "pending"},
+        }]
+        races = _build_races_view(shadow, sib)
+        self.assertEqual(len(races), 1)
+        # Shadow BANKER #4 + SiB DIAMOND #7 = 2 main picks
+        self.assertEqual(len(races[0]["main_picks"]), 2)

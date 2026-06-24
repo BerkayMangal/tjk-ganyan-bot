@@ -311,6 +311,174 @@ def _extract_unified_picks(shadow_rows: list, sib_rows: list) -> list[dict]:
     return picks
 
 
+def _build_races_view(shadow_rows: list, sib_rows: list) -> list[dict]:
+    """YARIŞ-BAZLI görünüm — her yarış için 1 satır.
+
+    Berkay: "ayni ati birkac defa yazmis, hala anlamiyorum bunlar
+    ilk4 mu". Çözüm: yarış-bazlı, ne oynayacağı net.
+
+    Her satır:
+      {hippo, race_no, race_time, field_size, mode, confidence,
+       headline (kısa öneri),
+       main_picks (1-3 banker/değer at),
+       other_picks (avoid/chaos),
+       outcome (winner + bizden kim girdi)}
+    """
+    # SiB picks'i (hippo, race_no) anahtarıyla grupla
+    sib_by_race: dict[tuple, list] = {}
+    for s in sib_rows or []:
+        key = (s.get("hippo") or "?", _safe_int(s.get("race_no")))
+        sib_by_race.setdefault(key, []).append(s)
+
+    out: list[dict] = []
+    for r in shadow_rows or []:
+        hippo = r.get("hippodrome") or "?"
+        race_label = r.get("race_label") or ""
+        race_id = r.get("race_id") or ""
+        race_no = None
+        for token in (race_id.split("_") + race_label.split()):
+            if token.isdigit():
+                race_no = int(token)
+                break
+        race_time = r.get("race_time") or ""
+        field_size = r.get("field_size") or 0
+        mode = (r.get("recommended_mode") or "").upper()
+        confidence = r.get("confidence") or ""
+        outcome = r.get("outcome") or {}
+        top4 = set(outcome.get("top4_actual") or [])
+        winner = outcome.get("winner")
+        status = outcome.get("status") or "pending"
+
+        # Horse-level roller
+        main_picks: list[dict] = []
+        other_picks: list[dict] = []
+        for h in (r.get("horses") or []):
+            role = (h.get("role") or "").upper()
+            value_tag = h.get("value_tag")
+            value_gap = h.get("value_gap_pct")
+            hno = h.get("horse_no")
+            hname = h.get("horse_name") or "?"
+            agf = h.get("agf_now")
+            mp = h.get("mp")
+            won = (hno in top4) if (status == "graded" and top4) else None
+
+            item = {
+                "horse_no": hno, "horse_name": hname,
+                "agf": agf, "mp": mp,
+                "won": won, "is_winner": (hno == winner),
+            }
+            if role == "BANKER":
+                item["kind"] = "banker"
+                item["label"] = "⭐ Ana At"
+                item["detail"] = f"pTop4 {h.get('p_top4_cal'):.2f}" \
+                                 if h.get('p_top4_cal') else ""
+                main_picks.append(item)
+            elif value_tag == "DEĞER":
+                item["kind"] = "value"
+                item["label"] = "💎 Değer"
+                item["detail"] = f"+{value_gap:.0f}pp" if value_gap else ""
+                main_picks.append(item)
+            elif role == "AVOID":
+                item["kind"] = "avoid"
+                item["label"] = "⚠ Tuzak"
+                item["detail"] = "halk yüksek model düşük"
+                other_picks.append(item)
+            elif role == "CHAOS":
+                item["kind"] = "chaos"
+                item["label"] = "🎲 Longshot"
+                item["detail"] = ""
+                other_picks.append(item)
+
+        # SiB picks for this race
+        sib_picks_here = sib_by_race.pop((hippo, race_no), [])
+        for s in sib_picks_here:
+            tier = (s.get("tier") or "").upper()
+            kind = ("banker" if tier == "DIAMOND" else "value")
+            item = {
+                "horse_no": s.get("horse_no"),
+                "horse_name": s.get("horse_name") or "?",
+                "agf": s.get("agf"),
+                "mp": s.get("mp"),
+                "kind": kind,
+                "tier": tier,
+                "label": f"SİB {tier}",
+                "detail": s.get("jockey_name") or "",
+                "won": (s.get("outcome") or {}).get("won"),
+                "is_winner": s.get("horse_no") == winner,
+            }
+            # SiB always to main (high signal)
+            main_picks.append(item)
+
+        # Headline — net açıklama
+        if mode == "NO_BET":
+            headline = "🛑 PAS — " + (confidence.lower() or "kaotik")
+            our_winners: list[int] = []
+        else:
+            our_winners = [p["horse_no"] for p in main_picks
+                           if p.get("won") is True]
+            n_b = sum(1 for p in main_picks if p.get("kind") == "banker")
+            n_v = sum(1 for p in main_picks if p.get("kind") == "value")
+            parts = []
+            if n_b:
+                parts.append(f"⭐ {n_b} ana")
+            if n_v:
+                parts.append(f"💎 {n_v} değer")
+            if not parts:
+                parts.append("genel öneri")
+            headline = " · ".join(parts)
+            if confidence:
+                headline += f" ({confidence.lower()} güven)"
+
+        out.append({
+            "hippo": hippo,
+            "race_no": race_no,
+            "race_time": race_time,
+            "field_size": field_size,
+            "mode": mode,
+            "confidence": confidence,
+            "headline": headline,
+            "main_picks": main_picks[:6],   # too long otherwise
+            "other_picks": other_picks[:4],
+            "outcome": {
+                "status": status,
+                "winner_horse_no": winner,
+                "top4_actual": list(top4),
+                "our_winners": our_winners,
+            },
+        })
+
+    # Orphan SiB races (we have SiB picks but no shadow row for that race)
+    for (hippo, race_no), sib_picks in sib_by_race.items():
+        if not sib_picks:
+            continue
+        time_v = (sib_picks[0].get("race_time") or "")
+        main = []
+        for s in sib_picks:
+            tier = (s.get("tier") or "").upper()
+            kind = "banker" if tier == "DIAMOND" else "value"
+            main.append({
+                "horse_no": s.get("horse_no"),
+                "horse_name": s.get("horse_name") or "?",
+                "agf": s.get("agf"), "mp": s.get("mp"),
+                "kind": kind, "tier": tier,
+                "label": f"SİB {tier}",
+                "detail": s.get("jockey_name") or "",
+                "won": (s.get("outcome") or {}).get("won"),
+            })
+        out.append({
+            "hippo": hippo, "race_no": race_no, "race_time": time_v,
+            "field_size": 0, "mode": "SIB_ONLY", "confidence": "",
+            "headline": f"SİB {len(main)} pick",
+            "main_picks": main, "other_picks": [],
+            "outcome": {"status": "pending"},
+        })
+
+    # Sort by hippo then race_no
+    out.sort(key=lambda r: (r.get("hippo") or "",
+                            r.get("race_no") or 99))
+    return out
+
+
 def _build_daily_stats(shadow_rows: list, sib_rows: list,
                       unified: list) -> dict:
     """4 big numbers for the header."""
@@ -459,11 +627,14 @@ def build_today_view(date_str: Optional[str] = None) -> dict:
     # Unified picks (banker + value + chaos + avoid + no_bet) ONE list
     unified = _extract_unified_picks(shadow_rows, sib_rows)
     daily = _build_daily_stats(shadow_rows, sib_rows, unified)
+    # Race-by-race view — 1 row per race (Berkay-native)
+    races = _build_races_view(shadow_rows, sib_rows)
 
     return {
         "date": date_str,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "stats": daily,
+        "races": races,
         "picks": unified,
         "shadow": {
             "rows": shadow_rows,
