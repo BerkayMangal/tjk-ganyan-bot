@@ -128,12 +128,80 @@
     cursor: pointer; color: #58a6ff; font-size: 0.85em;
   }
   details[open] summary { margin-bottom: 4px; }
+  /* Model outputs section */
+  .hippo-card {
+    background: #0d1117; border: 1px solid #30363d;
+    border-radius: 8px; margin-bottom: 12px; overflow: hidden;
+  }
+  .hippo-head {
+    padding: 10px 14px; cursor: pointer;
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 12px; flex-wrap: wrap;
+  }
+  .hippo-head:hover { background: #161b22; }
+  .hippo-title {
+    font-weight: 600; color: #e6edf3;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .hippo-meta {
+    font-size: 0.82em; color: #8b949e;
+    display: flex; gap: 12px; flex-wrap: wrap;
+  }
+  .hippo-meta span { white-space: nowrap; }
+  .hippo-body {
+    padding: 0 14px 12px; border-top: 1px solid #21262d;
+    background: #0a0e13; display: none;
+  }
+  .hippo-card.open .hippo-body { display: block; }
+  .leg-block {
+    margin-top: 12px;
+  }
+  .leg-head {
+    font-weight: 600; color: #58a6ff; margin: 8px 0 4px;
+    font-size: 0.92em;
+  }
+  .horses-table {
+    width: 100%; font-size: 0.82em;
+  }
+  .horses-table th {
+    background: #161b22; color: #8b949e;
+    text-align: left; padding: 4px 6px;
+    font-size: 0.72em;
+  }
+  .horses-table td {
+    padding: 4px 6px; border-bottom: 1px solid #161b22;
+  }
+  .horses-table tr.fav td { color: #58a6ff; font-weight: 600; }
+  .horses-table tr.longshot td { color: #8b949e; }
+  .coupon-text {
+    background: #0a0e13; border: 1px solid #21262d;
+    border-radius: 6px; padding: 10px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.8em; line-height: 1.45;
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 400px; overflow-y: auto;
+    color: #c9d1d9;
+  }
+  .toggle-btn {
+    background: #21262d; color: #58a6ff;
+    border: 1px solid #30363d; padding: 3px 8px;
+    border-radius: 4px; cursor: pointer; font-size: 0.78em;
+    margin-top: 6px;
+  }
+  .chevron { color: #8b949e; transition: transform 0.15s; }
+  .hippo-card.open .chevron { transform: rotate(90deg); display: inline-block; }
+  .empty-state {
+    text-align: center; padding: 20px; color: #8b949e;
+    font-size: 0.85em;
+  }
+
   @media (max-width: 720px) {
     body { padding: 8px; }
     h1 { font-size: 1.15em; }
     section { padding: 10px; }
     th, td { padding: 5px 6px; font-size: 0.82em; }
     .stat-card .value { font-size: 1.15em; }
+    .hippo-meta { font-size: 0.75em; gap: 8px; }
   }
 </style>
 </head>
@@ -174,6 +242,16 @@
     </h2>
     <div id="shadow-summary" class="stats-grid"></div>
     <div id="shadow-content">
+      <div class="loading">Yükleniyor…</div>
+    </div>
+  </section>
+
+  <section id="model-section">
+    <h2>
+      🐎 Tüm Tahminler ve Kuponlar
+      <span class="count" id="model-count">…</span>
+    </h2>
+    <div id="model-content">
       <div class="loading">Yükleniyor…</div>
     </div>
   </section>
@@ -403,6 +481,167 @@ function renderShadowRows(rows) {
   box.appendChild(tbl);
 }
 
+// --- Model outputs rendering (all hippos + races + horses + coupon text) --
+function fmtPct(v) {
+  if (v == null) return "—";
+  return "%" + (Number(v).toFixed(1).replace(/\.0$/, ""));
+}
+function fmtMp(v) {
+  if (v == null) return "—";
+  const n = Number(v);
+  if (n === 0) return "—";
+  return n.toFixed(3);
+}
+
+function renderHippoCard(hippo) {
+  const card = el("div", { className: "hippo-card" });
+  const legs = hippo.race_legs || hippo.agf_snapshot || [];
+  const nLegs = legs.length;
+  const head = el("div", { className: "hippo-head" },
+    el("div", { className: "hippo-title" },
+      el("span", { className: "chevron", textContent: "▶" }),
+      document.createTextNode(" " + (hippo.hippo || "?")),
+    ),
+    el("div", { className: "hippo-meta" },
+      el("span", { textContent: "🕐 " + (hippo.first_time || "?") }),
+      el("span", { textContent: "🏇 " + nLegs + " ayak" }),
+      hippo.combos != null
+        ? el("span", { textContent: "🎫 " + hippo.combos.toLocaleString("tr-TR") + " kombi" })
+        : null,
+      hippo.cost_tl != null
+        ? el("span", { textContent: "💰 " + Math.round(hippo.cost_tl) + " TL" })
+        : null,
+      hippo.banker_count != null
+        ? el("span", { textContent: "🎯 " + hippo.banker_count + " banker" })
+        : null,
+      hippo.model_failed
+        ? el("span", { textContent: "⚠ model fail", style: "color:#f85149;" })
+        : null,
+      hippo.agf_flat_legs > 0
+        ? el("span", { textContent: "⏳ " + hippo.agf_flat_legs + " AGF bayat", style: "color:#d29922;" })
+        : null,
+    ),
+  );
+  head.addEventListener("click", () => card.classList.toggle("open"));
+  card.appendChild(head);
+
+  const body = el("div", { className: "hippo-body" });
+
+  // Per-leg horses table.
+  // Race_legs has rich data (model_prob, tier_mark); agf_snapshot only AGF.
+  const legSource = hippo.race_legs || hippo.agf_snapshot || [];
+  const hasModel = (hippo.race_legs && hippo.race_legs.length > 0);
+  for (const legGroup of legSource) {
+    let legNo, raceNo, time, horses;
+    if (Array.isArray(legGroup)) {
+      // race_legs: list of leg arrays (per-horse dicts)
+      if (!legGroup.length) continue;
+      const h0 = legGroup[0];
+      legNo = h0.leg_no || h0.leg_number;
+      raceNo = h0.race_number;
+      time = (h0.start_time || "").substring(0, 5);
+      horses = legGroup;
+    } else {
+      // agf_snapshot: dict with horses list
+      legNo = legGroup.leg_no;
+      raceNo = legGroup.race_no;
+      time = legGroup.time;
+      horses = legGroup.horses || [];
+    }
+    if (!horses.length) continue;
+
+    const block = el("div", { className: "leg-block" });
+    block.appendChild(el("div", {
+      className: "leg-head",
+      textContent: legNo + ". ayak — " + raceNo + ". koşu · " + (time || ""),
+    }));
+
+    // Sort horses by AGF DESC for readability
+    const sortedHorses = [...horses].sort((a, b) => {
+      const ag = a.agf_value != null ? a.agf_value : a.pct;
+      const bg = b.agf_value != null ? b.agf_value : b.pct;
+      return (bg || 0) - (ag || 0);
+    });
+
+    const tbl = el("table", { className: "horses-table" });
+    const thead = el("thead");
+    const thRow = el("tr", null,
+      el("th", { textContent: "#" }),
+      el("th", { textContent: "At" }),
+      el("th", { textContent: "AGF" }),
+    );
+    if (hasModel) {
+      thRow.appendChild(el("th", { textContent: "Model" }));
+      thRow.appendChild(el("th", { textContent: "Tier" }));
+    }
+    thead.appendChild(thRow);
+    tbl.appendChild(thead);
+
+    const tbody = el("tbody");
+    for (const h of sortedHorses) {
+      const hno = h.horse_number || h.no;
+      const hname = h.horse_name || h.name;
+      const agf = h.agf_value != null ? h.agf_value : h.pct;
+      const mp = h.model_prob;
+      const tier = h.tier_mark;
+      const trCls = (agf || 0) >= 25 ? "fav" : ((agf || 0) < 3 ? "longshot" : "");
+      const tr = el("tr", { className: trCls },
+        el("td", { textContent: "#" + hno }),
+        el("td", { textContent: hname || "?" }),
+        el("td", { textContent: fmtPct(agf) }),
+      );
+      if (hasModel) {
+        tr.appendChild(el("td", { textContent: fmtMp(mp) }));
+        tr.appendChild(el("td", { textContent: tier || "—",
+                                  style: "font-size:0.78em;" }));
+      }
+      tbody.appendChild(tr);
+    }
+    tbl.appendChild(tbody);
+    block.appendChild(tbl);
+    body.appendChild(block);
+  }
+
+  // Coupon text (collapsible)
+  if (hippo.text) {
+    const toggleBtn = el("button", {
+      className: "toggle-btn", textContent: "📋 Kupon metnini göster",
+    });
+    body.appendChild(toggleBtn);
+    const couponBox = el("pre", { className: "coupon-text" });
+    // Strip HTML tags for plain readability
+    couponBox.textContent = hippo.text.replace(/<[^>]+>/g, "");
+    couponBox.style.display = "none";
+    body.appendChild(couponBox);
+    toggleBtn.addEventListener("click", () => {
+      const open = couponBox.style.display === "none";
+      couponBox.style.display = open ? "block" : "none";
+      toggleBtn.textContent = open ? "📋 Kupon metnini gizle"
+                                   : "📋 Kupon metnini göster";
+    });
+  }
+
+  card.appendChild(body);
+  return card;
+}
+
+function renderModelOutputs(data) {
+  const box = $("model-content");
+  box.innerHTML = "";
+  const hippos = (data && data.hippos) || [];
+  $("model-count").textContent = hippos.length + " hipodrom";
+  if (!hippos.length) {
+    box.appendChild(el("div", {
+      className: "empty-state",
+      textContent: "Bugün hiç pool yok veya scheduler henüz çalışmadı.",
+    }));
+    return;
+  }
+  for (const h of hippos) {
+    box.appendChild(renderHippoCard(h));
+  }
+}
+
 // --- History rendering ----------------------------------------------------
 function renderHistory(data) {
   const box = $("history-content");
@@ -451,6 +690,7 @@ function renderHistory(data) {
 
 // --- fetcher --------------------------------------------------------------
 async function load(dateStr) {
+  // SiB + shadow (Berkay deneme endpoint)
   try {
     const url = dateStr
       ? "/api/berkay_deneme/today?date=" + encodeURIComponent(dateStr)
@@ -468,6 +708,19 @@ async function load(dateStr) {
     $("shadow-content").innerHTML =
       '<div class="loading">Yüklenemedi: ' + e + '</div>';
   }
+
+  // All model outputs (smart_coupon all_hippos)
+  try {
+    const today = dateStr || new Date().toISOString().slice(0, 10);
+    const r = await fetch("/api/smart_coupon/all/" + today);
+    const data = await r.json();
+    renderModelOutputs(data);
+  } catch (e) {
+    $("model-content").innerHTML =
+      '<div class="loading">Model çıktıları yüklenemedi: ' + e + '</div>';
+  }
+
+  // History (last 14 days)
   try {
     const r = await fetch("/api/berkay_deneme/history?days=14");
     const data = await r.json();
