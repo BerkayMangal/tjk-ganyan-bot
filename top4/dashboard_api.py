@@ -176,6 +176,180 @@ def _shadow_pick_outcome(pred: dict,
     }
 
 
+def _safe_int(v, default=0):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _extract_unified_picks(shadow_rows: list, sib_rows: list) -> list[dict]:
+    """Flatten shadow + SiB picks into ONE actionable list.
+
+    Each pick: {kind, hippo, race_no, race_time, horse_no, horse_name,
+    agf, mp, reason, outcome, source}.
+
+    kind ordering:
+      banker  (⭐ shadow BANKER or SiB DIAMOND)
+      value   (💎 shadow DEĞER-tagged or SiB ALTIN/PREMIUM)
+      chaos   (🎲 shadow CHAOS or SiB FIRSAT)
+      avoid   (⚠ shadow AVOID — public trap)
+      no_bet  (🛑 entire race skipped)
+    """
+    picks: list[dict] = []
+    # --- shadow rows -------------------------------------------------------
+    for r in shadow_rows or []:
+        hippo = r.get("hippodrome") or "?"
+        race_label = r.get("race_label") or ""
+        # extract race number from label "X 3. koşu" or race_id "X_3"
+        race_no = None
+        rid = (r.get("race_id") or "")
+        for token in (rid.split("_") + race_label.split()):
+            if token.isdigit():
+                race_no = int(token)
+                break
+        race_time = r.get("race_time") or ""
+        outcome = r.get("outcome") or {}
+        mode = (r.get("recommended_mode") or "").upper()
+        confidence = r.get("confidence") or ""
+
+        # If race is NO_BET, single "skip" row
+        if mode == "NO_BET":
+            picks.append({
+                "kind": "no_bet",
+                "hippo": hippo, "race_no": race_no, "race_time": race_time,
+                "horse_no": None, "horse_name": None,
+                "agf": None, "mp": None,
+                "reason": "Yarış pas — " + (confidence.lower() or "kaotik"),
+                "outcome": {"status": "pending"},
+                "source": "shadow",
+            })
+            continue
+
+        # Walk horse-level role tags
+        for h in (r.get("horses") or []):
+            role = (h.get("role") or "").upper()
+            value_tag = h.get("value_tag")
+            value_gap = h.get("value_gap_pct")
+            agf = h.get("agf_now")
+            mp = h.get("mp")
+            hno = h.get("horse_no")
+            hname = h.get("horse_name") or "?"
+            # outcome marker per horse (best-effort from race-level outcome)
+            won = None
+            if outcome.get("status") == "graded":
+                top4 = set(outcome.get("top4_actual") or [])
+                won = hno in top4 if top4 else None
+
+            base = {
+                "hippo": hippo, "race_no": race_no, "race_time": race_time,
+                "horse_no": hno, "horse_name": hname,
+                "agf": agf, "mp": mp,
+                "outcome": {"status": "graded" if won is not None else "pending",
+                            "won": won,
+                            "winner_horse_no": outcome.get("winner")},
+                "source": "shadow",
+            }
+            if role == "BANKER":
+                base["kind"] = "banker"
+                base["reason"] = "Model+halk uyumlu (pTop4 {:.2f})".format(
+                    h.get("p_top4_cal") or 0)
+                picks.append(base)
+            elif value_tag == "DEĞER":
+                base["kind"] = "value"
+                base["reason"] = (f"Model halktan güçlü "
+                                  f"(+{value_gap:.0f}pp)" if value_gap
+                                  else "Model halktan güçlü")
+                picks.append(base)
+            elif role == "AVOID":
+                base["kind"] = "avoid"
+                base["reason"] = f"AGF yüksek (%{agf:.0f}) ama model zayıf" \
+                                 if agf is not None else "Halk tuzağı"
+                picks.append(base)
+            elif role == "CHAOS":
+                base["kind"] = "chaos"
+                base["reason"] = "Longshot — model sinyali var"
+                picks.append(base)
+
+    # --- SiB rows ----------------------------------------------------------
+    for r in sib_rows or []:
+        tier = (r.get("tier") or "").upper()
+        kind = ("banker" if tier == "DIAMOND"
+                else "value" if tier in ("ALTIN", "PREMIUM")
+                else "chaos" if tier == "FIRSAT" else "value")
+        outcome = r.get("outcome") or {}
+        won = outcome.get("won")
+        picks.append({
+            "kind": kind,
+            "tier": tier,
+            "hippo": r.get("hippo") or "?",
+            "race_no": _safe_int(r.get("race_no")),
+            "race_time": r.get("race_time") or "",
+            "horse_no": _safe_int(r.get("horse_no")),
+            "horse_name": r.get("horse_name") or "?",
+            "agf": r.get("agf"),
+            "mp": r.get("mp"),
+            "reason": (f"SİB {tier}" if tier else "SİB pick")
+                      + (f" · jokey {r.get('jockey_name')}"
+                         if r.get("jockey_name") else ""),
+            "outcome": {
+                "status": "graded" if won is not None else "pending",
+                "won": won,
+                "winner_horse_no": outcome.get("winner_horse_no"),
+            },
+            "source": "sib",
+        })
+
+    # Sort: kind priority, then time, then hippo
+    kind_pri = {"banker": 0, "value": 1, "chaos": 2, "avoid": 3, "no_bet": 4}
+    picks.sort(key=lambda p: (
+        kind_pri.get(p.get("kind"), 9),
+        str(p.get("race_time") or ""),
+        str(p.get("hippo") or ""),
+        p.get("race_no") or 99,
+    ))
+    return picks
+
+
+def _build_daily_stats(shadow_rows: list, sib_rows: list,
+                      unified: list) -> dict:
+    """4 big numbers for the header."""
+    n_races = len(shadow_rows or [])
+    n_picks = sum(1 for p in unified if p.get("kind") != "no_bet")
+    n_results = sum(1 for r in shadow_rows or []
+                    if (r.get("outcome") or {}).get("status") == "graded")
+    n_no_bet = sum(1 for p in unified if p.get("kind") == "no_bet")
+    n_banker = sum(1 for p in unified if p.get("kind") == "banker")
+    n_value = sum(1 for p in unified if p.get("kind") == "value")
+    n_chaos = sum(1 for p in unified if p.get("kind") == "chaos")
+    n_avoid = sum(1 for p in unified if p.get("kind") == "avoid")
+    n_sib = sum(1 for p in unified if p.get("source") == "sib")
+
+    # Today's hit/loss tally
+    won = sum(1 for p in unified
+              if (p.get("outcome") or {}).get("won") is True)
+    lost = sum(1 for p in unified
+               if (p.get("outcome") or {}).get("won") is False)
+    pending = sum(1 for p in unified
+                  if (p.get("outcome") or {}).get("status") != "graded"
+                  and p.get("kind") != "no_bet")
+
+    return {
+        "races": n_races,
+        "picks": n_picks,
+        "results_graded": n_results,
+        "no_bet": n_no_bet,
+        "banker_count": n_banker,
+        "value_count": n_value,
+        "chaos_count": n_chaos,
+        "avoid_count": n_avoid,
+        "sib_count": n_sib,
+        "won": won,
+        "lost": lost,
+        "pending": pending,
+    }
+
+
 def build_today_view(date_str: Optional[str] = None) -> dict:
     """One-page view-model for `/api/berkay_deneme/today`."""
     date_str = date_str or _today_str()
@@ -282,9 +456,15 @@ def build_today_view(date_str: Optional[str] = None) -> dict:
         except Exception as exc:
             logger.debug("telegram messages: %s", exc)
 
+    # Unified picks (banker + value + chaos + avoid + no_bet) ONE list
+    unified = _extract_unified_picks(shadow_rows, sib_rows)
+    daily = _build_daily_stats(shadow_rows, sib_rows, unified)
+
     return {
         "date": date_str,
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "stats": daily,
+        "picks": unified,
         "shadow": {
             "rows": shadow_rows,
             "count": len(shadow_rows),

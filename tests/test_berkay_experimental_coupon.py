@@ -408,11 +408,14 @@ class TestPoolAdapter(unittest.TestCase):
         _set_flags(shadow="1", telegram=None, log=None)
         try:
             msgs = render_pool_shadow_messages([self._mock_pool()])
-            self.assertGreaterEqual(len(msgs), 1)
-            # Default view is digest (hipodrom başına tek mesaj)
-            self.assertIn("İstanbul", msgs[0])
-            self.assertIn("deneme", msgs[0])
+            # New behavior (2026-06-24): one daily summary message for
+            # all hippos combined, NOT one per hippo. Berkay flagged
+            # the noise.
+            self.assertEqual(len(msgs), 1, "expected single combined message")
+            self.assertIn("BERKAY DENEME", msgs[0])
+            self.assertIn("bugün özeti", msgs[0])
             self.assertIn("Deneme", msgs[0])  # disclaimer
+            self.assertIn("dashboard", msgs[0].lower())
             self.assertLess(len(msgs[0]), 4096,
                             "Telegram message must fit in single send")
             self.assertEqual(has_forbidden_language(msgs[0]), [])

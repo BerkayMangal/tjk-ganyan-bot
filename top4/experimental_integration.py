@@ -355,25 +355,34 @@ def render_pool_shadow_messages_with_coupons(
         view = force_view or _view_mode()
         out: list[tuple[str, list[dict]]] = []
         if view == VIEW_DIGEST:
-            from .digest_renderer import render_hippo_digest
+            # NEW (2026-06-24): ONE combined daily-summary message for
+            # ALL pools. The previous per-hippo digest emitted one
+            # message per hippodrome (4+ msgs / morning) which Berkay
+            # flagged as Telegram noise. New approach: tight summary
+            # pointing to dashboard.
+            from .digest_renderer import render_daily_summary
+            all_coupons: list[dict] = []
+            coupons_by_hippo: dict[str, list[dict]] = {}
             for pool in pools:
                 snaps = extract_race_snapshots_from_pool(pool)
                 if not snaps:
                     continue
                 hippo = pool.get("hippo") or pool.get("hippodrome") or "?"
-                coupons: list[dict] = []
                 for snap in snaps:
                     agf = _build_agf_snapshots(snap.get("horses") or [])
-                    coupons.append(
-                        build_berkay_scientific_top4_coupon(
-                            snap, agf_snapshot=agf, cutoff=cutoff,
-                        )
+                    c = build_berkay_scientific_top4_coupon(
+                        snap, agf_snapshot=agf, cutoff=cutoff,
                     )
-                if not coupons:
-                    continue
-                text = render_hippo_digest(hippo, coupons)
-                if text:
-                    out.append((text, coupons))
+                    all_coupons.append(c)
+                    coupons_by_hippo.setdefault(hippo, []).append(c)
+            if not all_coupons:
+                return out
+            text = render_daily_summary(coupons_by_hippo)
+            if text:
+                # All coupons attach to the single emitted message so
+                # log_predictions_for_chunk threads telegram_sent for
+                # every coupon when the caller sends successfully.
+                out.append((text, all_coupons))
             return out
         for pool in pools:
             snaps = extract_race_snapshots_from_pool(pool)

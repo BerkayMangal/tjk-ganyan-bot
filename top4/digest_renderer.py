@@ -180,14 +180,77 @@ def render_hippo_digest(hippo: str, coupons: list[Mapping]) -> str:
     return text[:4000]
 
 
-def render_digest_messages(coupons_by_hippo: dict) -> list[str]:
-    """One message per hippodrome (digest format). NEVER raises."""
+def render_daily_summary(coupons_by_hippo: dict) -> str:
+    """One compact daily summary message for ALL hippodromes combined.
+
+    Replaces the per-hippo digest which was 1 msg × N hippos = 4+ msgs
+    per morning. New format: total stats + dashboard URL.
+
+    Berkay: "telegrama da devamli msg geliyor" → günde 1 mesaj yeter,
+    detay dashboard'da.
+    """
     try:
-        out: list[str] = []
+        total_races = 0
+        total_bankers = 0
+        total_values = 0
+        total_avoids = 0
+        total_no_bet = 0
+        hippo_counts: dict[str, int] = {}
         for hippo, coupons in coupons_by_hippo.items():
-            text = render_hippo_digest(hippo, coupons)
-            if text:
-                out.append(text)
-        return out
+            hippo_counts[hippo] = len(coupons)
+            for c in coupons:
+                total_races += 1
+                if c.get("recommended_mode") == "NO_BET":
+                    total_no_bet += 1
+                for h in (c.get("bankers") or []):
+                    if h.get("confidence") == "HIGH":
+                        total_bankers += 1
+                for pool_key in ("spread", "chaos", "core"):
+                    for h in (c.get(pool_key) or []):
+                        if h.get("value_tag") == "DEĞER":
+                            total_values += 1
+                for _h in (c.get("avoid") or []):
+                    total_avoids += 1
+        if not total_races:
+            return ""
+
+        lines: list[str] = []
+        lines.append("🧪 <b>BERKAY DENEME</b> — bugün özeti")
+        lines.append("")
+        lines.append(f"📊 {total_races} yarış / {len(hippo_counts)} hipodrom")
+        if total_bankers:
+            lines.append(f"⭐ <b>{total_bankers}</b> ana at önerisi")
+        if total_values:
+            lines.append(f"💎 <b>{total_values}</b> değer pick")
+        if total_avoids:
+            lines.append(f"⚠ <b>{total_avoids}</b> halk tuzağı uyarısı")
+        if total_no_bet:
+            lines.append(f"🛑 <b>{total_no_bet}</b> yarış PAS")
+        lines.append("")
+        lines.append("📱 <b>Detay: dashboard</b>")
+        lines.append(
+            "<a href=\"https://tjk-ganyan-bot-production.up.railway.app/berkay-deneme\">"
+            "tjk-ganyan-bot-production.up.railway.app/berkay-deneme</a>"
+        )
+        lines.append("")
+        lines.append(f"<i>{DISCLAIMER}</i>")
+        text = "\n".join(lines)
+        if has_forbidden_language(text):
+            return ""
+        return text[:4000]
+    except Exception:
+        return ""
+
+
+def render_digest_messages(coupons_by_hippo: dict) -> list[str]:
+    """Backwards-compat shim — now emits ONE combined daily summary
+    instead of per-hippodrome messages. The old per-hippo behavior
+    accumulated 4+ messages each morning (one per hippo) which Berkay
+    flagged as noise. The new behavior: a single tight summary that
+    points to the dashboard for details.
+    """
+    try:
+        text = render_daily_summary(coupons_by_hippo)
+        return [text] if text else []
     except Exception:
         return []

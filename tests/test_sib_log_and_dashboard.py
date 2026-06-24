@@ -218,3 +218,83 @@ class TestDashboardAPI(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestUnifiedPicksBuilder(unittest.TestCase):
+    """Verify the new unified picks list combines shadow + SiB correctly."""
+
+    def test_picks_combine_kinds(self):
+        from top4.dashboard_api import _extract_unified_picks
+        shadow_rows = [{
+            "hippodrome": "İstanbul", "race_id": "İstanbul_3",
+            "race_label": "İstanbul 3. koşu", "race_time": "15:30",
+            "recommended_mode": "BALANCED", "confidence": "MEDIUM",
+            "outcome": {"status": "pending"},
+            "bankers": [4], "candidate_set": [4, 2, 7, 9, 1],
+            "horses": [
+                {"horse_no": 4, "horse_name": "ATIM", "role": "BANKER",
+                 "p_top4_cal": 0.78, "agf_now": 32.0, "mp": 0.45},
+                {"horse_no": 7, "horse_name": "RUZGAR", "role": "SPREAD",
+                 "value_tag": "DEĞER", "value_gap_pct": 22,
+                 "agf_now": 5.0, "mp": 0.27},
+                {"horse_no": 1, "horse_name": "SEFA", "role": "AVOID",
+                 "agf_now": 35.0, "mp": 0.05},
+            ],
+        }]
+        sib_rows = [{
+            "tier": "DIAMOND", "hippo": "İstanbul", "race_no": 5,
+            "race_time": "16:30", "horse_no": 1, "horse_name": "KOŞAR",
+            "agf": 35.0, "mp": 0.42,
+            "outcome": {"status": "graded", "won": True},
+        }]
+        picks = _extract_unified_picks(shadow_rows, sib_rows)
+        kinds = [p["kind"] for p in picks]
+        # Order: banker, value, avoid (banker comes first; SiB DIAMOND = banker)
+        self.assertIn("banker", kinds)
+        self.assertIn("value", kinds)
+        self.assertIn("avoid", kinds)
+        # Banker count: 1 shadow + 1 SiB DIAMOND = 2
+        self.assertEqual(kinds.count("banker"), 2)
+
+    def test_no_bet_collapses_to_single_row(self):
+        from top4.dashboard_api import _extract_unified_picks
+        shadow_rows = [{
+            "hippodrome": "X", "race_label": "X 1. koşu",
+            "race_id": "X_1", "recommended_mode": "NO_BET",
+            "horses": [],
+        }]
+        picks = _extract_unified_picks(shadow_rows, [])
+        self.assertEqual(len(picks), 1)
+        self.assertEqual(picks[0]["kind"], "no_bet")
+        self.assertIsNone(picks[0]["horse_no"])
+
+    def test_outcome_won_marked(self):
+        from top4.dashboard_api import _extract_unified_picks
+        shadow_rows = [{
+            "hippodrome": "X", "race_label": "X 1. koşu",
+            "race_id": "X_1", "recommended_mode": "BALANCED",
+            "outcome": {"status": "graded", "winner": 4, "top4_actual": [4, 7, 1, 2]},
+            "horses": [
+                {"horse_no": 4, "horse_name": "ATIM", "role": "BANKER",
+                 "p_top4_cal": 0.7, "agf_now": 30.0, "mp": 0.4},
+            ],
+        }]
+        picks = _extract_unified_picks(shadow_rows, [])
+        self.assertEqual(len(picks), 1)
+        self.assertTrue(picks[0]["outcome"]["won"])
+
+    def test_daily_stats_shape(self):
+        from top4.dashboard_api import (
+            _build_daily_stats, _extract_unified_picks,
+        )
+        shadow = [{
+            "hippodrome": "X", "race_label": "X 1. koşu",
+            "race_id": "X_1", "recommended_mode": "NO_BET",
+            "horses": [],
+        }]
+        picks = _extract_unified_picks(shadow, [])
+        s = _build_daily_stats(shadow, [], picks)
+        for k in ("races", "picks", "results_graded", "no_bet",
+                  "banker_count", "value_count", "avoid_count",
+                  "won", "lost", "pending"):
+            self.assertIn(k, s)
