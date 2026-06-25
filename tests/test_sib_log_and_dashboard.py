@@ -366,3 +366,73 @@ class TestRacesView(unittest.TestCase):
         self.assertEqual(len(races), 1)
         # Shadow BANKER #4 + SiB DIAMOND #7 = 2 main picks
         self.assertEqual(len(races[0]["main_picks"]), 2)
+
+
+class TestTopPicks(unittest.TestCase):
+    """Top K picks builder — 'BUGÜN EN GÜÇLÜ 5' view."""
+
+    def _race(self, picks):
+        return {
+            "hippo": "X", "race_no": 1, "race_time": "15:00",
+            "field_size": 10, "mode": "BALANCED",
+            "main_picks": picks,
+            "other_picks": [],
+            "outcome": {"status": "pending"},
+        }
+
+    def test_banker_priority(self):
+        from top4.dashboard_api import _build_top_picks
+        races = [self._race([
+            {"kind": "value", "horse_no": 7, "horse_name": "VAL",
+             "mp": 0.3, "agf": 5, "label": "💎 Değer", "detail": "+10pp"},
+            {"kind": "banker", "horse_no": 4, "horse_name": "BANK",
+             "mp": 0.4, "agf": 30, "label": "⭐ Ana At", "detail": ""},
+        ])]
+        top = _build_top_picks(races, k=5)
+        # Banker first
+        self.assertEqual(top[0]["kind"], "banker")
+        self.assertEqual(top[0]["rank"], 1)
+
+    def test_k_limit(self):
+        from top4.dashboard_api import _build_top_picks
+        races = [self._race([
+            {"kind": "banker", "horse_no": i, "horse_name": "H" + str(i),
+             "mp": 0.5 - i * 0.01, "agf": 30, "label": "⭐", "detail": ""}
+            for i in range(1, 12)
+        ])]
+        top = _build_top_picks(races, k=5)
+        self.assertEqual(len(top), 5)
+
+    def test_value_gap_in_score(self):
+        from top4.dashboard_api import _build_top_picks
+        races = [self._race([
+            {"kind": "value", "horse_no": 1, "horse_name": "A",
+             "mp": 0.2, "agf": 5, "label": "💎", "detail": "+5pp"},
+            {"kind": "value", "horse_no": 2, "horse_name": "B",
+             "mp": 0.2, "agf": 5, "label": "💎", "detail": "+20pp"},
+        ])]
+        top = _build_top_picks(races, k=5)
+        # Higher gap (B) ranks above lower gap (A)
+        self.assertEqual(top[0]["horse_no"], 2)
+
+
+class TestTopTraps(unittest.TestCase):
+    def test_avoid_ranked_by_agf(self):
+        from top4.dashboard_api import _build_top_traps
+        races = [
+            {"hippo": "X", "race_no": 1, "race_time": "14:00",
+             "field_size": 10, "mode": "BALANCED",
+             "main_picks": [],
+             "other_picks": [
+                {"kind": "avoid", "horse_no": 1, "horse_name": "A",
+                 "agf": 20, "mp": 0.05},
+                {"kind": "avoid", "horse_no": 2, "horse_name": "B",
+                 "agf": 35, "mp": 0.04},
+                {"kind": "chaos", "horse_no": 3, "horse_name": "C",
+                 "agf": 1},
+             ],
+             "outcome": {}},
+        ]
+        traps = _build_top_traps(races, k=3)
+        self.assertEqual(len(traps), 2)  # 2 avoid only
+        self.assertEqual(traps[0]["horse_no"], 2)  # higher AGF first

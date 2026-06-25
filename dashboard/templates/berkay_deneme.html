@@ -10,17 +10,16 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
                  sans-serif;
     background: #0d1117; color: #e6edf3; margin: 0;
-    padding: 12px; line-height: 1.45;
+    padding: 14px; line-height: 1.45;
   }
-  main { max-width: 980px; margin: 0 auto; }
+  main { max-width: 720px; margin: 0 auto; }
 
-  /* HEADER */
   header {
     display: flex; justify-content: space-between; align-items: center;
-    margin-bottom: 14px; flex-wrap: wrap; gap: 10px;
+    margin-bottom: 16px; flex-wrap: wrap; gap: 10px;
   }
   h1 {
-    font-size: 1.2em; margin: 0;
+    font-size: 1.1em; margin: 0;
     display: flex; align-items: center; gap: 6px;
   }
   .sub { font-size: 0.78em; color: #8b949e; margin-top: 2px; }
@@ -33,75 +32,64 @@
   button:hover { background: #30363d; }
   button:disabled { opacity: 0.5; cursor: wait; }
 
-  /* STATS GRID */
-  .stats {
-    display: grid; grid-template-columns: repeat(4, 1fr);
-    gap: 8px; margin-bottom: 16px;
+  /* COMPACT STATS — tek satır küçük rakamlar */
+  .ministats {
+    display: flex; gap: 14px; padding: 10px 0;
+    color: #8b949e; font-size: 0.85em;
+    border-bottom: 1px solid #21262d;
+    margin-bottom: 18px;
+    overflow-x: auto;
   }
-  .stat {
-    background: #161b22; border: 1px solid #30363d;
-    border-radius: 8px; padding: 10px; text-align: center;
-  }
-  .stat .n { font-size: 1.7em; font-weight: 700; line-height: 1.1; }
-  .stat .l { font-size: 0.7em; color: #8b949e;
-             text-transform: uppercase; letter-spacing: 0.04em;
-             margin-top: 3px; }
-  .stat.banker .n { color: #56d364; }
-  .stat.value  .n { color: #58a6ff; }
-  .stat.avoid  .n { color: #f85149; }
-  .stat.skip   .n { color: #8b949e; }
+  .ministat { white-space: nowrap; }
+  .ministat b { color: #e6edf3; font-size: 1.1em; }
 
-  /* MAIN TABLE */
-  .section {
-    background: #161b22; border: 1px solid #30363d;
-    border-radius: 8px; margin-bottom: 14px; overflow: hidden;
+  /* BIG SECTIONS */
+  .big-title {
+    font-size: 1em; font-weight: 700;
+    margin: 20px 0 8px; padding: 0 4px;
+    display: flex; justify-content: space-between; align-items: baseline;
   }
-  .section h2 {
-    font-size: 0.95em; margin: 0; padding: 11px 14px;
-    border-bottom: 1px solid #30363d;
-    background: #1f2630;
-    display: flex; justify-content: space-between; align-items: center;
+  .big-title .right {
+    font-size: 0.75em; font-weight: 500; color: #8b949e;
   }
-  .section .body { padding: 0; }
 
-  .picks-table {
-    width: 100%; border-collapse: collapse; font-size: 0.85em;
+  /* PICK ROW (big, easy-tap) */
+  .pick-list { list-style: none; padding: 0; margin: 0; }
+  .pick-row {
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 10px; padding: 12px 14px;
+    margin-bottom: 8px;
+    display: flex; align-items: center; gap: 14px;
   }
-  .picks-table th {
-    background: #1f2630; color: #8b949e; font-size: 0.7em;
-    text-align: left; padding: 7px 10px; font-weight: 600;
-    text-transform: uppercase; letter-spacing: 0.04em;
-    border-bottom: 1px solid #30363d;
+  .pick-row.won { background: rgba(86, 211, 100, 0.10);
+                  border-color: #56d364; }
+  .pick-row.lost { background: rgba(248, 81, 73, 0.06);
+                   border-color: #6e2c2c; }
+  .pick-rank {
+    font-size: 1.4em; font-weight: 700; color: #8b949e;
+    min-width: 26px; text-align: center;
   }
-  .picks-table td {
-    padding: 9px 10px; border-bottom: 1px solid #21262d;
-    vertical-align: middle;
+  .pick-icon { font-size: 1.6em; }
+  .pick-body { flex: 1; min-width: 0; }
+  .pick-main {
+    font-size: 1.02em; font-weight: 600; color: #e6edf3;
+    display: flex; align-items: center; gap: 6px;
+    flex-wrap: wrap;
   }
-  .picks-table tr:last-child td { border-bottom: none; }
-  .picks-table tr.won { background: rgba(86, 211, 100, 0.08); }
-  .picks-table tr.lost { background: rgba(248, 81, 73, 0.05); }
-  .kind-cell {
-    font-size: 1.05em; width: 30px; text-align: center;
+  .pick-main .horse-no { color: #58a6ff; }
+  .pick-sub {
+    font-size: 0.82em; color: #8b949e; margin-top: 2px;
   }
-  .pick-horse { font-weight: 600; }
-  .pick-meta {
-    color: #8b949e; font-size: 0.82em;
+  .pick-detail {
+    font-size: 0.82em; color: #c9d1d9; margin-top: 4px;
   }
-  .pick-reason { color: #c9d1d9; font-size: 0.85em; }
-  .pick-outcome { text-align: center; width: 50px; font-weight: 700; }
+  .pick-outcome {
+    font-size: 1.5em; font-weight: 700;
+    min-width: 32px; text-align: center;
+  }
   .pick-outcome.won { color: #56d364; }
   .pick-outcome.lost { color: #f85149; }
-  .pick-outcome.pending { color: #6e7681; }
-
-  .tier-badge {
-    display: inline-block; padding: 1px 5px; border-radius: 4px;
-    font-size: 0.65em; font-weight: 700;
-    margin-left: 4px; vertical-align: middle;
-  }
-  .tier-DIAMOND { background: #ffd700; color: #1c1c1c; }
-  .tier-ALTIN { background: #f0883e; color: #1c1c1c; }
-  .tier-PREMIUM { background: #58a6ff; color: #1c1c1c; }
-  .tier-FIRSAT { background: #a371f7; color: white; }
+  .pick-outcome.pending { color: #6e7681; font-size: 1em; }
 
   /* DETAILS COLLAPSIBLES */
   details {
@@ -109,15 +97,15 @@
     border-radius: 8px; margin-bottom: 8px; overflow: hidden;
   }
   details summary {
-    cursor: pointer; padding: 12px 14px;
-    font-size: 0.9em; user-select: none;
+    cursor: pointer; padding: 13px 14px;
+    font-size: 0.92em; user-select: none;
     list-style: none;
     display: flex; justify-content: space-between; align-items: center;
   }
   details summary::-webkit-details-marker { display: none; }
   details summary::before {
     content: "▶"; color: #8b949e; margin-right: 8px;
-    transition: transform 0.2s;
+    transition: transform 0.2s; font-size: 0.85em;
   }
   details[open] summary::before { transform: rotate(90deg); }
   details .content { padding: 0 14px 14px; }
@@ -126,6 +114,18 @@
     padding: 1px 8px; border-radius: 10px; font-size: 0.78em;
   }
 
+  /* RACE MINI-CARD inside details */
+  .race-card {
+    background: #0d1117; border: 1px solid #21262d;
+    border-radius: 6px; padding: 8px 10px; margin: 6px 0;
+    font-size: 0.85em;
+  }
+  .race-card .head { color: #58a6ff; font-weight: 600;
+                     margin-bottom: 3px; }
+  .race-card .meta { color: #8b949e; font-size: 0.82em; }
+  .race-card .picks-line { margin-top: 4px; }
+  .race-card.no-bet { opacity: 0.55; }
+
   /* COUPON TEXT */
   .coupon-text {
     background: #0a0e13; border: 1px solid #21262d;
@@ -133,7 +133,7 @@
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
     font-size: 0.78em; line-height: 1.4;
     white-space: pre-wrap; word-break: break-word;
-    max-height: 400px; overflow-y: auto; color: #c9d1d9;
+    max-height: 380px; overflow-y: auto; color: #c9d1d9;
   }
   .telegram-msg { margin-bottom: 10px; }
   .telegram-msg .head {
@@ -153,9 +153,8 @@
     font-size: 0.72em; font-weight: 600;
   }
 
-  /* EMPTY STATES */
   .empty {
-    text-align: center; padding: 18px; color: #8b949e;
+    text-align: center; padding: 22px; color: #8b949e;
     font-size: 0.88em; font-style: italic;
   }
   .loading::after {
@@ -166,18 +165,14 @@
 
   .disclaimer {
     text-align: center; color: #6e7681; font-size: 0.74em;
-    font-style: italic; margin-top: 20px; padding: 10px;
+    font-style: italic; margin-top: 22px; padding: 10px;
   }
 
-  /* MOBILE */
-  @media (max-width: 640px) {
-    body { padding: 8px; }
-    h1 { font-size: 1.05em; }
-    .stats { grid-template-columns: repeat(2, 1fr); gap: 6px; }
-    .stat .n { font-size: 1.4em; }
-    .picks-table th, .picks-table td { padding: 6px 6px; font-size: 0.78em; }
-    .picks-table .pick-reason { display: none; }
-    .section h2 { font-size: 0.85em; padding: 9px 10px; }
+  @media (max-width: 600px) {
+    body { padding: 10px; }
+    .pick-row { padding: 10px 12px; gap: 10px; }
+    .pick-icon { font-size: 1.35em; }
+    .pick-main { font-size: 0.95em; }
   }
 </style>
 </head>
@@ -195,90 +190,52 @@
   </div>
 </header>
 
-<!-- 4 BIG STATS -->
-<div class="stats">
-  <div class="stat banker">
-    <div class="n" id="stat-banker">…</div>
-    <div class="l">⭐ Ana At</div>
-  </div>
-  <div class="stat value">
-    <div class="n" id="stat-value">…</div>
-    <div class="l">💎 Değer</div>
-  </div>
-  <div class="stat avoid">
-    <div class="n" id="stat-avoid">…</div>
-    <div class="l">⚠ Tuzak</div>
-  </div>
-  <div class="stat skip">
-    <div class="n" id="stat-skip">…</div>
-    <div class="l">🛑 Pas</div>
-  </div>
+<!-- Compact stats — tek satır -->
+<div class="ministats">
+  <div class="ministat">⭐ <b id="stat-banker">…</b> ana at</div>
+  <div class="ministat">💎 <b id="stat-value">…</b> değer</div>
+  <div class="ministat">⚠ <b id="stat-avoid">…</b> tuzak</div>
+  <div class="ministat">🛑 <b id="stat-skip">…</b> pas</div>
+  <div class="ministat">🏇 <b id="stat-races">…</b> yarış</div>
 </div>
 
-<!-- EXPLAINER -->
-<div style="background:#1f2630; border:1px solid #30363d; border-radius:8px;
-            padding:10px 12px; margin-bottom:14px; font-size:0.84em;
-            color:#c9d1d9;">
-  <strong>Nasıl okunacak:</strong>
-  Her satır = 1 yarış. Sistemin tahmini: bu atların TJK ALTILI'da
-  <em>üst 4'e (İLK-4)</em> girme olasılığı yüksek.
-  <span style="color:#56d364;">⭐ Ana At</span> = model + halk uyumlu en güvenli aday.
-  <span style="color:#58a6ff;">💎 Değer</span> = model halktan daha güçlü görüyor.
-  <span style="color:#f85149;">⚠ Tuzak</span> = halk yüksek tutmuş, model zayıf.
-  <span style="color:#8b949e;">🛑 PAS</span> = belirsizlik yüksek, sistem öneri yapmıyor.
+<!-- TOP 5 PICKS -->
+<div class="big-title">
+  <span>⭐💎 Bugün en güçlü 5 öneri</span>
+  <span class="right" id="picks-result"></span>
 </div>
+<ul class="pick-list" id="top-picks-list">
+  <li class="empty loading">Yükleniyor</li>
+</ul>
 
-<!-- RACES TABLE (1 row per race) -->
-<div class="section">
-  <h2>
-    🏇 Bugünkü Yarışlar
-    <span id="picks-result">…</span>
-  </h2>
-  <div class="body" id="races-body">
-    <div class="empty loading">Yükleniyor</div>
-  </div>
+<!-- TOP 3 TRAPS -->
+<div class="big-title">
+  <span>⚠ Kaçınılan 3 tuzak</span>
+  <span class="right">halk yüksek, model zayıf</span>
 </div>
+<ul class="pick-list" id="top-traps-list">
+  <li class="empty loading">Yükleniyor</li>
+</ul>
 
-<!-- HISTORY -->
-<div class="section">
-  <h2>
-    📈 Son 14 Gün
-    <span id="hist-count" style="font-size: 0.75em; color: #8b949e;">…</span>
-  </h2>
-  <div class="body" id="hist-body">
-    <div class="empty loading">Yükleniyor</div>
-  </div>
-</div>
-
-<!-- DETAILS -->
-<details id="det-telegram">
+<!-- COLLAPSIBLES -->
+<details id="det-races">
   <summary>
-    <span>📨 Telegram'a giden mesajlar</span>
-    <span class="count" id="tg-count">…</span>
+    <span>🏇 Tüm yarışlar bugün</span>
+    <span class="count" id="races-count">…</span>
   </summary>
-  <div class="content" id="tg-content">
-    <div class="empty">Yükleniyor…</div>
-  </div>
-</details>
-
-<details id="det-allraces">
-  <summary>
-    <span>🐎 Tüm yarış detayları (MP/AGF/tier)</span>
-    <span class="count" id="model-count">…</span>
-  </summary>
-  <div class="content" id="model-content">
+  <div class="content" id="races-content">
     <div class="empty">Yükleniyor…</div>
   </div>
 </details>
 
 <details id="det-sib">
   <summary>
-    <span>📊 SİB BUNU OYNA picks (canlı tetik)</span>
+    <span>📊 SİB BUNU OYNA picks</span>
     <span class="count" id="sib-count">…</span>
   </summary>
   <div class="content">
     <div style="margin-bottom: 8px;">
-      <button id="sib-refresh-btn">↻ Bugünün SİB picks'lerini canlı çek (~30s)</button>
+      <button id="sib-refresh-btn">↻ Canlı çek (~30s)</button>
       <span id="sib-status" style="margin-left: 8px; font-size: 0.8em; color: #8b949e;"></span>
     </div>
     <div id="sib-content">
@@ -287,7 +244,29 @@
   </div>
 </details>
 
-<div class="disclaimer" id="disclaimer">…</div>
+<details id="det-history">
+  <summary>
+    <span>📈 Son 14 günün özeti</span>
+    <span class="count" id="hist-count">…</span>
+  </summary>
+  <div class="content" id="hist-body">
+    <div class="empty">Yükleniyor…</div>
+  </div>
+</details>
+
+<details id="det-telegram">
+  <summary>
+    <span>📨 Telegram mesajları</span>
+    <span class="count" id="tg-count">…</span>
+  </summary>
+  <div class="content" id="tg-content">
+    <div class="empty">Yükleniyor…</div>
+  </div>
+</details>
+
+<div class="disclaimer" id="disclaimer">
+  Deneme / shadow kuponudur. Resmi bot kuponu değildir. Otomatik bahis değildir.
+</div>
 
 </main>
 
@@ -319,208 +298,130 @@ function pct(n, den) {
   return Math.round(100 * n / den) + "%";
 }
 
-const KIND_ICON = {
-  banker: "⭐", value: "💎", chaos: "🎲", avoid: "⚠", no_bet: "🛑",
-};
-const KIND_LABEL = {
-  banker: "Ana At", value: "Değer", chaos: "Şans",
-  avoid: "Tuzak", no_bet: "PAS",
-};
-
 function renderHeader(date) {
   $("date-display").textContent = fmtTrDate(date)
     + " · Deneme · oto-bahis yok";
 }
 
 function renderStats(s) {
-  if (!s) {
-    $("stat-banker").textContent = "0";
-    $("stat-value").textContent = "0";
-    $("stat-avoid").textContent = "0";
-    $("stat-skip").textContent = "0";
-    return;
-  }
+  if (!s) s = {};
   $("stat-banker").textContent = s.banker_count || 0;
   $("stat-value").textContent = s.value_count || 0;
   $("stat-avoid").textContent = s.avoid_count || 0;
   $("stat-skip").textContent = s.no_bet || 0;
+  $("stat-races").textContent = s.races || 0;
+
   const w = s.won || 0, l = s.lost || 0, p = s.pending || 0;
   if (w || l) {
     $("picks-result").innerHTML =
-      `<span style="color:#56d364;font-size:0.78em;">✓ ${w}</span>
-       <span style="color:#f85149;font-size:0.78em;margin-left:8px;">✗ ${l}</span>
-       <span style="color:#8b949e;font-size:0.78em;margin-left:8px;">⏳ ${p}</span>`;
+      '<span style="color:#56d364;">✓ ' + w + '</span>'
+      + ' <span style="color:#f85149;">✗ ' + l + '</span>'
+      + ' <span style="color:#8b949e;">⏳ ' + p + '</span>';
   } else {
-    $("picks-result").innerHTML =
-      `<span style="color:#8b949e;font-size:0.78em;">⏳ ${p} bekleniyor</span>`;
+    $("picks-result").textContent = "⏳ bekleniyor";
   }
 }
 
-function renderRaces(races) {
-  const body = $("races-body");
-  body.innerHTML = "";
-  if (!races || races.length === 0) {
-    body.appendChild(el("div", {
-      className: "empty",
-      textContent: "Bugün için yarış yok ya da pipeline henüz çalışmadı.",
-    }));
+function pickRow(p, rank) {
+  const iconMap = { banker: "⭐", value: "💎", avoid: "⚠" };
+  const wonMark = p.won === true ? "✓" : p.won === false ? "✗" : "⏳";
+  const wonCls = p.won === true ? "won"
+                 : p.won === false ? "lost" : "pending";
+  const rowCls = p.won === true ? "won"
+                 : p.won === false ? "lost" : "";
+
+  const main = el("div", { className: "pick-main" });
+  main.appendChild(el("span", { className: "horse-no",
+    textContent: "#" + p.horse_no }));
+  main.appendChild(document.createTextNode(" " + (p.horse_name || "?")));
+
+  const sub = el("div", { className: "pick-sub",
+    textContent: (p.hippo || "?") + " " + (p.race_no || "?") + ".k"
+                 + " · " + (p.race_time || "")
+                 + (p.field_size ? " · " + p.field_size + " at" : ""),
+  });
+
+  let detailText = "";
+  if (p.kind === "banker" && p.mp != null)
+    detailText = "Model+halk uyumlu";
+  else if (p.kind === "value")
+    detailText = "Model halktan güçlü " + (p.detail || "");
+  else if (p.kind === "avoid")
+    detailText = "Halk %" + (p.agf ? Math.round(p.agf) : "?")
+                 + " tutmuş, model zayıf";
+
+  const detail = el("div", { className: "pick-detail",
+    textContent: detailText });
+
+  const body = el("div", { className: "pick-body" }, main, sub, detail);
+
+  return el("li", { className: "pick-row " + rowCls },
+    el("div", { className: "pick-rank", textContent: rank + "." }),
+    el("div", { className: "pick-icon",
+      textContent: iconMap[p.kind] || "•" }),
+    body,
+    el("div", { className: "pick-outcome " + wonCls,
+      textContent: wonMark }),
+  );
+}
+
+function renderTopPicks(picks) {
+  const ul = $("top-picks-list");
+  ul.innerHTML = "";
+  if (!picks || picks.length === 0) {
+    ul.appendChild(el("li", { className: "empty",
+      textContent: "Bugün net öneri yok ya da pipeline çalışmadı." }));
     return;
   }
-  const tbl = el("table", { className: "picks-table" });
-  const thead = el("thead");
-  thead.appendChild(el("tr", null,
-    el("th", { textContent: "Yarış" }),
-    el("th", { textContent: "Öneri" }),
-    el("th", { textContent: "Adaylar" }),
-    el("th", { style: "text-align:center;", textContent: "Sonuç" }),
-  ));
-  tbl.appendChild(thead);
-  const tbody = el("tbody");
-  for (const race of races) {
-    const out = race.outcome || {};
-    let trCls = "";
-    const ourWin = (out.our_winners || []).length;
-    if (out.status === "graded") {
-      trCls = ourWin > 0 ? "won" : "lost";
-    }
+  picks.forEach((p, i) => ul.appendChild(pickRow(p, i + 1)));
+}
 
-    const raceCell = el("td", null,
-      el("div", { style: "font-weight:600;",
-        textContent: (race.race_time || "") }),
-      el("div", { className: "pick-meta",
-        textContent: (race.hippo || "?") + " " + (race.race_no || "?")
-                     + ".k · " + (race.field_size || "?") + " at" }),
-    );
-
-    let suggestCell;
-    if (race.mode === "NO_BET") {
-      suggestCell = el("td", null,
-        el("span", { style: "color:#8b949e;",
-          textContent: race.headline || "🛑 PAS" }),
-      );
-    } else {
-      suggestCell = el("td", null,
-        el("span", { style: "font-weight:600;",
-          textContent: race.headline || "" }),
-      );
-    }
-
-    // Candidates cell — chip list (banker, value, etc.)
-    const candCell = el("td", null);
-    if (race.mode === "NO_BET") {
-      candCell.appendChild(el("span", { className: "pick-meta",
-        textContent: "—" }));
-    } else {
-      for (const p of (race.main_picks || [])) {
-        const colors = {
-          banker: "#56d364", value: "#58a6ff",
-          chaos: "#d29922", avoid: "#f85149",
-        };
-        const c = colors[p.kind] || "#8b949e";
-        const wonMark = p.won === true ? " ✓" : (p.won === false ? " ✗" : "");
-        const chip = el("span", {
-          style: "display:inline-block; background:#0a0e13; "
-                 + "border:1px solid " + c + "; "
-                 + "color:" + c + "; padding:2px 7px; "
-                 + "border-radius:12px; margin:2px 3px 2px 0; "
-                 + "font-size:0.82em; font-weight:600;",
-          textContent: (p.label ? p.label.split(" ")[0] : "")
-                       + " #" + p.horse_no + " " + (p.horse_name || "?")
-                       + (p.agf != null
-                          ? " (%" + Math.round(p.agf) + ")" : "")
-                       + (p.detail ? " · " + p.detail : "")
-                       + wonMark,
-        });
-        candCell.appendChild(chip);
-      }
-      for (const p of (race.other_picks || [])) {
-        const c = p.kind === "avoid" ? "#f85149" : "#8b949e";
-        const wonMark = p.won === true ? " ✓" : (p.won === false ? " ✗" : "");
-        const chip = el("span", {
-          style: "display:inline-block; background:transparent; "
-                 + "border:1px solid " + c + "; "
-                 + "color:" + c + "; padding:1px 6px; "
-                 + "border-radius:10px; margin:2px 3px 2px 0; "
-                 + "font-size:0.74em;",
-          textContent: (p.label ? p.label.split(" ")[0] : "")
-                       + " #" + p.horse_no + wonMark,
-        });
-        candCell.appendChild(chip);
-      }
-    }
-
-    // Outcome
-    let outcomeCell;
-    if (out.status === "graded") {
-      if (out.winner_horse_no != null) {
-        const ourWinTxt = ourWin > 0 ? "✓ " + ourWin : "✗";
-        const winColor = ourWin > 0 ? "#56d364" : "#f85149";
-        outcomeCell = el("td", { className: "pick-outcome",
-          style: "color:" + winColor + ";",
-          textContent: ourWinTxt,
-        });
-      } else {
-        outcomeCell = el("td", { className: "pick-outcome pending",
-          textContent: "—" });
-      }
-    } else {
-      outcomeCell = el("td", { className: "pick-outcome pending",
-        textContent: "—" });
-    }
-
-    tbody.appendChild(el("tr", { className: trCls },
-      raceCell, suggestCell, candCell, outcomeCell,
-    ));
+function renderTopTraps(traps) {
+  const ul = $("top-traps-list");
+  ul.innerHTML = "";
+  if (!traps || traps.length === 0) {
+    ul.appendChild(el("li", { className: "empty",
+      textContent: "Bugün net tuzak yok." }));
+    return;
   }
-  tbl.appendChild(tbody);
-  body.appendChild(tbl);
+  traps.forEach((p, i) => {
+    p.kind = "avoid";
+    ul.appendChild(pickRow(p, i + 1));
+  });
 }
 
-// Backwards-compat (eski payload pick list ile kullanılabilir)
-function renderPicks(picks) {
-  // No-op: yeni şablon races view kullanır.
-}
-
-function renderHistory(data) {
-  const box = $("hist-body");
+function renderAllRaces(races) {
+  const box = $("races-content");
   box.innerHTML = "";
-  if (!data.rows || data.rows.length === 0) {
-    box.appendChild(el("div", {
-      className: "empty",
-      textContent: "Henüz tarihsel veri yok.",
-    }));
-    $("hist-count").textContent = "";
+  $("races-count").textContent = (races ? races.length : 0) + " yarış";
+  if (!races || races.length === 0) {
+    box.appendChild(el("div", { className: "empty",
+      textContent: "Yarış bilgisi yok." }));
     return;
   }
-  $("hist-count").textContent = data.days_present + " gün";
-  const tbl = el("table", { className: "history-table" });
-  const thead = el("thead");
-  thead.appendChild(el("tr", null,
-    el("th", { textContent: "Gün" }),
-    el("th", { textContent: "Pred/Sonuç" }),
-    el("th", { textContent: "Banker hayatta" }),
-    el("th", { textContent: "Aday top-4" }),
-    el("th", { textContent: "Wide hit" }),
-    el("th", { textContent: "Pas" }),
-  ));
-  tbl.appendChild(thead);
-  const tbody = el("tbody");
-  for (const r of data.rows) {
-    const s = r.shadow || {};
-    tbody.appendChild(el("tr", null,
-      el("td", { textContent: r.date }),
-      el("td", { textContent: (s.predictions || 0) + " / " + (s.results || 0) }),
-      el("td", { textContent: (s.banker_survived || 0) + " ("
-                 + pct(s.banker_survived, s.results) + ")" }),
-      el("td", { textContent: (s.candidate_hit || 0) + " ("
-                 + pct(s.candidate_hit, s.results) + ")" }),
-      el("td", { textContent: (s.wide_hit || 0) + " ("
-                 + pct(s.wide_hit, s.results) + ")" }),
-      el("td", { textContent: s.no_bet || 0 }),
-    ));
+  for (const race of races) {
+    const card = el("div", {
+      className: "race-card" + (race.mode === "NO_BET" ? " no-bet" : ""),
+    });
+    card.appendChild(el("div", { className: "head",
+      textContent: (race.hippo || "?") + " " + (race.race_no || "?")
+                   + ". koşu" }));
+    card.appendChild(el("div", { className: "meta",
+      textContent: (race.race_time || "") + " · "
+                   + (race.field_size || "?") + " at · "
+                   + (race.headline || "—") }));
+    if (race.mode !== "NO_BET" && (race.main_picks || []).length) {
+      const chips = (race.main_picks || []).slice(0, 5).map(p => {
+        const ic = p.kind === "banker" ? "⭐"
+                   : p.kind === "value" ? "💎" : "•";
+        const won = p.won === true ? "✓" : p.won === false ? "✗" : "";
+        return ic + " #" + p.horse_no + " " + (p.horse_name || "?") + won;
+      }).join("  ·  ");
+      card.appendChild(el("div", { className: "picks-line",
+        textContent: chips }));
+    }
+    box.appendChild(card);
   }
-  tbl.appendChild(tbody);
-  box.appendChild(tbl);
 }
 
 function renderTelegramMessages(msgs) {
@@ -528,10 +429,8 @@ function renderTelegramMessages(msgs) {
   box.innerHTML = "";
   $("tg-count").textContent = (msgs ? msgs.length : 0);
   if (!msgs || msgs.length === 0) {
-    box.appendChild(el("div", {
-      className: "empty",
-      textContent: "Henüz mesaj kaydı yok.",
-    }));
+    box.appendChild(el("div", { className: "empty",
+      textContent: "Henüz mesaj kaydı yok." }));
     return;
   }
   for (const m of msgs) {
@@ -545,68 +444,39 @@ function renderTelegramMessages(msgs) {
   }
 }
 
-function renderModelOutputs(data) {
-  const box = $("model-content");
+function renderHistory(data) {
+  const box = $("hist-body");
   box.innerHTML = "";
-  const hippos = (data && data.hippos) || [];
-  $("model-count").textContent = hippos.length + " hipodrom";
-  if (!hippos.length) {
-    box.appendChild(el("div", {
-      className: "empty",
-      textContent: "Bugün pool yok.",
-    }));
+  if (!data.rows || data.rows.length === 0) {
+    box.appendChild(el("div", { className: "empty",
+      textContent: "Henüz tarihsel veri yok." }));
+    $("hist-count").textContent = "";
     return;
   }
-  for (const h of hippos) {
-    const det = el("details");
-    const sum = el("summary", null,
-      document.createTextNode(h.hippo + " · " + (h.first_time || "")
-        + " · " + (h.n_legs || h.race_legs?.length || 0) + " ayak"
-        + " · " + (h.cost_tl ? Math.round(h.cost_tl) + " TL" : "—")),
-    );
-    det.appendChild(sum);
-    const body = el("div", { className: "content" });
-    const legs = h.race_legs || [];
-    let legIdx = 0;
-    for (const leg of legs) {
-      legIdx++;
-      if (!leg || !leg.length) continue;
-      const h0 = leg[0];
-      const time = (h0.start_time || "").substring(0, 5);
-      const raceNo = h0.race_number || legIdx;
-      body.appendChild(el("div", {
-        style: "color:#58a6ff; font-weight:600; margin-top:10px; font-size:0.88em;",
-        textContent: legIdx + ". ayak · " + raceNo + ". koşu · " + time,
-      }));
-      const tbl = el("table", { style: "width:100%; font-size:0.8em; border-collapse:collapse;" });
-      const horses = [...leg].sort((a, b) => (b.agf_value || 0) - (a.agf_value || 0));
-      const trHead = el("tr", null);
-      ["#", "At", "AGF", "Model", "Tier"].forEach(t => trHead.appendChild(
-        el("th", { textContent: t,
-          style: "text-align:left; color:#8b949e; font-size:0.85em; padding:3px 5px; border-bottom:1px solid #30363d;" })
-      ));
-      tbl.appendChild(trHead);
-      for (const hr of horses) {
-        tbl.appendChild(el("tr", null,
-          el("td", { textContent: "#" + (hr.horse_number || hr.no || "?"),
-            style: "padding:3px 5px; border-bottom:1px solid #21262d;" }),
-          el("td", { textContent: hr.horse_name || hr.name || "?",
-            style: "padding:3px 5px; border-bottom:1px solid #21262d;" }),
-          el("td", { textContent: "%" + (hr.agf_value != null
-            ? hr.agf_value.toFixed(1) : "—"),
-            style: "padding:3px 5px; border-bottom:1px solid #21262d;" }),
-          el("td", { textContent: hr.model_prob != null
-            ? hr.model_prob.toFixed(3) : "—",
-            style: "padding:3px 5px; border-bottom:1px solid #21262d;" }),
-          el("td", { textContent: hr.tier_mark || "—",
-            style: "padding:3px 5px; border-bottom:1px solid #21262d;" }),
-        ));
-      }
-      body.appendChild(tbl);
-    }
-    det.appendChild(body);
-    box.appendChild(det);
+  $("hist-count").textContent = data.days_present + " gün";
+  const tbl = el("table", { className: "history-table" });
+  const thead = el("thead");
+  thead.appendChild(el("tr", null,
+    el("th", { textContent: "Gün" }),
+    el("th", { textContent: "Pred/Sonuç" }),
+    el("th", { textContent: "Banker hayatta" }),
+    el("th", { textContent: "Wide hit" }),
+  ));
+  tbl.appendChild(thead);
+  const tbody = el("tbody");
+  for (const r of data.rows) {
+    const s = r.shadow || {};
+    tbody.appendChild(el("tr", null,
+      el("td", { textContent: r.date }),
+      el("td", { textContent: (s.predictions || 0) + " / " + (s.results || 0) }),
+      el("td", { textContent: (s.banker_survived || 0) + " ("
+                 + pct(s.banker_survived, s.results) + ")" }),
+      el("td", { textContent: (s.wide_hit || 0) + " ("
+                 + pct(s.wide_hit, s.results) + ")" }),
+    ));
   }
+  tbl.appendChild(tbody);
+  box.appendChild(tbl);
 }
 
 function renderSibContent(rows) {
@@ -614,51 +484,30 @@ function renderSibContent(rows) {
   box.innerHTML = "";
   $("sib-count").textContent = (rows ? rows.length : 0);
   if (!rows || rows.length === 0) {
-    box.appendChild(el("div", {
-      className: "empty",
-      textContent: "Henüz SİB pick'i yok. Butona basarak canlı çek.",
-    }));
+    box.appendChild(el("div", { className: "empty",
+      textContent: "Henüz SİB pick'i yok. Butona basarak canlı çek." }));
     return;
   }
-  const tbl = el("table", { className: "picks-table" });
-  const thead = el("thead");
-  thead.appendChild(el("tr", null,
-    el("th", { textContent: "Tier" }),
-    el("th", { textContent: "Yarış" }),
-    el("th", { textContent: "At" }),
-    el("th", { textContent: "AGF/MP" }),
-    el("th", { textContent: "Sonuç" }),
-  ));
-  tbl.appendChild(thead);
-  const tbody = el("tbody");
   for (const r of rows) {
     const tier = (r.tier || "").toUpperCase();
     const won = (r.outcome || {}).won;
-    let trCls = "";
-    if (won === true) trCls = "won";
-    else if (won === false) trCls = "lost";
-    tbody.appendChild(el("tr", { className: trCls },
-      el("td", null, el("span", {
-        className: "tier-badge tier-" + tier, textContent: tier })),
-      el("td", { textContent: (r.hippo || "?") + " " + (r.race_no || "?") + ".k " + (r.race_time || "") }),
-      el("td", { textContent: "#" + r.horse_no + " " + (r.horse_name || "?") }),
-      el("td", { textContent: "%" + (r.agf != null ? r.agf : "—")
-                 + " · MP " + (r.mp != null ? r.mp : "—") }),
-      el("td", {
-        className: "pick-outcome " + (won === true ? "won" : won === false ? "lost" : "pending"),
-        textContent: won === true ? "✓" : won === false ? "✗" : "—",
-      }),
-    ));
+    const wonTxt = won === true ? "✓" : won === false ? "✗" : "⏳";
+    const card = el("div", { className: "race-card" });
+    card.appendChild(el("div", { className: "head",
+      textContent: tier + " · " + (r.hippo || "?") + " "
+                   + (r.race_no || "?") + ". koşu · " + (r.race_time || "") }));
+    card.appendChild(el("div", null,
+      "#" + r.horse_no + " " + (r.horse_name || "?")
+      + " · %" + (r.agf || "—") + " · MP " + (r.mp || "—") + " · " + wonTxt));
+    box.appendChild(card);
   }
-  tbl.appendChild(tbody);
-  box.appendChild(tbl);
 }
 
 async function refreshSib() {
   const status = $("sib-status");
   const btn = $("sib-refresh-btn");
   btn.disabled = true;
-  status.textContent = "30 saniye kadar sürebilir…";
+  status.textContent = "30 saniye sürebilir…";
   try {
     const r = await fetch("/api/berkay_deneme/refresh_sib?force=1",
                           { method: "POST" });
@@ -683,7 +532,6 @@ async function refreshSib() {
 
 async function load(dateStr) {
   renderHeader(dateStr || new Date().toISOString().slice(0, 10));
-  // 1) Main view (fast)
   try {
     const url = dateStr
       ? "/api/berkay_deneme/today?date=" + encodeURIComponent(dateStr)
@@ -691,15 +539,17 @@ async function load(dateStr) {
     const r = await fetch(url);
     const data = await r.json();
     renderStats(data.stats);
-    renderRaces(data.races || []);
-    renderTelegramMessages(data.telegram_messages || []);
+    renderTopPicks(data.top_picks || []);
+    renderTopTraps(data.top_traps || []);
+    renderAllRaces(data.races || []);
     renderSibContent((data.sib && data.sib.rows) || []);
-    $("disclaimer").textContent = data.disclaimer || "";
+    renderTelegramMessages(data.telegram_messages || []);
+    $("disclaimer").textContent = data.disclaimer
+      || "Deneme · oto-bahis yok.";
   } catch (e) {
-    $("picks-body").innerHTML =
-      '<div class="empty">Yüklenemedi: ' + e + '</div>';
+    $("top-picks-list").innerHTML =
+      '<li class="empty">Yüklenemedi: ' + e + '</li>';
   }
-  // 2) History (separate)
   try {
     const r = await fetch("/api/berkay_deneme/history?days=14");
     const data = await r.json();
@@ -707,16 +557,6 @@ async function load(dateStr) {
   } catch (e) {
     $("hist-body").innerHTML =
       '<div class="empty">Geçmiş yüklenemedi: ' + e + '</div>';
-  }
-  // 3) Model outputs (slow, separate)
-  try {
-    const today = dateStr || new Date().toISOString().slice(0, 10);
-    const r = await fetch("/api/smart_coupon/all/" + today);
-    const data = await r.json();
-    renderModelOutputs(data);
-  } catch (e) {
-    $("model-content").innerHTML =
-      '<div class="empty">Model çıktıları yüklenemedi: ' + e + '</div>';
   }
 }
 

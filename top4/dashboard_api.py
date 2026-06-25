@@ -479,6 +479,87 @@ def _build_races_view(shadow_rows: list, sib_rows: list) -> list[dict]:
     return out
 
 
+def _build_top_picks(races: list, k: int = 5) -> list[dict]:
+    """Bugünün EN GÜÇLÜ K önerisi (banker + değer).
+
+    Berkay: "BUGÜN EN GÜÇLÜ 5" tarzı sade liste — tablo yok.
+    Skor: banker hep önde, sonra değer (gap pp), tie-break = AGF.
+    """
+    cands: list[dict] = []
+    for race in races or []:
+        for p in (race.get("main_picks") or []):
+            kind = p.get("kind")
+            if kind not in ("banker", "value"):
+                continue
+            # Skor: banker bonus + p_top4/gap
+            score = 0.0
+            if kind == "banker":
+                score = 1000.0
+                # Higher mp = stronger banker
+                score += float(p.get("mp") or 0) * 100
+            elif kind == "value":
+                score = 500.0
+                # Parse gap from detail (e.g. "+22pp")
+                detail = str(p.get("detail") or "")
+                if "pp" in detail:
+                    try:
+                        n = float("".join(c for c in detail
+                                          if c.isdigit() or c == "."))
+                        score += n
+                    except ValueError:
+                        pass
+            # AGF for tie-break
+            score += float(p.get("agf") or 0) * 0.1
+
+            cands.append({
+                "kind": kind,
+                "horse_no": p.get("horse_no"),
+                "horse_name": p.get("horse_name"),
+                "hippo": race.get("hippo"),
+                "race_no": race.get("race_no"),
+                "race_time": race.get("race_time"),
+                "field_size": race.get("field_size"),
+                "agf": p.get("agf"),
+                "mp": p.get("mp"),
+                "label": p.get("label"),
+                "detail": p.get("detail"),
+                "won": p.get("won"),
+                "tier": p.get("tier"),
+                "score": score,
+            })
+    cands.sort(key=lambda c: c["score"], reverse=True)
+    out = cands[:k]
+    for i, c in enumerate(out, start=1):
+        c["rank"] = i
+    return out
+
+
+def _build_top_traps(races: list, k: int = 3) -> list[dict]:
+    """KAÇINILAN K tuzak — halk yüksek tutmuş ama model zayıf."""
+    cands: list[dict] = []
+    for race in races or []:
+        for p in (race.get("other_picks") or []):
+            if p.get("kind") != "avoid":
+                continue
+            cands.append({
+                "horse_no": p.get("horse_no"),
+                "horse_name": p.get("horse_name"),
+                "hippo": race.get("hippo"),
+                "race_no": race.get("race_no"),
+                "race_time": race.get("race_time"),
+                "agf": p.get("agf"),
+                "mp": p.get("mp"),
+                "won": p.get("won"),
+                "agf_score": float(p.get("agf") or 0),
+            })
+    # En yüksek AGF + en düşük model = ilk önce
+    cands.sort(key=lambda c: c["agf_score"], reverse=True)
+    out = cands[:k]
+    for i, c in enumerate(out, start=1):
+        c["rank"] = i
+    return out
+
+
 def _build_daily_stats(shadow_rows: list, sib_rows: list,
                       unified: list) -> dict:
     """4 big numbers for the header."""
@@ -629,11 +710,16 @@ def build_today_view(date_str: Optional[str] = None) -> dict:
     daily = _build_daily_stats(shadow_rows, sib_rows, unified)
     # Race-by-race view — 1 row per race (Berkay-native)
     races = _build_races_view(shadow_rows, sib_rows)
+    # Top 5 + Top 3 traps — Berkay's "BUGÜN EN GÜÇLÜ 5" preference
+    top_picks = _build_top_picks(races, k=5)
+    top_traps = _build_top_traps(races, k=3)
 
     return {
         "date": date_str,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "stats": daily,
+        "top_picks": top_picks,
+        "top_traps": top_traps,
         "races": races,
         "picks": unified,
         "shadow": {
