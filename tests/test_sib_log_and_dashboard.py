@@ -436,3 +436,48 @@ class TestTopTraps(unittest.TestCase):
         traps = _build_top_traps(races, k=3)
         self.assertEqual(len(traps), 2)  # 2 avoid only
         self.assertEqual(traps[0]["horse_no"], 2)  # higher AGF first
+
+
+class TestTopPicksDedupe(unittest.TestCase):
+    """When same hippo has multiple altili pools, same horse appears
+    in both — top_picks must NOT show duplicates."""
+
+    def test_dedupe_by_horse_race_hippo_prefix(self):
+        from top4.dashboard_api import _build_top_picks
+        races = [
+            {"hippo": "Kocaeli · 1. Altılı (1-6)", "race_no": 2,
+             "race_time": "18:30",
+             "main_picks": [{"kind": "banker", "horse_no": 1,
+                             "horse_name": "WARRIOR", "mp": 0.4,
+                             "agf": 30, "label": "⭐", "detail": ""}],
+             "other_picks": [], "outcome": {}},
+            {"hippo": "Kocaeli · 2. Altılı (1-6)", "race_no": 2,
+             "race_time": "18:30",
+             "main_picks": [{"kind": "banker", "horse_no": 1,
+                             "horse_name": "WARRIOR", "mp": 0.4,
+                             "agf": 30, "label": "⭐", "detail": ""}],
+             "other_picks": [], "outcome": {}},
+        ]
+        top = _build_top_picks(races, k=5)
+        # Only ONE entry — same horse, same time, same hippo prefix
+        self.assertEqual(len(top), 1)
+        self.assertEqual(top[0]["horse_no"], 1)
+
+    def test_dedupe_keeps_higher_score(self):
+        from top4.dashboard_api import _build_top_picks
+        races = [
+            {"hippo": "X", "race_no": 1, "race_time": "14:00",
+             "main_picks": [{"kind": "value", "horse_no": 1,
+                             "horse_name": "A", "mp": 0.2, "agf": 5,
+                             "label": "💎", "detail": "+5pp"}],
+             "other_picks": [], "outcome": {}},
+            {"hippo": "X · 2nd pool", "race_no": 1, "race_time": "14:00",
+             "main_picks": [{"kind": "banker", "horse_no": 1,
+                             "horse_name": "A", "mp": 0.5, "agf": 30,
+                             "label": "⭐", "detail": ""}],
+             "other_picks": [], "outcome": {}},
+        ]
+        top = _build_top_picks(races, k=5)
+        self.assertEqual(len(top), 1)
+        # Higher score (banker) wins
+        self.assertEqual(top[0]["kind"], "banker")

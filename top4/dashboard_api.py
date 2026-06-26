@@ -528,7 +528,20 @@ def _build_top_picks(races: list, k: int = 5) -> list[dict]:
                 "score": score,
             })
     cands.sort(key=lambda c: c["score"], reverse=True)
-    out = cands[:k]
+    # FIX (2026-06-26): dedupe by (horse_no, race_time, hippo-prefix).
+    # Same horse appears multiple times when hippodrome has multiple
+    # altili pools (e.g. "Kocaeli · 1. Altılı" and "Kocaeli · 2. Altılı"
+    # both contain the same race). Keep first occurrence (highest score).
+    seen: set[tuple] = set()
+    deduped: list[dict] = []
+    for c in cands:
+        hippo_prefix = (str(c.get("hippo") or "").split("·")[0].strip())
+        key = (c.get("horse_no"), c.get("race_time"), hippo_prefix)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(c)
+    out = deduped[:k]
     for i, c in enumerate(out, start=1):
         c["rank"] = i
     return out
