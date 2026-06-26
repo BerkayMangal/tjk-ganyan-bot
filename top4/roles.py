@@ -81,15 +81,17 @@ def assign_roles(
             continue
 
         # ---- BANKER ----
-        # Conservative: only when model and market both strongly agree.
-        # Banker has informational value only when calibrated p_top4 is
-        # high AND the horse is the obvious favorite; otherwise the
-        # listing is just "Berkay zaten biliyor" noise.
+        # FIX (2026-06-26): the previous rule required AGF ≥ 25 (i.e.
+        # the public must AGREE) — which made BANKER = "AGF favorite" =
+        # paying 1.05 odds. Berkay's intent: BANKER should be a horse
+        # the MODEL strongly likes regardless of public, especially
+        # when public hasn't noticed (= good odds).
+        # New rule: model strength alone (p_top4 high, rank ≤ 2).
+        # AGF is informative (we still show it) but not a gate.
         banker_ok = (
             p_t4 is not None
             and p_t4 >= 0.55
             and rank <= 2
-            and (agf is None or agf >= 25)
             and uncertainty not in {"CHAOS", "NO_BET"}
         )
         if banker_ok:
@@ -103,9 +105,11 @@ def assign_roles(
             continue
 
         # ---- AVOID: public trap (high AGF, low model) ----
-        # Lowered threshold so more public traps surface (Berkay wants
-        # actionable AVOID hints).
-        if agf is not None and agf >= 28 and rank >= 4 and (p_t4 is None or p_t4 < 0.30):
+        # FIX (2026-06-26): tighter on AGF (≥20% vs 28%) + rank ≥3 (vs 4).
+        # Berkay's intent: kaçınılması gereken "halk öne çıkarmış ama
+        # model zayıf" atları daha fazla göster.
+        if (agf is not None and agf >= 20 and rank >= 3
+                and (p_t4 is None or p_t4 < 0.40)):
             reasons.append("public_trap")
             reasons.append(f"agf={agf:.1f} but rank={rank}")
             out.append(RoleAssignment(int(row.get("horse_no", i + 1)),

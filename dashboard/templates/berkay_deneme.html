@@ -199,10 +199,16 @@
   <div class="ministat">🏇 <b id="stat-races">…</b> yarış</div>
 </div>
 
-<!-- TOP 5 PICKS -->
+<!-- TOP 5 PICKS (Berkay value philosophy) -->
 <div class="big-title">
-  <span>⭐💎 Bugün en güçlü 5 öneri</span>
+  <span>💎 Bugün model halktan güçlü gördüğü 5 at</span>
   <span class="right" id="picks-result"></span>
+</div>
+<div style="font-size: 0.8em; color: #8b949e; margin: -4px 4px 8px;
+            padding: 8px 10px; background: #161b22;
+            border-radius: 6px; border-left: 3px solid #58a6ff;">
+  💡 Halkın gözünden kaçırdığı, modelimizin ilk-4'e girer dediği atlar.
+  AGF düşük + Model yüksek = iyi oran + iyi şans.
 </div>
 <ul class="pick-list" id="top-picks-list">
   <li class="empty loading">Yükleniyor</li>
@@ -342,13 +348,23 @@ function pickRow(p, rank) {
   });
 
   let detailText = "";
-  if (p.kind === "banker" && p.mp != null)
-    detailText = "Model+halk uyumlu";
-  else if (p.kind === "value")
-    detailText = "Model halktan güçlü " + (p.detail || "");
-  else if (p.kind === "avoid")
+  const gapPp = p.agf != null && p.mp != null
+                ? Math.round((p.mp - p.agf / 100) * 100) : null;
+  if (p.kind === "banker") {
+    detailText = "Model güçlü"
+      + (gapPp != null && gapPp > 0
+         ? " · halktan +" + gapPp + "pp önde"
+         : (gapPp != null && gapPp < -5
+            ? " · halk daha yüksek tutuyor"
+            : ""));
+  } else if (p.kind === "value") {
+    detailText = "Model halktan güçlü"
+      + (gapPp != null ? " (+" + Math.abs(gapPp) + "pp)" : "")
+      + (p.agf != null && p.agf < 10 ? " — halk farketmemiş, oran iyi" : "");
+  } else if (p.kind === "avoid") {
     detailText = "Halk %" + (p.agf ? Math.round(p.agf) : "?")
-                 + " tutmuş, model zayıf";
+                 + " tutmuş, model zayıf — KAÇIN";
+  }
 
   const detail = el("div", { className: "pick-detail",
     textContent: detailText });

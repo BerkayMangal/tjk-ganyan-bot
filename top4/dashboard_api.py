@@ -480,10 +480,17 @@ def _build_races_view(shadow_rows: list, sib_rows: list) -> list[dict]:
 
 
 def _build_top_picks(races: list, k: int = 5) -> list[dict]:
-    """Bugünün EN GÜÇLÜ K önerisi (banker + değer).
+    """Bugünün EN İYİ K DEĞER picks.
 
-    Berkay: "BUGÜN EN GÜÇLÜ 5" tarzı sade liste — tablo yok.
-    Skor: banker hep önde, sonra değer (gap pp), tie-break = AGF.
+    Berkay (2026-06-26): "amacımız insanların gözünden kaçırdığı ama
+    bizim modelin beğendiği atların ilk-4 ihtimaline bet etmek".
+    AGF favorileri (oran 1.05) ANLAMSIZ — model > halk olan picks öne.
+
+    Yeni skor formülü:
+      score = gap_pp * 100 (model - AGF farkı, pozitif iyi)
+            + mp * 50 (model güveni tie-break)
+            - agf * 2 (düşük AGF iyi, oran iyi olur)
+    Banker hala dahil ama gap düşükse alt sıralarda.
     """
     cands: list[dict] = []
     for race in races or []:
@@ -491,25 +498,19 @@ def _build_top_picks(races: list, k: int = 5) -> list[dict]:
             kind = p.get("kind")
             if kind not in ("banker", "value"):
                 continue
-            # Skor: banker bonus + p_top4/gap
-            score = 0.0
-            if kind == "banker":
-                score = 1000.0
-                # Higher mp = stronger banker
-                score += float(p.get("mp") or 0) * 100
-            elif kind == "value":
-                score = 500.0
-                # Parse gap from detail (e.g. "+22pp")
-                detail = str(p.get("detail") or "")
-                if "pp" in detail:
-                    try:
-                        n = float("".join(c for c in detail
-                                          if c.isdigit() or c == "."))
-                        score += n
-                    except ValueError:
-                        pass
-            # AGF for tie-break
-            score += float(p.get("agf") or 0) * 0.1
+            mp_v = float(p.get("mp") or 0)
+            agf_v = float(p.get("agf") or 0)
+            gap_pp = (mp_v - agf_v / 100.0) * 100  # in pp
+
+            # Score: value gap is KING. Banker AGF favorilerini öne
+            # çıkarmaz, sadece kategori belirtir.
+            score = gap_pp * 100.0
+            score += mp_v * 50.0
+            score -= agf_v * 2.0  # düşük AGF = iyi oran = +score
+
+            # Avoid showing horses where AGF > model significantly
+            if gap_pp < -5:
+                continue
 
             cands.append({
                 "kind": kind,

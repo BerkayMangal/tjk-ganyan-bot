@@ -391,17 +391,19 @@ def build_berkay_scientific_top4_coupon(
             expected_capture = {"error": "simulation_failed"}
 
         # Identify VALUE picks (model significantly stronger than AGF).
-        # FIX (audit 2026-06-21): require an actual AGF value. Without
-        # AGF the "model > halk" comparison is meaningless, but the old
-        # code coerced agf=None to 0.0 and produced fake +50pp gaps for
-        # horses that simply lacked market data.
-        for h in (spread + chaos + core):
+        # FIX (2026-06-26): Berkay's insight — "amacımız insanların
+        # gözünden kaçırdığı ama bizim modelin beğendiği atlar". The
+        # threshold was 0.08 (8pp gap) → too tight, missed actual
+        # value plays. Lowered to 0.03 (3pp). Also: also consider
+        # bankers (top model picks) that the public hasn't noticed
+        # (low AGF) — they ARE value, not just "model+halk uyumlu".
+        for h in (bankers + core + spread + chaos):
             mp_v = h.get("mp")
             agf_v = h.get("agf_now")
             if mp_v is None or agf_v is None:
                 continue
             gap = float(mp_v) - (float(agf_v) / 100.0)
-            if gap >= 0.08:
+            if gap >= 0.03:
                 h["value_tag"] = "DEĞER"
                 h["value_gap_pct"] = round(gap * 100, 1)
 

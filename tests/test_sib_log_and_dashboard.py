@@ -380,17 +380,20 @@ class TestTopPicks(unittest.TestCase):
             "outcome": {"status": "pending"},
         }
 
-    def test_banker_priority(self):
+    def test_value_picks_over_high_agf_banker(self):
+        """Berkay (2026-06-26): değer önce gelir, AGF favori arkada."""
         from top4.dashboard_api import _build_top_picks
         races = [self._race([
+            # Value: mp 0.30, agf 5 → gap = 25pp (büyük değer)
             {"kind": "value", "horse_no": 7, "horse_name": "VAL",
-             "mp": 0.3, "agf": 5, "label": "💎 Değer", "detail": "+10pp"},
+             "mp": 0.30, "agf": 5, "label": "💎", "detail": ""},
+            # Banker: mp 0.40, agf 30 → gap = 10pp (küçük değer)
             {"kind": "banker", "horse_no": 4, "horse_name": "BANK",
-             "mp": 0.4, "agf": 30, "label": "⭐ Ana At", "detail": ""},
+             "mp": 0.40, "agf": 30, "label": "⭐", "detail": ""},
         ])]
         top = _build_top_picks(races, k=5)
-        # Banker first
-        self.assertEqual(top[0]["kind"], "banker")
+        # Value gap (25pp) > banker gap (10pp) → value first
+        self.assertEqual(top[0]["horse_no"], 7)
         self.assertEqual(top[0]["rank"], 1)
 
     def test_k_limit(self):
@@ -404,15 +407,32 @@ class TestTopPicks(unittest.TestCase):
         self.assertEqual(len(top), 5)
 
     def test_value_gap_in_score(self):
+        """Yeni skor (mp - agf/100) gap'i direkt kullanır."""
         from top4.dashboard_api import _build_top_picks
         races = [self._race([
             {"kind": "value", "horse_no": 1, "horse_name": "A",
-             "mp": 0.2, "agf": 5, "label": "💎", "detail": "+5pp"},
+             "mp": 0.10, "agf": 5, "label": "💎", "detail": ""},  # gap=5pp
             {"kind": "value", "horse_no": 2, "horse_name": "B",
-             "mp": 0.2, "agf": 5, "label": "💎", "detail": "+20pp"},
+             "mp": 0.25, "agf": 5, "label": "💎", "detail": ""},  # gap=20pp
         ])]
         top = _build_top_picks(races, k=5)
-        # Higher gap (B) ranks above lower gap (A)
+        # Higher gap (B: 20pp) ranks above lower gap (A: 5pp)
+        self.assertEqual(top[0]["horse_no"], 2)
+
+    def test_negative_gap_excluded(self):
+        """Model belirgin şekilde halktan zayıfsa → öneri listesinde yok."""
+        from top4.dashboard_api import _build_top_picks
+        races = [self._race([
+            # mp 0.05, agf 30 → gap = -25pp (model çok zayıf)
+            {"kind": "banker", "horse_no": 1, "horse_name": "FAV",
+             "mp": 0.05, "agf": 30, "label": "⭐", "detail": ""},
+            # mp 0.20, agf 5 → gap = +15pp
+            {"kind": "value", "horse_no": 2, "horse_name": "VALUE",
+             "mp": 0.20, "agf": 5, "label": "💎", "detail": ""},
+        ])]
+        top = _build_top_picks(races, k=5)
+        # Negative gap horse excluded
+        self.assertEqual(len(top), 1)
         self.assertEqual(top[0]["horse_no"], 2)
 
 
