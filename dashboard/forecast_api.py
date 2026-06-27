@@ -65,18 +65,45 @@ def _load_glicko_ledger():
 
 
 def _fetch_history(horse_name: str) -> list:
-    """Fetch horse race history. Cache first, then scraper."""
+    """Fetch horse race history.
+
+    Priority:
+      1) In-memory cache
+      2) Taydex DB (REAL finish_position)
+      3) TJK derece scraper + finish_estimator (estimated finish)
+    """
     if horse_name in _HISTORY_CACHE:
         return _HISTORY_CACHE[horse_name]
+
+    # 1) Taydex DB — real finish_position
+    try:
+        from forecast.sources.taydex_form import (
+            fetch_horse_form, is_available as taydex_ok,
+        )
+        if taydex_ok():
+            records = fetch_horse_form(horse_name) or []
+            if records:
+                _HISTORY_CACHE[horse_name] = records
+                logger.debug(f"history(taydex) {horse_name}: {len(records)}")
+                return records
+    except Exception as exc:
+        logger.debug(f"taydex history fail for {horse_name}: {exc}")
+
+    # 2) Fallback: TJK derece + estimate
     try:
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..",
                                          "simulation", "scrapers"))
         from tjk_horse_derece import fetch_horse_derece
         records = fetch_horse_derece(horse_name) or []
+        try:
+            from forecast.finish_estimator import enrich_history
+            records = enrich_history(records)
+        except Exception:
+            pass
         _HISTORY_CACHE[horse_name] = records
         return records
     except Exception as exc:
-        logger.debug(f"history fetch fail for {horse_name}: {exc}")
+        logger.debug(f"derece history fail for {horse_name}: {exc}")
         return []
 
 

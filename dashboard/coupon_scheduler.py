@@ -336,6 +336,52 @@ def _maybe_send_berkay_top4_shadow(pools_or_st, now, logger):
         _log(logger, f"[berkay-top4] skip: {repr(e)[:200]}")
 
 
+def _maybe_send_v8_daily(now, logger):
+    """V8 günlük forward forecast — env-gated shadow Telegram emit.
+
+    Env flags:
+      TJK_V8_DAILY=1            → çalıştır (build + persist)
+      TJK_V8_DAILY_TELEGRAM=1   → Telegram'a da gönder
+
+    V7 prod akışını DEĞİŞTİRMEZ. NEVER raises into the caller.
+    Berkay (2026-06-27): "her kosu icin olayimiz artik bu" — günde 1×.
+    """
+    if os.environ.get('TJK_V8_DAILY', '0') != '1':
+        return
+    try:
+        try:
+            from dashboard.v8_daily import (
+                run_daily, persist, format_telegram_digest,
+            )
+        except ImportError:
+            from v8_daily import run_daily, persist, format_telegram_digest
+        target = now.date()
+        result = run_daily(target)
+        summ = result.get('summary') or {}
+        try:
+            persist(result)
+        except Exception as _e_pers:
+            _log(logger, f"[v8-daily] persist skip: {repr(_e_pers)[:160]}")
+        _log(logger, f"[v8-daily] pools={summ.get('n_pools',0)} "
+                     f"races={summ.get('n_races',0)} "
+                     f"horses={summ.get('n_horses',0)}")
+        if os.environ.get('TJK_V8_DAILY_TELEGRAM', '0') != '1':
+            return
+        if not summ.get('n_races'):
+            return
+        top_n = int(os.environ.get('TJK_V8_DAILY_TOP_N', '4'))
+        digest = format_telegram_digest(result, top_n=top_n)
+        if not digest:
+            return
+        try:
+            _svc().send_telegram(digest)
+            _log(logger, f"[v8-daily] telegram sent (len={len(digest)})")
+        except Exception as _e_tg:
+            _log(logger, f"[v8-daily] send fail: {repr(_e_tg)[:160]}")
+    except Exception as e:
+        _log(logger, f"[v8-daily] skip: {repr(e)[:200]}")
+
+
 def morning_job(logger=None):
     """09:00 İst — build; AGF'si taze havuzları gönder, bayatları beklet."""
     if not _LOCK.acquire(blocking=False):
@@ -383,6 +429,9 @@ def _morning_locked(logger, bootstrap=False):
             # BERKAY BİLİMSEL DENEME TOP4 — env-gated shadow extra message
             _maybe_send_berkay_top4_shadow(pools, now, logger)
             st['berkay_top4_sent_today'] = True
+            # V8 günlük forward forecast — env-gated, gün başında 1×
+            _maybe_send_v8_daily(now, logger)
+            st['v8_daily_sent_today'] = True
     elif stale:
         tag = "yeniden başlatma" if bootstrap else "sabah"
         _svc().send_telegram(
