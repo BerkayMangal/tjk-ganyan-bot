@@ -95,9 +95,34 @@ def _tempo_scenario_sim(v8_preds: list, pace_by_no: dict, tempo: str,
     return _plackett_luce_sims(strengths, n_sims, seed=seed)
 
 
+def _load_calibrated_weights():
+    """simulation/calibrators/composite_weights.json → (α, β, γ)."""
+    import json
+    from pathlib import Path
+    p = (Path(__file__).resolve().parent.parent
+         / "simulation" / "calibrators" / "composite_weights.json")
+    try:
+        with open(p) as f:
+            d = json.load(f)
+        b = d.get("best") or {}
+        return (b.get("alpha", 0.50), b.get("beta", 0.35),
+                b.get("gamma", 0.15))
+    except Exception:
+        return (0.50, 0.35, 0.15)  # default: kalibre edilmiş
+
+
+COMPOSITE_WEIGHTS = _load_calibrated_weights()
+
+
 def _composite_winner(v8_preds: list, mc: dict, tempo_sims: dict,
                       pace_by_no: dict) -> dict:
-    """Composite skor = 0.50 × MC(1.) + 0.30 × V8(p_top4) + 0.20 × tempo robust."""
+    """Composite skor — kalibre edilmiş ağırlıklar (composite_weights.json).
+
+    score = α × MC(1.olma) + β × V8(p_top4) + γ × tempo_robust
+    Default kalibrasyon (284 koşu üzerinde grid search):
+        α=0.50, β=0.35, γ=0.15  → top-1 %35.2, top-4 recall %69.0
+    """
+    alpha, beta, gamma = COMPOSITE_WEIGHTS
     robust: Counter = Counter()
     for t in ("YAVAŞ", "ORTA", "SERT"):
         sim = tempo_sims.get(t, {})
@@ -116,7 +141,7 @@ def _composite_winner(v8_preds: list, mc: dict, tempo_sims: dict,
         rb = robust.get(no, 0) / 3.0
         scores.append({
             "no": no, "name": p.get("horse_name"),
-            "score": 0.50 * mc1n + 0.30 * p4n + 0.20 * rb,
+            "score": alpha * mc1n + beta * p4n + gamma * rb,
             "mc_p1": mc_p1.get(no, 0),
             "v8_p4": (p.get("p_top4") or 0) * 100,
             "v8_p1": (p.get("p_top1") or 0) * 100,
@@ -210,25 +235,33 @@ def analyze_race(
         composite = _composite_winner(v8_preds, mc, tempo_sims,
                                        per_horse_pace)
 
-        # 6) 3 farklı TOP-4 listesi
+        # 6) 3 farklı TOP-5 listesi (Berkay direktif: top-5)
         name_by_no = {p.get("horse_no"): p.get("horse_name") for p in v8_preds}
-        v8_top4 = [{"no": p.get("horse_no"), "name": p.get("horse_name"),
-                    "p_top4": p.get("p_top4")} for p in v8_preds[:4]]
+        v8_top5 = [{"no": p.get("horse_no"), "name": p.get("horse_name"),
+                    "p_top4": p.get("p_top4")} for p in v8_preds[:5]]
         mc_top1_sorted = sorted(mc["top1_count"].items(),
-                                 key=lambda x: -x[1])[:4]
-        mc_top4 = [{"no": no, "name": name_by_no.get(no),
+                                 key=lambda x: -x[1])[:5]
+        mc_top5 = [{"no": no, "name": name_by_no.get(no),
                     "mc_p1": 100 * cnt / n_mc}
                    for no, cnt in mc_top1_sorted]
-        composite_top4 = [
+        composite_top5 = [
             {"no": r["no"], "name": r["name"], "score": r["score"],
              "pace": r["pace"], "mc_p1": r["mc_p1"], "v8_p4": r["v8_p4"]}
-            for r in composite["ranking"][:4]
+            for r in composite["ranking"][:5]
         ]
+        # Geri-uyumluluk: top-4 isimleri de korunur (mevcut tüketiciler)
+        v8_top4 = v8_top5[:4]
+        mc_top4 = mc_top5[:4]
+        composite_top4 = composite_top5[:4]
         overlap = _top4_overlap(
             {x["no"] for x in v8_top4},
             {x["no"] for x in mc_top4},
             {x["no"] for x in composite_top4},
         )
+        # Top-5 örtüşmesi de hesapla (daha geniş güven)
+        overlap5 = len({x["no"] for x in v8_top5}
+                       & {x["no"] for x in mc_top5}
+                       & {x["no"] for x in composite_top5})
 
         # 7) Race tempo verdict (pace dağılımı)
         n_front = sum(1 for p in per_horse_pace.values() if p == "front")
@@ -240,7 +273,11 @@ def analyze_race(
             "v8_top4": v8_top4,
             "mc_top4": mc_top4,
             "composite_top4": composite_top4,
+            "v8_top5": v8_top5,
+            "mc_top5": mc_top5,
+            "composite_top5": composite_top5,
             "top4_overlap": overlap,
+            "top5_overlap": overlap5,
             "race_tempo_verdict": tempo_verdict,
             "n_front": n_front,
             "n_closer": n_closer,
@@ -250,6 +287,7 @@ def analyze_race(
             "composite_ranking": composite["ranking"],
             "v8_preds": v8_preds,
             "n_horses": len(leg),
+            "composite_weights": COMPOSITE_WEIGHTS,  # (α, β, γ) kalibre
         }
     except Exception as exc:
         logger.warning(f"analyze_race fail: {exc}")
