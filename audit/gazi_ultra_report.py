@@ -1,19 +1,24 @@
-"""Gazi ULTRA raporu v2 — düzgün sayfa düzeni + 10000 MC + 3 tempo + tek kazanan.
+"""Gazi ULTRA raporu v3 — profesyonel düzen, klasik tipografi, insan dili.
 
-Berkay (2026-06-27): "rapor guzel ama duzeni yok ... monte carlo 10bin yap ...
-top5 favori at yaz ... 3 tane farkli yaris kosulmasina yani tempsonu gore
-senaryo analizi ... senin cikariminla kim kazanir onu yaz tek at ... raporun
-basinda detayli herseyi yaz nasil calisir ne yapildi".
+Berkay (2026-06-27): "neden real one kismini ilk sayfaya al. daha profesyonel
+hale getir guzel font kullan insan acinca vay be ne calisma desin. ayrica cok
+kolay anlasilir olsun reasoning saglam ve basit olsun, super bir turkce kullan".
 
-Sıralama (Berkay'ın istediği):
-  P1   Kapak (özet 3 satır)
-  P2   METODOLOJİ — rapor nasıl üretildi, ne hesaplandı (1-2 sayfa)
-  P3   KAZANAN ADAYIM — tek at + gerekçe
-  P4   TOP-5 FAVORİ — bunlardan biri kuvvetle muhtemel kazanır
-  P5   3 TEMPO SENARYOSU — YAVAŞ / ORTA / SERT, her birinin TOP-3'ü
-  P6   10000 MONTE CARLO — at başına %, en sık çıkan TOP-4
-  P7   AGF vs V8 değer analizi (value / overbet)
-  P8+  At bazında detay (son 8 yarış, glicko, kanaat)
+Tipografi:
+  Başlık       → Optima-Bold (modern-klasik)
+  Display      → Didot-Bold (vintage atçılık havası)
+  Body         → Palatino (klasik kitap)
+  Vurgu        → Palatino-Italic
+
+Sayfa düzeni:
+  P1   KAPAK — başlık + tek kazanan görünür + 4 satır özet
+  P2   METODOLOJİ (rapor başında, "nasıl çalışır")
+  P3   KAZANAN ADAYIM — derin analiz, gerekçeler insan dilinde
+  P4   TOP-5 FAVORİ — "bunlardan biri kuvvetle muhtemel"
+  P5   3 TEMPO SENARYOSU — YAVAŞ / ORTA / SERT
+  P6   10000 KOŞU MONTE CARLO
+  P7   AGF vs V8 değer analizi
+  P8+  At başına detay
   Son  Uyarılar
 """
 from __future__ import annotations
@@ -34,25 +39,77 @@ sys.path.insert(0, str(ROOT / "dashboard"))
 logging.basicConfig(level=logging.WARNING)
 log = logging.getLogger("gazi_ultra")
 
-# Reuse mevcut yardımcılar (audit/gazi_halic_v8_reports.py + this file's previous helpers)
+# Hesaplama yardımcıları (mevcut)
 from audit.gazi_halic_v8_reports import (
     _enrich_with_kilo, _find_races, _fold_name, _history_for,
     _load_glicko_ledger, _normalize_horse, _pace_style_for,
-    _register_fonts, _v8_predict, PACE_TR,
+    _v8_predict, PACE_TR,
 )
-_register_fonts()
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer,
     Table, TableStyle,
 )
 
 
-# ─── Pedigree (Taydex if available) ────────────────────────────────────────
+# ─── Tipografi: klasik atçı raporları havası ───────────────────────────────
+def _register_premium_fonts():
+    """Optima + Palatino + Didot — fallback Georgia + Times."""
+    candidates = [
+        # Premium (Apple sistem)
+        ("Optima", "/System/Library/Fonts/Optima.ttc", 0),
+        ("Optima-Bold", "/System/Library/Fonts/Optima.ttc", 1),
+        ("Palatino", "/System/Library/Fonts/Palatino.ttc", 0),
+        ("Palatino-Bold", "/System/Library/Fonts/Palatino.ttc", 1),
+        ("Palatino-Italic", "/System/Library/Fonts/Palatino.ttc", 2),
+        ("Didot", "/System/Library/Fonts/Supplemental/Didot.ttc", 0),
+        ("Didot-Bold", "/System/Library/Fonts/Supplemental/Didot.ttc", 1),
+        # Fallback
+        ("Georgia", "/System/Library/Fonts/Supplemental/Georgia.ttf", None),
+        ("Georgia-Bold", "/System/Library/Fonts/Supplemental/Georgia Bold.ttf",
+         None),
+        ("Times", "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
+         None),
+        ("Times-Bold",
+         "/System/Library/Fonts/Supplemental/Times New Roman Bold.ttf", None),
+    ]
+    for entry in candidates:
+        try:
+            name, path, idx = entry
+            if not os.path.exists(path):
+                continue
+            if idx is None:
+                pdfmetrics.registerFont(TTFont(name, path))
+            else:
+                pdfmetrics.registerFont(TTFont(name, path, subfontIndex=idx))
+        except Exception:
+            pass
+
+
+_register_premium_fonts()
+
+
+# Renk paleti — koyu lacivert + altın (klasik atçı raporu)
+INK = colors.HexColor("#1f3354")      # koyu lacivert
+GOLD = colors.HexColor("#b8860b")     # antik altın
+INK_LIGHT = colors.HexColor("#3d5276")
+PARCHMENT = colors.HexColor("#faf6ed")  # krem arka plan
+PAPER_TINT = colors.HexColor("#f5f3ec")
+CELL_TINT = colors.HexColor("#f6f5ee")
+RULE = colors.HexColor("#c4ad6e")     # sarı-altın çizgi
+SOFT = colors.HexColor("#7a8089")
+TABLE_HEAD_BG = colors.HexColor("#1f3354")
+WIN_BG = colors.HexColor("#fff5d1")
+WIN_BORDER = colors.HexColor("#b8860b")
+
+
+# ─── Pedigree (Taydex opsiyonel) ───────────────────────────────────────────
 def _pedigree(horse_name: str) -> dict:
     try:
         from forecast.sources.taydex_form import is_available
@@ -76,16 +133,15 @@ def _pedigree(horse_name: str) -> dict:
     return {}
 
 
-# ─── Monte Carlo: Plackett-Luce ────────────────────────────────────────────
-def plackett_luce_sims(strengths: list, n_sims: int, seed: int = 42) -> dict:
-    """strengths = [(id, name, strength), ...] → 1./2./3./4./5+ count + top4 orders."""
+# ─── Monte Carlo (Plackett-Luce) ───────────────────────────────────────────
+def plackett_luce_sims(strengths, n_sims: int, seed: int = 42) -> dict:
     rng = random.Random(seed)
     if not strengths:
         return {"rank_pct": {}, "top4_orders": [], "top1_count": {}}
     n = len(strengths)
-    rank_counts: dict = {h[0]: Counter() for h in strengths}
-    top4_counter: Counter = Counter()
-    top1_count: Counter = Counter()
+    rank_counts = {h[0]: Counter() for h in strengths}
+    top4_counter = Counter()
+    top1_count = Counter()
     for _ in range(n_sims):
         pool = list(strengths)
         order = []
@@ -111,78 +167,61 @@ def plackett_luce_sims(strengths: list, n_sims: int, seed: int = 42) -> dict:
             top4_counter[tuple(order[:4])] += 1
     rank_pct = {hid: {k: 100.0 * v / n_sims for k, v in ctr.items()}
                 for hid, ctr in rank_counts.items()}
-    return {"rank_pct": rank_pct, "top4_orders": top4_counter.most_common(10),
+    return {"rank_pct": rank_pct,
+            "top4_orders": top4_counter.most_common(10),
             "top1_count": top1_count}
 
 
-def monte_carlo_race(v8_preds: list, n_sims: int = 10000) -> dict:
-    """V8 p_top1 strength ile baz Monte Carlo."""
+def monte_carlo_race(v8_preds, n_sims=10000):
     strengths = [(p.get("horse_no"), p.get("horse_name"),
                   max(0.001, p.get("p_top1") or 0.01)) for p in v8_preds]
     return plackett_luce_sims(strengths, n_sims, seed=42)
 
 
-# ─── 3 Tempo Senaryosu ─────────────────────────────────────────────────────
-# Pace × tempo multiplier matrisi. Veliefendi G1 2400m çim koşusu
-# için defansif/literatür-tutarlı katsayılar (negative split yaygın).
+# Pace × Tempo strength multiplier
 PACE_TEMPO_MULT = {
-    # tempo: {pace_style: strength_multiplier}
-    "YAVAŞ":  {"front": 1.30, "stalker": 1.05, "mid": 1.00, "closer": 0.80},
-    "ORTA":   {"front": 1.00, "stalker": 1.20, "mid": 1.05, "closer": 0.95},
-    "SERT":   {"front": 0.65, "stalker": 0.95, "mid": 1.10, "closer": 1.45},
+    "YAVAŞ": {"front": 1.30, "stalker": 1.05, "mid": 1.00, "closer": 0.80},
+    "ORTA":  {"front": 1.00, "stalker": 1.20, "mid": 1.05, "closer": 0.95},
+    "SERT":  {"front": 0.65, "stalker": 0.95, "mid": 1.10, "closer": 1.45},
 }
 
 
-def tempo_scenario_sim(v8_preds: list, pace_by_no: dict, tempo: str,
-                       n_sims: int = 5000) -> dict:
-    """Tempo'ya göre pace-style multiplier uygulanmış simülasyon."""
+def tempo_scenario_sim(v8_preds, pace_by_no, tempo, n_sims=5000):
     mults = PACE_TEMPO_MULT[tempo]
     strengths = []
     for p in v8_preds:
         no = p.get("horse_no")
         pace = pace_by_no.get(no, "mid")
         base = max(0.001, p.get("p_top1") or 0.01)
-        m = mults.get(pace, 1.0)
-        strengths.append((no, p.get("horse_name"), base * m))
-    # different seed per tempo
+        strengths.append((no, p.get("horse_name"),
+                          base * mults.get(pace, 1.0)))
     seed = {"YAVAŞ": 11, "ORTA": 22, "SERT": 33}.get(tempo, 42)
     return plackett_luce_sims(strengths, n_sims, seed=seed)
 
 
-# ─── Composite Winner ─────────────────────────────────────────────────────
-def composite_winner(v8_preds: list, mc: dict, tempo_sims: dict,
-                     pace_by_no: dict) -> dict:
-    """3 ölçütün ağırlıklı toplamı → tek kazanan adayı.
-
-    score = 0.50 × MC(1.) + 0.30 × V8(p_top4) + 0.20 × tempo_robustness
-    tempo_robustness = (3 tempo'nun kaçında at top-3'te) / 3
-    """
-    # tempo robustness: each tempo'nun TOP-3'ünde olma sayısı
+def composite_winner(v8_preds, mc, tempo_sims, pace_by_no):
     robust = Counter()
     for t in ("YAVAŞ", "ORTA", "SERT"):
         sim = tempo_sims[t]
         top1c = sim["top1_count"]
-        # use mc-by-rank to find top-3 in expected ranking
         ranking = sorted(top1c.items(), key=lambda x: -x[1])[:3]
         for no, _ in ranking:
             robust[no] += 1
-    # normalize V8 p_top4 and MC p_top1
     max_p4 = max((p.get("p_top4") or 0) for p in v8_preds) or 1.0
     mc_p1 = {no: pct.get(1, 0) for no, pct in mc["rank_pct"].items()}
     max_mc1 = max(mc_p1.values()) if mc_p1 else 1.0
-
     scores = []
     for p in v8_preds:
         no = p.get("horse_no")
-        nm = p.get("horse_name")
         mc1n = (mc_p1.get(no, 0) / max_mc1) if max_mc1 else 0
         p4n = ((p.get("p_top4") or 0) / max_p4) if max_p4 else 0
         rb = robust.get(no, 0) / 3.0
         score = 0.50 * mc1n + 0.30 * p4n + 0.20 * rb
         scores.append({
-            "no": no, "name": nm, "score": score,
+            "no": no, "name": p.get("horse_name"), "score": score,
             "mc_p1": mc_p1.get(no, 0),
             "v8_p4": (p.get("p_top4") or 0) * 100,
+            "v8_p1": (p.get("p_top1") or 0) * 100,
             "tempo_top3_count": robust.get(no, 0),
             "pace": pace_by_no.get(no, "mid"),
         })
@@ -190,51 +229,59 @@ def composite_winner(v8_preds: list, mc: dict, tempo_sims: dict,
     return {"ranking": scores, "winner": scores[0] if scores else None}
 
 
-# ─── Pace narrative ────────────────────────────────────────────────────────
-def pace_narrative(per_horse: list, distance: int) -> str:
-    front = [h["name"] for h in per_horse if h["pace"] == "front"]
-    closer = [h["name"] for h in per_horse if h["pace"] == "closer"]
-    stalker = [h["name"] for h in per_horse if h["pace"] == "stalker"]
-    n_f = len(front)
-    parts = []
-    if n_f >= 3:
-        parts.append(
-            f"<b>İlk bölge ({distance - 1200}–{distance - 600}m):</b> "
-            f"{', '.join(front[:4])} erken pozisyon için zorlanacak — "
-            f"{n_f} öne gidicili sert tempo bekleniyor.")
-        parts.append(
-            "<b>Düzlük dönüşü:</b> Önden gidenlerin son 400m'de yorulması "
-            "tipik; finiş atağı yapan tip kazanır.")
-    elif n_f == 2:
-        parts.append(
-            f"<b>İlk bölge:</b> {' & '.join(front[:2])} düellosu olası "
-            "— erken hız oturur.")
-        parts.append(
-            "<b>Düzlük:</b> Tempolu takip eden büyük avantajlı.")
-    elif n_f == 1:
-        parts.append(
-            f"<b>Erken:</b> {front[0]} muhtemelen kendi temposunu kuruyor "
-            "— yan baskı yoksa kontrol elinde.")
-        parts.append(
-            "<b>Düzlük:</b> Önde tek başına giden son 200m'de yorulabilir; "
-            "takip edenler için kapı açık.")
-    else:
-        parts.append(
-            "<b>Erken bölge:</b> Net öne gidici yok — ilk 600m pozisyon "
-            "savaşı; tempo düşük başlar.")
-        parts.append(
-            "<b>Düzlük:</b> Pozisyon kapan + finiş gücü dengeli atlar lehine.")
-    if closer:
-        parts.append(
-            f"<b>Finiş atağı bekleyenler:</b> {', '.join(closer[:5])}.")
-    if stalker:
-        parts.append(
-            f"<b>Orta tempo takipçileri:</b> {', '.join(stalker[:4])}.")
-    return "<br/><br/>".join(parts)
+# ─── İnsan dili yardımcılar ────────────────────────────────────────────────
+PACE_AÇIKLAMA = {
+    "front":   "öne çıkan",
+    "stalker": "takipçi",
+    "closer":  "finiş hücumcusu",
+    "mid":     "orta tempolu",
+}
+
+PACE_KISA_AÇIKLAMA = {
+    "front":   "ilk metrelerden öne geçmeyi seven",
+    "stalker": "tempoyu yakından izleyen, son düzlükte atak yapan",
+    "closer":  "arkadan gelen, son 400m'de büyük hamle yapan",
+    "mid":     "yarış boyunca orta saflarda kalan",
+}
 
 
-# ─── History compact ──────────────────────────────────────────────────────
-def _history_compact(history: list, max_rows: int = 8) -> list:
+def _pct(x): return f"{x:.1f}%" if isinstance(x, (int, float)) else "—"
+
+
+def _ne_diyor_mc(p1):
+    if p1 >= 25:
+        return "modelimizin BARİZ favorisi"
+    if p1 >= 18:
+        return "ilk-1 sıralamasının açık ara üstünde"
+    if p1 >= 12:
+        return "ilk-1 yarışında önde gelen"
+    if p1 >= 7:
+        return "ilk-1 olasılığı ortalama üstü"
+    return "ilk-1 olasılığı düşük"
+
+
+def _ne_diyor_top4(p4):
+    if p4 >= 75:
+        return "ilk-4'e girmesi neredeyse kesin gibi"
+    if p4 >= 55:
+        return "ilk-4'e girmesi <b>çok olası</b>"
+    if p4 >= 35:
+        return "ilk-4 olasılığı yüksek"
+    if p4 >= 20:
+        return "ilk-4 için ortalama şans"
+    return "ilk-4 için düşük şans"
+
+
+def _tempo_robust_açıklama(c):
+    return {
+        3: "üç tempo senaryosunun <b>üçünde de</b> top-3'te — yarış nasıl koşulursa koşulsun üstte kalıyor",
+        2: "üç tempo senaryosunun <b>ikisinde</b> top-3'te — çoğu hız varyasyonunda üstte",
+        1: "üç tempo senaryosunun <b>sadece birinde</b> top-3'te — belirli bir tempo gerekiyor",
+        0: "<b>hiçbir</b> tempo senaryosunda top-3'te değil — pace bağımlı tercih değil",
+    }.get(c, "—")
+
+
+def _history_compact(history, max_rows=8):
     if not history:
         return []
     rows = []
@@ -254,410 +301,581 @@ def _history_compact(history: list, max_rows: int = 8) -> list:
     return rows
 
 
-# ─── Form kanaat ─────────────────────────────────────────────────────────
-def _form_kanaat(name: str, horse: dict, v8: dict, fc: dict,
-                 pace: str, history_rows: list, ped: dict) -> str:
+def _form_kanaat(name, horse, v8, fc, pace, history_rows, ped):
     parts = []
-    p4 = v8.get("p_top4")
-    p1 = v8.get("p_top1")
-    if isinstance(p4, (int, float)):
-        if p4 >= 0.55:
-            parts.append(f"V8 göre <b>üst sıralarda güçlü aday</b> "
-                         f"(p_top4 %{p4 * 100:.1f}, p_top1 %{(p1 or 0) * 100:.1f}).")
-        elif p4 >= 0.35:
-            parts.append(f"V8 ilk-4 <b>olası</b> (p_top4 %{p4 * 100:.1f}).")
-        elif p4 >= 0.20:
-            parts.append(f"V8 ilk-4 <b>orta şans</b> (p_top4 %{p4 * 100:.1f}).")
-        else:
-            parts.append(f"V8 ilk-4 <b>düşük olasılık</b> "
-                         f"(p_top4 %{p4 * 100:.1f}).")
+    p4 = (v8.get("p_top4") or 0) * 100
+    p1 = (v8.get("p_top1") or 0) * 100
+    parts.append(_ne_diyor_top4(p4).capitalize() +
+                 f" (V8 ilk-4 %{p4:.1f}, ilk-1 %{p1:.1f}).")
     g = (fc.get("glicko") or {}).get("rating")
     rd = (fc.get("glicko") or {}).get("rd")
     if isinstance(g, (int, float)):
         if g >= 1600:
-            parts.append(f"Glicko <b>elit</b> ({g:.0f}±{rd or 0:.0f}).")
+            parts.append(f"Glicko ratingi <b>elit seviye</b> "
+                         f"({g:.0f}±{rd or 0:.0f}).")
         elif g >= 1450:
-            parts.append(f"Glicko orta-üst ({g:.0f}±{rd or 0:.0f}).")
+            parts.append(f"Glicko ratingi orta-üst ({g:.0f}±{rd or 0:.0f}).")
         else:
-            parts.append(f"Glicko düşük ({g:.0f}±{rd or 0:.0f}).")
+            parts.append(f"Glicko ratingi düşük ({g:.0f}±{rd or 0:.0f}).")
     trend = (fc.get("trajectory") or {}).get("finish_trend_signal")
     if isinstance(trend, (int, float)):
         if trend > 0.2:
-            parts.append("Form <b>yükselişte</b>.")
+            parts.append("Son yarışları <b>iyi sıralarda</b> bitiriyor "
+                         "(form yükselişte).")
         elif trend < -0.2:
-            parts.append("Form <b>düşüşte</b>.")
+            parts.append("Son yarışları <b>geri sıralarda</b> bitiriyor "
+                         "(form düşüşte).")
     days = (fc.get("recovery") or {}).get("days_since_last")
     if isinstance(days, (int, float)):
         if days > 90:
-            parts.append(f"{int(days)} gün <b>mola</b> — soğuk başlama riski.")
+            parts.append(f"<b>{int(days)} gün</b> ara sonrası dönüş — "
+                         "soğuk başlama riski var.")
         elif days < 10:
-            parts.append(f"Çok taze ({int(days)}g) — toparlama soru işareti.")
-    parts.append(f"Taktik: <i>{PACE_TR.get(pace, pace)}</i>.")
+            parts.append(f"Sadece <b>{int(days)} gün</b> önce koşmuş — "
+                         "taze ama toparlama soru işareti.")
+    parts.append(f"Yarış çizgisi: <i>{PACE_AÇIKLAMA.get(pace, pace)}</i>.")
     if ped.get("sire"):
         parts.append(f"Soy: <i>{ped['sire']} × {ped.get('dam', '?')}</i>.")
     if history_rows:
         wins = sum(1 for r in history_rows if r["finish"] == 1)
-        top4_n = sum(1 for r in history_rows
-                     if isinstance(r["finish"], int) and r["finish"] <= 4)
-        parts.append(f"Son {len(history_rows)} yarış: <b>{wins}</b> galip, "
-                     f"<b>{top4_n}</b> ilk-4.")
+        top4n = sum(1 for r in history_rows
+                    if isinstance(r["finish"], int) and r["finish"] <= 4)
+        parts.append(f"Kayıtlı son <b>{len(history_rows)}</b> yarış: "
+                     f"<b>{wins}</b> galibiyet, <b>{top4n}</b> ilk-4.")
     return " ".join(parts)
 
 
-# ─── PDF Styles ────────────────────────────────────────────────────────────
+# ─── PDF Stylesheet ────────────────────────────────────────────────────────
 def _styles():
     base = getSampleStyleSheet()
-    H1 = ParagraphStyle("H1", parent=base["Title"], fontName="Georgia-Bold",
-                        fontSize=24, leading=28, spaceAfter=4,
-                        textColor=colors.HexColor("#1a3a5c"), alignment=1)
-    H1b = ParagraphStyle("H1b", parent=base["Title"], fontName="Georgia-Bold",
-                         fontSize=18, leading=22, spaceAfter=6,
-                         textColor=colors.HexColor("#9b1c2c"), alignment=1)
-    H2 = ParagraphStyle("H2", parent=base["Heading2"], fontName="Georgia-Bold",
-                        fontSize=15, leading=19, spaceBefore=2, spaceAfter=8,
-                        textColor=colors.HexColor("#1a3a5c"))
-    H3 = ParagraphStyle("H3", parent=base["Heading3"], fontName="Times-Bold",
-                        fontSize=12, leading=15, spaceBefore=8, spaceAfter=3,
-                        textColor=colors.HexColor("#244a73"))
-    body = ParagraphStyle("body", parent=base["BodyText"], fontName="Times",
-                          fontSize=10.5, leading=14, spaceAfter=4)
-    bodyB = ParagraphStyle("bodyB", parent=base["BodyText"], fontName="Times-Bold",
-                           fontSize=10.5, leading=14, spaceAfter=4)
-    method = ParagraphStyle("method", parent=base["BodyText"], fontName="Times",
-                            fontSize=10, leading=13.5, spaceAfter=3,
-                            leftIndent=4)
-    small = ParagraphStyle("small", parent=base["BodyText"], fontName="Times-Italic",
-                           fontSize=9, leading=11.5, textColor=colors.grey)
-    callout = ParagraphStyle("callout", parent=base["BodyText"],
-                             fontName="Georgia-Italic", fontSize=11,
-                             leading=14.5, leftIndent=12, rightIndent=12,
-                             spaceBefore=4, spaceAfter=6,
-                             textColor=colors.HexColor("#33363b"))
-    box = ParagraphStyle("box", parent=base["BodyText"],
-                         fontName="Times", fontSize=11, leading=14.5,
-                         leftIndent=10, rightIndent=10,
-                         spaceBefore=6, spaceAfter=6,
-                         backColor=colors.HexColor("#fff7e0"),
-                         borderColor=colors.HexColor("#c69214"),
-                         borderWidth=0.8, borderPadding=8)
-    kanaat = ParagraphStyle("kanaat", parent=base["BodyText"],
-                            fontName="Times", fontSize=10.3, leading=13.5,
-                            leftIndent=8, rightIndent=8, spaceBefore=3,
-                            spaceAfter=4,
-                            backColor=colors.HexColor("#f7f9fb"),
-                            borderColor=colors.HexColor("#d6dde6"),
-                            borderWidth=0.4, borderPadding=6)
-    return {"H1": H1, "H1b": H1b, "H2": H2, "H3": H3, "body": body,
-            "bodyB": bodyB, "method": method, "small": small,
-            "callout": callout, "box": box, "kanaat": kanaat}
+    # Title (kapakta büyük başlık)
+    cover_title = ParagraphStyle(
+        "cover_title", parent=base["Title"], fontName="Didot-Bold",
+        fontSize=42, leading=46, spaceAfter=4, textColor=INK, alignment=1)
+    cover_sub = ParagraphStyle(
+        "cover_sub", parent=base["BodyText"], fontName="Palatino-Italic",
+        fontSize=13, leading=17, spaceAfter=2, textColor=INK_LIGHT,
+        alignment=1)
+    cover_meta = ParagraphStyle(
+        "cover_meta", parent=base["BodyText"], fontName="Palatino",
+        fontSize=11, leading=15, spaceAfter=2, textColor=SOFT,
+        alignment=1)
+    H1 = ParagraphStyle(
+        "H1", parent=base["Title"], fontName="Optima-Bold",
+        fontSize=22, leading=26, spaceBefore=2, spaceAfter=8,
+        textColor=INK, alignment=0)
+    H2 = ParagraphStyle(
+        "H2", parent=base["Heading2"], fontName="Optima-Bold",
+        fontSize=14, leading=18, spaceBefore=10, spaceAfter=6,
+        textColor=INK)
+    H3 = ParagraphStyle(
+        "H3", parent=base["Heading3"], fontName="Optima-Bold",
+        fontSize=11.5, leading=15, spaceBefore=8, spaceAfter=2,
+        textColor=INK_LIGHT)
+    body = ParagraphStyle(
+        "body", parent=base["BodyText"], fontName="Palatino",
+        fontSize=10.5, leading=14.5, spaceAfter=4)
+    bodyJ = ParagraphStyle(
+        "bodyJ", parent=body, alignment=4)  # justify
+    bodyB = ParagraphStyle(
+        "bodyB", parent=body, fontName="Palatino-Bold")
+    bullet = ParagraphStyle(
+        "bullet", parent=base["BodyText"], fontName="Palatino",
+        fontSize=10.5, leading=15, leftIndent=14, spaceAfter=4,
+        bulletIndent=4)
+    small = ParagraphStyle(
+        "small", parent=base["BodyText"], fontName="Palatino-Italic",
+        fontSize=9, leading=12, textColor=SOFT)
+    note = ParagraphStyle(
+        "note", parent=base["BodyText"], fontName="Palatino-Italic",
+        fontSize=9.5, leading=12.5, textColor=SOFT,
+        leftIndent=4)
+    winner_box = ParagraphStyle(
+        "winner_box", parent=base["BodyText"], fontName="Didot-Bold",
+        fontSize=26, leading=32, alignment=1,
+        textColor=INK, spaceBefore=8, spaceAfter=4,
+        backColor=WIN_BG, borderColor=WIN_BORDER, borderWidth=1.5,
+        borderPadding=16)
+    callout = ParagraphStyle(
+        "callout", parent=base["BodyText"], fontName="Palatino-Italic",
+        fontSize=11, leading=15, leftIndent=14, rightIndent=14,
+        spaceBefore=4, spaceAfter=6, textColor=INK_LIGHT,
+        backColor=PARCHMENT, borderColor=RULE, borderWidth=0.6,
+        borderPadding=10)
+    kanaat = ParagraphStyle(
+        "kanaat", parent=base["BodyText"], fontName="Palatino",
+        fontSize=10.3, leading=14, leftIndent=10, rightIndent=10,
+        spaceBefore=4, spaceAfter=4,
+        backColor=PAPER_TINT, borderColor=RULE, borderWidth=0.4,
+        borderPadding=7)
+    risk = ParagraphStyle(
+        "risk", parent=base["BodyText"], fontName="Palatino-Italic",
+        fontSize=10.5, leading=14, leftIndent=12, rightIndent=12,
+        spaceBefore=6, spaceAfter=4, textColor=colors.HexColor("#6a3a1a"),
+        backColor=colors.HexColor("#fdf3e7"),
+        borderColor=colors.HexColor("#c69214"),
+        borderWidth=0.5, borderPadding=8)
+    return {
+        "cover_title": cover_title, "cover_sub": cover_sub,
+        "cover_meta": cover_meta, "winner_box": winner_box,
+        "H1": H1, "H2": H2, "H3": H3,
+        "body": body, "bodyJ": bodyJ, "bodyB": bodyB, "bullet": bullet,
+        "small": small, "note": note, "callout": callout,
+        "kanaat": kanaat, "risk": risk,
+    }
 
 
-def _pct(x): return f"{x:.1f}%" if isinstance(x, (int, float)) else "—"
-
-
-# ─── PDF SECTIONS ──────────────────────────────────────────────────────────
-def _section_cover(styles, meta_line, ref_date, n_horses, winner_summary):
+# ─── KAPAK ─────────────────────────────────────────────────────────────────
+def _section_cover(styles, meta_line, distance, ref_date, n_horses, winner):
     out = []
-    out.append(Spacer(1, 1.5 * cm))
-    out.append(Paragraph("GAZİ KOŞUSU", styles["H1"]))
-    out.append(Paragraph("53. Tertibi · G1 Klasik · Veliefendi Hipodromu",
-                         styles["small"]))
-    out.append(Spacer(1, 6))
-    out.append(Paragraph(f"<b>{meta_line}</b>", styles["body"]))
-    out.append(Paragraph(f"Rapor üretildi: {ref_date}", styles["small"]))
-    out.append(Spacer(1, 1.8 * cm))
-    out.append(Paragraph("RAPOR ÖZETİ", styles["H2"]))
+    out.append(Spacer(1, 1.6 * cm))
+    out.append(Paragraph("Gazi Koşusu", styles["cover_title"]))
     out.append(Paragraph(
-        f"<b>•</b> {n_horses} at analiz edildi (V8 multi-head model)",
-        styles["body"]))
+        "53. Tertibi · Birinci Kategori (G1) Klasik Koşu",
+        styles["cover_sub"]))
+    out.append(Paragraph("Veliefendi Hipodromu, İstanbul",
+                         styles["cover_sub"]))
+    out.append(Spacer(1, 14))
+    # Altın çizgi
+    rule = Table([[""]], colWidths=[16 * cm], rowHeights=[2])
+    rule.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), GOLD),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.5, RULE),
+    ]))
+    out.append(rule)
+    out.append(Spacer(1, 14))
     out.append(Paragraph(
-        "<b>•</b> 10000 sanal koşu simüle edildi (Plackett–Luce)",
-        styles["body"]))
+        f"<b>{meta_line}</b>", styles["cover_meta"]))
     out.append(Paragraph(
-        "<b>•</b> 3 farklı tempo senaryosu (YAVAŞ / ORTA / SERT) ayrı koşturuldu",
-        styles["body"]))
+        f"Rapor: {ref_date} · {n_horses} at analiz edildi",
+        styles["cover_meta"]))
+    out.append(Spacer(1, 1.6 * cm))
+
+    out.append(Paragraph("Tahminim", ParagraphStyle(
+        "tahminim", parent=styles["cover_sub"],
+        fontName="Optima", fontSize=12, leading=14,
+        textColor=GOLD, spaceAfter=6)))
     out.append(Paragraph(
-        "<b>•</b> AGF (halkın oyu) ile V8 değer analizi yapıldı",
-        styles["body"]))
-    out.append(Spacer(1, 1.0 * cm))
+        f"#{winner['no']} {winner['name']}", styles["winner_box"]))
+    out.append(Spacer(1, 8))
     out.append(Paragraph(
-        f"<b>Kazanan adayım:</b> #{winner_summary['no']} "
-        f"{winner_summary['name']}  ·  composite score "
-        f"{winner_summary['score']:.3f}",
-        styles["box"]))
+        f"Yarış çizgisi: <b>{PACE_AÇIKLAMA.get(winner['pace'], '—')}</b>"
+        f"  ·  Birleşik puan: <b>{winner['score']:.3f}</b>",
+        styles["cover_meta"]))
+    out.append(Spacer(1, 1.2 * cm))
+    # Bottom rule
+    out.append(rule)
+    out.append(Spacer(1, 8))
+    out.append(Paragraph(
+        "Bu rapor V8 multi-head model, Glicko-2 rating, 10000 sanal "
+        "koşu (Monte Carlo) ve 3 farklı tempo senaryosu kullanılarak "
+        "üretilmiştir. Karar destek aracıdır.",
+        styles["small"]))
     return out
 
 
+# ─── METODOLOJİ ───────────────────────────────────────────────────────────
 def _section_methodology(styles):
     out = []
-    out.append(Paragraph("RAPOR NASIL ÜRETİLDİ", styles["H2"]))
+    out.append(Paragraph("Rapor Nasıl Üretildi", styles["H1"]))
     out.append(Paragraph(
-        "Bu bölüm, raporun arkasındaki yöntemleri açıklar — sonraki "
-        "sayfalardaki sayıları yorumlarken referans olarak kullanın.",
-        styles["small"]))
+        "Sonraki sayfalarda göreceğiniz sayıları doğru yorumlayabilmeniz "
+        "için raporun nasıl hazırlandığını kısaca açıklıyorum.",
+        styles["bodyJ"]))
+    out.append(Spacer(1, 6))
+
+    out.append(Paragraph("Hangi veriler kullanıldı?", styles["H3"]))
+    out.append(Paragraph(
+        "<b>TJK günün programı</b> (yarış kartı, kilo, jokey, mesafe, "
+        "sınıf). <b>TJK derece arşivi</b> (her atın son sekiz yarışının "
+        "tarihi, mesafesi, pisti, kilosu ve derecesi). <b>AGF tahmin "
+        "tablosu</b> (halkın oyu). <b>Glicko-2 kalıcı rating ledger'ı.</b>",
+        styles["bodyJ"]))
+
+    out.append(Paragraph(
+        "V8 modeli ne işe yarıyor?", styles["H3"]))
+    out.append(Paragraph(
+        "V8, bir <b>çok-başlı (multi-head) olasılık tahmincisidir</b>. "
+        "Aynı anda dört soruyu cevaplar: <i>Bu at 1. olur mu? 2. olur mu? "
+        "3. olur mu? 4. olur mu?</i> Yanıt her zaman %0–100 arasında bir "
+        "olasılıktır. Modelin kullandığı 19 özellik arasında V7 ranker'ın "
+        "verdiği skor, AGF değeri, jokey istatistikleri, Glicko rating, "
+        "son altı yarışın ağırlıklı başarı oranı, form trendi ve sınıf "
+        "eğilimi bulunur.",
+        styles["bodyJ"]))
+    out.append(Paragraph(
+        "<b>Not:</b> V8 şu anda bootstrap prior aşamasındadır — yani gerçek "
+        "sonuçlarla eğitilmek yerine, V7 model parametrelerinden türetilmiş "
+        "sentetik bir kalibrasyonla başlatılmıştır. Bu nedenle p_top "
+        "değerleri kalibre tahmin değil, <b>bilgilendirilmiş ön kabuldür</b>. "
+        "Gerçek backfill geldikçe yeniden eğitilecektir.",
+        styles["bodyJ"]))
+
+    out.append(Paragraph("Glicko-2 rating nedir?", styles["H3"]))
+    out.append(Paragraph(
+        "Satrançtaki ELO sisteminin <b>belirsizlik ölçüsüyle güçlendirilmiş "
+        "Bayesian versiyonu</b>. Her at için bir rating ve bunun yanında "
+        "bir RD (Rating Deviation) tutulur. RD küçükse rating güvenilir, "
+        "büyükse az veriden çıkmıştır.",
+        styles["bodyJ"]))
+
+    out.append(Paragraph("Yarış çizgisi (pace stili) nasıl belirlendi?",
+                         styles["H3"]))
+    out.append(Paragraph(
+        "Her atın son yarışlardaki bitiş sırası örüntüsü ve sınıf "
+        "eğilimine bakarak şu dört etiketten biri atanır:",
+        styles["bodyJ"]))
+    for label_key, exp in PACE_KISA_AÇIKLAMA.items():
+        out.append(Paragraph(
+            f"• <b>{PACE_AÇIKLAMA[label_key].capitalize()}:</b> {exp}.",
+            styles["bullet"]))
+
+    out.append(Paragraph(
+        "10000 koşu simülasyonu (Monte Carlo) ne anlama gelir?",
+        styles["H3"]))
+    out.append(Paragraph(
+        "Yarışı bilgisayar üzerinde <b>10.000 kez sanal olarak "
+        "koşturuyoruz</b>. Her sanal koşuda atlar, V8'in verdiği 'birinci "
+        "olma' olasılığına göre rastgele bir sıraya konulur (Plackett–Luce "
+        "yöntemi). Tek bir simülasyon tabii ki rastgele; ama on bin "
+        "simülasyonun ortalaması bize <b>istatistiksel beklentidir</b>. "
+        "Sonuçta her at için 'sanal koşuların kaçında 1. oldu, kaçında "
+        "ilk-4'e girdi' gibi yüzdeler çıkar.",
+        styles["bodyJ"]))
+
+    out.append(Paragraph("Üç tempo senaryosu neden gerekli?",
+                         styles["H3"]))
+    out.append(Paragraph(
+        "Aynı yarış üç farklı tempoda gelişebilir; tempo değiştikçe "
+        "kazanan profili de değişir. Bu yüzden tek bir varsayıma "
+        "bağlı kalmıyor, üçünü de ayrı ayrı simüle ediyoruz:",
+        styles["bodyJ"]))
+    out.append(Paragraph(
+        "<b>YAVAŞ tempo:</b> ilk 600m'de erken hız düşük. Önde tek başına "
+        "giden büyük avantajlı (+%30 ağırlık), finiş atağı yapan zayıflar "
+        "(–%20).",
+        styles["bullet"]))
+    out.append(Paragraph(
+        "<b>ORTA tempo:</b> dengeli akış. Takip eden tip avantajlı (+%20).",
+        styles["bullet"]))
+    out.append(Paragraph(
+        "<b>SERT tempo:</b> erken hız sert. Önde gidenler son düzlükte "
+        "yorulur (–%35), finiş atağı yapan kuvvetli avantajlı (+%45).",
+        styles["bullet"]))
+    out.append(Paragraph(
+        "Her tempoda 5000 ayrı simülasyon koşturulur. <b>Üç senaryoda da "
+        "üstte kalan at = tempo-bağımsız sağlam tercih.</b>",
+        styles["bodyJ"]))
+
+    out.append(Paragraph("Kazanan adayını nasıl seçtim?", styles["H3"]))
+    out.append(Paragraph(
+        "Üç ölçütün ağırlıklı ortalaması bir <b>birleşik puan</b> verir:",
+        styles["bodyJ"]))
+    out.append(Paragraph(
+        "Birleşik puan = 0.50 × (Monte Carlo 1. olma %)<br/>"
+        "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; + 0.30 × (V8 ilk-4 olasılığı)<br/>"
+        "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; + 0.20 × (üç tempodan kaçında top-3'te)",
+        styles["callout"]))
+    out.append(Paragraph(
+        "Tempo nasıl gelişeceğini önceden bilemiyoruz; bu yüzden 'üç farklı "
+        "tempoda da kuvvetli kalan at' güvenli bir kriter. En yüksek "
+        "birleşik puana sahip at = kazanan adayım.",
+        styles["bodyJ"]))
+
+    out.append(Paragraph("Veri sınırları (önemli)", styles["H3"]))
+    out.append(Paragraph(
+        "<b>•</b> Bitiş sırası TJK derece kaydında doğrudan yok; Taydex DB'si "
+        "açık değilse <b>zamandan tahmin edilir</b> (tablo hücrelerinde "
+        "yıldız * ile işaretli).<br/>"
+        "<b>•</b> Pedigri (baba/anne) Taydex DB'sini gerektirir; lokal "
+        "ortamda boş olabilir.<br/>"
+        "<b>•</b> AGF tablosu yarış gününden bir gün önce yayınlanır; bu "
+        "rapor üretildiğinde AGF güncel olmayabilir.<br/>"
+        "<b>•</b> Türk pari-mutuel piyasası matematiksel olarak <b>-EV</b> "
+        "(yapısal). Bu rapor analiz aracıdır; bahis kararı sahibi sizsiniz.",
+        styles["bodyJ"]))
+    return out
+
+
+# ─── KAZANAN ──────────────────────────────────────────────────────────────
+def _section_winner_deep(styles, winner, runners_up, mc, leg, forecasts,
+                         history_rows, ped):
+    out = []
+    out.append(Paragraph("Kazanan Adayım", styles["H1"]))
+    out.append(Paragraph(
+        f"#{winner['no']} {winner['name']}", styles["winner_box"]))
+    horse = next((h for h in leg if h.get("horse_no") == winner["no"]), {})
+    jk = horse.get("jockey_name") or "—"
+    kg = (f"{horse.get('weight'):.1f}"
+          if isinstance(horse.get("weight"), (int, float)) else "—")
+    out.append(Paragraph(
+        f"<i>Jokey:</i> {jk} &nbsp;·&nbsp; <i>Kilo:</i> {kg} kg "
+        f"&nbsp;·&nbsp; <i>Yarış çizgisi:</i> "
+        f"{PACE_AÇIKLAMA.get(winner['pace'], '—')}",
+        styles["body"]))
     out.append(Spacer(1, 4))
 
-    out.append(Paragraph("1. Hangi veriler kullanıldı?", styles["H3"]))
-    out.append(Paragraph(
-        "<b>TJK programmes</b> — yarış kartı, kilo, jokey, mesafe, sınıf. "
-        "<b>TJK derece arşivi</b> — her atın son 8 yarışı (tarih, mesafe, "
-        "pist, kilo, derece). <b>AGF tahmin</b> — halkın oy oranı. "
-        "<b>Glicko-2 ledger</b> — kalıcı rating geçmişi.",
-        styles["method"]))
+    # Gerekçeler — insan dili
+    out.append(Paragraph("Neden bu at?", styles["H2"]))
 
-    out.append(Paragraph("2. V8 modeli nedir?", styles["H3"]))
+    mc_p1 = winner["mc_p1"]
     out.append(Paragraph(
-        "V8 <b>çok-başlı (multi-head) bir olasılık sınıflandırıcısıdır</b>: "
-        "her at için '1. olur mu?', '2.'de mi biter?', '3.'de mi?', '4.'de "
-        "mi?' sorularını ayrı ayrı cevaplar. Çıktı her zaman %0–%100 "
-        "arasında bir olasılıktır. Kullandığı 19 özellik: V7 ranker tahmini, "
-        "AGF, jokey istatistikleri, Glicko rating, son N yarışın ağırlıklı "
-        "başarı oranı, form trendi, sınıf eğilimi, dinlenme süresi, sequence "
-        "embedding skoru. "
-        "<b>NOT:</b> V8 şu an bootstrap prior (n=3000 sentetik örnek) "
-        "üzerine kurulmuş; gerçek sonuçlarla retrain beklenenler arasında. "
-        "Yani p_top değerleri kalibre tahmin değil, <b>bilgilendirilmiş prior'dır</b>.",
-        styles["method"]))
-
-    out.append(Paragraph("3. Glicko-2 rating nedir?", styles["H3"]))
-    out.append(Paragraph(
-        "Satranç ELO'nun belirsizlik (RD = Rating Deviation) dahil edilmiş "
-        "Bayesian versiyonu. Her atın rating'ine bir RD eşlik eder: RD küçükse "
-        "rating güvenilir, büyükse az veriden çıkmıştır. Klasik koşular için "
-        "karşılaştırılabilir performans skoru.",
-        styles["method"]))
-
-    out.append(Paragraph("4. Pace stili nasıl belirlendi?", styles["H3"]))
-    out.append(Paragraph(
-        "Her atın son 6 yarışındaki bitiş sırası dağılımı + sınıf eğilimi "
-        "ile 4 etiketten biri atanır: <b>öne gidici</b> (front), <b>takip "
-        "eden</b> (stalker), <b>orta tempo</b> (mid), <b>finiş atağı</b> "
-        "(closer). Bu etiket tempo senaryolarında olasılığı yeniden ağırlıklar.",
-        styles["method"]))
+        f"<b>10.000 sanal koşunun %{mc_p1:.1f}'inde birinci geldi.</b> "
+        f"Yani modelimiz {winner['name']} adlı atı "
+        f"{_ne_diyor_mc(mc_p1)} olarak görüyor. Yarışı 100 kez "
+        f"koşsaydık, yaklaşık {round(mc_p1)} tanesinde bu at birinci "
+        f"bitirirdi.",
+        styles["bodyJ"]))
 
     out.append(Paragraph(
-        "5. Yarış simülasyonu (Monte Carlo) nedir?", styles["H3"]))
-    out.append(Paragraph(
-        "10000 sanal koşu koşturulur. Her sanal koşuda atlar, V8'in verdiği "
-        "'1. olma' olasılığına göre Plackett–Luce yöntemiyle (ağırlıklı "
-        "rastgele seçim, geri yerleştirmesiz) sıralanır. Tek bir simülasyon "
-        "rastgele; 10000 simülasyonun ortalaması <b>istatistiksel beklentidir</b>. "
-        "Sonuçta her at için '1./2./3./4./5+ olma %' tablosu çıkar.",
-        styles["method"]))
+        f"<b>İlk-4'e girme şansı %{winner['v8_p4']:.1f}.</b> V8 modelinin "
+        f"hesabıyla {winner['name']} {_ne_diyor_top4(winner['v8_p4']).lower()}.",
+        styles["bodyJ"]))
 
-    out.append(Paragraph("6. 3 tempo senaryosu neden?", styles["H3"]))
+    tc = winner["tempo_top3_count"]
     out.append(Paragraph(
-        "Türk hipodromlarında tempo aynı koşuda 3 farklı şekilde gelişebilir. "
-        "Her senaryoda atların pace stiline göre 'strength' değeri yeniden "
-        "ağırlıklanır ve ayrı bir 5000 simülasyon koşulur. <b>3 senaryoda "
-        "da güçlü kalan at = tempo-bağımsız sağlam.</b>",
-        styles["method"]))
-    out.append(Paragraph(
-        "<b>YAVAŞ TEMPO:</b> ilk 600m yavaş — önde giden +%30, finiş atağı "
-        "−%20.<br/>"
-        "<b>ORTA TEMPO:</b> dengeli — takip eden +%20, finiş atağı −%5.<br/>"
-        "<b>SERT TEMPO:</b> ilk 600m hızlı — önde giden −%35, finiş atağı +%45.",
-        styles["method"]))
+        f"<b>Tempo nasıl gelişirse gelişsin sağlam:</b> "
+        f"{_tempo_robust_açıklama(tc)}. Bu özellik özellikle önemli, "
+        f"çünkü yarış sırasında temponun nasıl şekilleneceğini önceden "
+        f"bilemiyoruz.",
+        styles["bodyJ"]))
 
-    out.append(Paragraph("7. Tek kazanan adayı nasıl seçildi?", styles["H3"]))
-    out.append(Paragraph(
-        "<b>Composite skor</b> = 0.50 × Monte Carlo 1. olma % + 0.30 × V8 "
-        "P(top-4) + 0.20 × tempo-robustluk (3 tempodan kaçında top-3'te). "
-        "En yüksek skor = kazanan adayım. Tempo-robustluk önemli çünkü "
-        "tempo nasıl gelişeceğini önceden bilmiyoruz; 3 senaryoda da üstte "
-        "kalan at en güvenilir tercih.",
-        styles["method"]))
-
-    out.append(Paragraph("8. Veri sınırları (bilmek önemli)", styles["H3"]))
-    out.append(Paragraph(
-        "• Finiş sırası — TJK derece kaydında doğrudan yok; eğer Taydex DB "
-        "açık değilse zamandan tahmin edildi (yıldız * ile işaretli).<br/>"
-        "• Pedigri (sire/dam) — Taydex DB'sini gerektirir; lokal'de boş olabilir.<br/>"
-        "• V8 bootstrap prior — gerçek backfill ile retrain edilince "
-        "olasılıklar daha kalibre olur.<br/>"
-        "• Türk pari-mutuel piyasası matematiksel -EV (yapısal). Bu rapor "
-        "karar destek aracıdır, bahis garantisi DEĞİL.",
-        styles["method"]))
-    return out
-
-
-def _section_winner(styles, winner, runners_up, mc_p1):
-    """Tek kazanan ile gerekçeler."""
-    out = []
-    out.append(Paragraph("KAZANAN ADAYIM", styles["H2"]))
-    out.append(Paragraph(
-        f"#{winner['no']} {winner['name']}", styles["H1b"]))
-    out.append(Paragraph(
-        f"<b>Composite skor: {winner['score']:.3f}</b>  "
-        f"·  taktik: {PACE_TR.get(winner['pace'], '—')}",
-        styles["small"]))
-    out.append(Spacer(1, 10))
-
-    out.append(Paragraph("Neden bu at?", styles["H3"]))
-    bullets = []
-    mc1 = winner["mc_p1"]
-    bullets.append(
-        f"<b>Monte Carlo 1. olma şansı:</b> 10000 sanal koşunun "
-        f"%{mc1:.1f}'inde 1. bitirdi (en yüksek).")
-    bullets.append(
-        f"<b>V8 modeli güveni:</b> P(top-4) %{winner['v8_p4']:.1f} — "
-        f"ilk-4 olasılığı modele göre yüksek.")
-    bullets.append(
-        f"<b>Tempo-robustluk:</b> 3 farklı tempo senaryosunun "
-        f"<b>{winner['tempo_top3_count']}'inde</b> top-3'te. "
-        f"Tempo nasıl gelişirse gelişsin üstte kalıyor.")
-    bullets.append(
-        f"<b>Taktik profili:</b> {PACE_TR.get(winner['pace'], '—')} — "
-        f"yarış akışına uygun pozisyonlanma.")
-    bullets.append(
-        "<b>Riskler:</b> V8 bootstrap prior; gerçek koşunun nasıl başlayacağı "
-        "ve atın taze form durumu raporda gözlemlenenden farklı olabilir. "
-        "Composite skor mutlak değil, göreceli sıralama.")
-    for b in bullets:
-        out.append(Paragraph("• " + b, styles["body"]))
-
-    out.append(Spacer(1, 10))
-    if runners_up:
+    # Form / Glicko bilgi
+    fc = forecasts.get((winner["no"], winner["name"]), {})
+    g = (fc.get("glicko") or {}).get("rating")
+    rd = (fc.get("glicko") or {}).get("rd")
+    trend = (fc.get("trajectory") or {}).get("finish_trend_signal")
+    extra = []
+    if isinstance(g, (int, float)):
+        seviye = ("elit" if g >= 1600
+                  else "orta-üst" if g >= 1450
+                  else "orta-alt")
+        extra.append(
+            f"Glicko ratingi <b>{seviye}</b> ({g:.0f}±{rd or 0:.0f}).")
+    if isinstance(trend, (int, float)):
+        if trend > 0.2:
+            extra.append("Son yarışlarındaki bitiş sıraları <b>yükselişte</b>.")
+        elif trend < -0.2:
+            extra.append("Son yarışlarındaki bitiş sıraları <b>düşüşte</b>.")
+    if extra:
         out.append(Paragraph(
-            "<b>Yakın takipçiler:</b> #{n1} {a1} (skor {s1:.3f})"
-            " · #{n2} {a2} ({s2:.3f}) · #{n3} {a3} ({s3:.3f})".format(
-                n1=runners_up[0]["no"], a1=runners_up[0]["name"],
-                s1=runners_up[0]["score"],
-                n2=runners_up[1]["no"], a2=runners_up[1]["name"],
-                s2=runners_up[1]["score"],
-                n3=runners_up[2]["no"], a3=runners_up[2]["name"],
-                s3=runners_up[2]["score"],
-            ),
+            "<b>Form ve seviye:</b> " + " ".join(extra),
+            styles["bodyJ"]))
+
+    # Risk bölümü
+    out.append(Spacer(1, 4))
+    out.append(Paragraph("Dikkat edilmesi gerekenler", styles["H2"]))
+    risks = []
+    n_hist = len(history_rows)
+    if n_hist < 4:
+        risks.append(
+            f"<b>Deneyim sınırlı:</b> {winner['name']} elimizdeki kayıtlarda "
+            f"sadece <b>{n_hist} yarış</b> görünüyor. Az koşan atlarda "
+            f"performans öngörüsü daha az güvenilirdir; sürpriz olasılığı "
+            f"normalden yüksek.")
+    elif n_hist < 6:
+        risks.append(
+            f"<b>Az kayıt:</b> sadece {n_hist} yarışlık veri var. Glicko "
+            f"belirsizliği (RD) yüksek olabilir; rating göründüğünden "
+            f"daha az güvenilir.")
+    risks.append(
+        "<b>Model bootstrap aşamasında:</b> V8 henüz gerçek sonuçlarla "
+        "retrain edilmedi. Olasılıkların mutlak değeri değil <b>göreceli "
+        "sıralaması</b> daha güvenilirdir.")
+    risks.append(
+        "<b>Tempo varsayımı:</b> üç senaryonun katsayıları defansif "
+        "kalibrasyondur; gerçek koşunun pace bias'ı bu üçünden farklı "
+        "olabilir.")
+    risks.append(
+        "<b>AGF tablosu:</b> rapor üretildiği anda AGF güncel olmayabilir. "
+        "AGF yayınlandıktan sonra modelin değerlendirmesi hafifçe değişebilir.")
+    for r in risks:
+        out.append(Paragraph(r, styles["risk"]))
+
+    # Yakın takipçiler
+    out.append(Spacer(1, 4))
+    out.append(Paragraph("Yakın Takipçiler", styles["H2"]))
+    out.append(Paragraph(
+        "Birleşik puanda kazananın hemen ardından gelen üç at. "
+        "Hepsi ciddi rakipler; sürpriz olarak kazananı geçebilirler.",
+        styles["body"]))
+    for r in runners_up:
+        text = (f"<b>#{r['no']} {r['name']}</b> — birleşik puan "
+                f"{r['score']:.3f}; sanal koşularda %{r['mc_p1']:.1f} "
+                f"birinci, ilk-4 olasılığı %{r['v8_p4']:.1f}; "
+                f"yarış çizgisi <i>{PACE_AÇIKLAMA.get(r['pace'], '—')}</i>; "
+                f"tempo dayanıklılığı {r['tempo_top3_count']}/3.")
+        out.append(Paragraph("• " + text, styles["bullet"]))
+
+    # Geçmiş yarış tablosu — kazanan
+    if history_rows:
+        out.append(Spacer(1, 6))
+        out.append(Paragraph(
+            f"<b>{winner['name']} — son {len(history_rows)} yarış:</b>",
             styles["body"]))
+        hrows = [["Tarih", "Şehir", "Sınıf", "Mesafe", "Pist",
+                  "Kilo", "Derece", "Finiş"]]
+        for r in history_rows:
+            hrows.append([
+                r["date"], r["sehir"][:12], r["sinif"][:18],
+                f"{r['mesafe']}m", r["pist"],
+                f"{r['kilo']}" if r["kilo"] else "—",
+                r["derece"],
+                str(r["finish"]) + ("*" if r["finish"] != "?" else ""),
+            ])
+        ht = Table(hrows, colWidths=[1.9 * cm, 2.1 * cm, 3.0 * cm,
+                                      1.4 * cm, 1.2 * cm, 1.0 * cm,
+                                      1.8 * cm, 1.0 * cm])
+        ht.setStyle(TableStyle([
+            ("FONTNAME", (0, 0), (-1, 0), "Optima-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 8.8),
+            ("BACKGROUND", (0, 0), (-1, 0), TABLE_HEAD_BG),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 1), (-1, -1), "Palatino"),
+            ("FONTSIZE", (0, 1), (-1, -1), 9),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+             [colors.white, CELL_TINT]),
+            ("BOX", (0, 0), (-1, -1), 0.4, INK),
+            ("INNERGRID", (0, 1), (-1, -1), 0.2, RULE),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        out.append(ht)
     return out
 
 
+# ─── TOP-5 ───────────────────────────────────────────────────────────────
 def _section_top5(styles, top5, mc):
     out = []
-    out.append(Paragraph("TOP-5 FAVORİ", styles["H2"]))
+    out.append(Paragraph("Top-5 Favori At", styles["H1"]))
     cumulative_p1 = sum(mc["rank_pct"].get(h["no"], {}).get(1, 0)
                         for h in top5)
-    cumulative_top4 = sum(
-        sum(mc["rank_pct"].get(h["no"], {}).get(k, 0) for k in (1, 2, 3, 4))
-        for h in top5) / len(top5) if top5 else 0
     out.append(Paragraph(
-        f"<b>Bu 5'ten biri kuvvetle muhtemel kazanır.</b> "
-        f"Toplam 1. olma şansı: <b>%{cumulative_p1:.1f}</b> "
-        f"(geri kalan {22 - len(top5)} atın hepsinin toplamı "
-        f"%{100 - cumulative_p1:.1f}).",
-        styles["box"]))
-    rows = [["#", "No", "At", "Taktik", "MC 1.", "V8 P(top-4)",
-             "Tempo R.", "Composite"]]
+        f"<b>Bu beş attan biri kazanma olasılığı yüksek.</b> Toplam "
+        f"birinci olma şansı: <b>%{cumulative_p1:.1f}</b>. Yani 10.000 "
+        f"sanal koşunun %{cumulative_p1:.0f}'inde bu beşliden birisi "
+        f"birinci bitiriyor; geri kalan atların hepsinin toplam birinci "
+        f"olma şansı sadece %{100 - cumulative_p1:.1f}.",
+        styles["callout"]))
+    rows = [["#", "No", "At", "Yarış Çizgisi",
+             "MC 1.olma", "V8 İlk-4", "Tempo D.", "Birleşik"]]
     for i, h in enumerate(top5, 1):
         rows.append([
             str(i), str(h["no"]), h["name"] or "?",
-            PACE_TR.get(h["pace"], "—"),
+            PACE_AÇIKLAMA.get(h["pace"], "—"),
             f"%{h['mc_p1']:.1f}",
             f"%{h['v8_p4']:.1f}",
             f"{h['tempo_top3_count']}/3",
             f"{h['score']:.3f}",
         ])
-    t = Table(rows, colWidths=[0.7 * cm, 1.0 * cm, 4.6 * cm, 2.5 * cm,
-                                1.8 * cm, 2.1 * cm, 1.6 * cm, 2.0 * cm])
+    t = Table(rows, colWidths=[0.7 * cm, 0.9 * cm, 4.6 * cm, 2.8 * cm,
+                                1.9 * cm, 1.9 * cm, 1.6 * cm, 2.0 * cm])
     t.setStyle(TableStyle([
-        ("FONTNAME", (0, 0), (-1, 0), "Georgia-Bold"),
-        ("FONTSIZE", (0, 0), (-1, 0), 9.5),
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a3a5c")),
+        ("FONTNAME", (0, 0), (-1, 0), "Optima-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 10),
+        ("BACKGROUND", (0, 0), (-1, 0), TABLE_HEAD_BG),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 1), (-1, -1), "Times"),
-        ("FONTSIZE", (0, 1), (-1, -1), 10),
-        ("FONTNAME", (2, 1), (2, -1), "Times-Bold"),
-        ("FONTNAME", (7, 1), (7, -1), "Times-Bold"),
+        ("FONTNAME", (0, 1), (-1, -1), "Palatino"),
+        ("FONTSIZE", (0, 1), (-1, -1), 10.5),
+        ("FONTNAME", (2, 1), (2, -1), "Palatino-Bold"),
+        ("FONTNAME", (7, 1), (7, -1), "Palatino-Bold"),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1),
-         [colors.white, colors.HexColor("#f3f6fa")]),
+         [colors.white, CELL_TINT]),
         ("ALIGN", (4, 0), (-1, -1), "RIGHT"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("BOX", (0, 0), (-1, -1), 0.4, colors.HexColor("#1a3a5c")),
-        ("INNERGRID", (0, 1), (-1, -1), 0.25, colors.HexColor("#e8eef4")),
+        ("BOX", (0, 0), (-1, -1), 0.4, INK),
+        ("INNERGRID", (0, 1), (-1, -1), 0.25, RULE),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
     ]))
     out.append(t)
     out.append(Spacer(1, 10))
     out.append(Paragraph(
-        "<i>Tempo R. = atın 3 tempo senaryosunda (YAVAŞ/ORTA/SERT) top-3'e "
-        "girme sayısı. 3/3 = tüm hızlarda kuvvetli; 0/3 = belirli bir "
-        "tempo senaryosu gerekiyor.</i>", styles["small"]))
+        "<i>MC 1.olma</i> = 10.000 simülasyonda atın birinci olma yüzdesi. "
+        "<i>V8 İlk-4</i> = modelin ilk-4'e bitirme olasılığı. "
+        "<i>Tempo D.</i> = üç tempo senaryosundan (yavaş/orta/sert) "
+        "kaçında at top-3'te. <i>Birleşik</i> = üç ölçütün ağırlıklı "
+        "ortalaması (kazanan seçim kriteri).",
+        styles["small"]))
     return out
 
 
-def _section_tempo_scenarios(styles, tempo_sims, name_by_no, per_horse_pace):
+# ─── 3 TEMPO ──────────────────────────────────────────────────────────────
+def _section_tempo(styles, tempo_sims, name_by_no, per_horse_pace):
     out = []
-    out.append(Paragraph("3 TEMPO SENARYOSU", styles["H2"]))
+    out.append(Paragraph("Üç Tempo Senaryosu", styles["H1"]))
     out.append(Paragraph(
-        "Aynı atlar, üç farklı tempo varsayımıyla 5000 kez koşturuldu. "
-        "Pace stillerine göre 'strength' değerleri yeniden ağırlıklandırıldı.",
-        styles["body"]))
-    out.append(Spacer(1, 6))
+        "Aynı 22 at, üç farklı tempo varsayımıyla ayrı ayrı 5.000 kez "
+        "koşturuldu. Atların yarış çizgisine göre olasılıkları yeniden "
+        "ağırlıklandırıldı.",
+        styles["bodyJ"]))
 
     pace_by_no = {h["no"]: h["pace"] for h in per_horse_pace}
-
     descriptions = {
-        "YAVAŞ": ("İlk 600m yavaş, finiş atağı önemsiz. Önde tek başına "
-                  "giden at avantajlı; pace bias 'önde-yorulma' minimum."),
-        "ORTA":  ("Dengeli tempo. Takip eden + finiş gücü kombinasyonu "
-                  "üstün — klasik G1 dağılımı."),
-        "SERT":  ("İlk 600m hızlı, ön çekişme. Önde gidenler son 200m'de "
-                  "yorulur; finiş atağı yapan kuvvetli avantajlı."),
+        "YAVAŞ": ("İlk 600m yavaş başlar. Önde tek başına giden büyük "
+                  "avantajlı; finiş atağı yapan tip etkili olamaz."),
+        "ORTA":  ("Dengeli akış. Takipçi tip + finiş gücü kombinasyonu "
+                  "üstün — klasik birinci kategori dağılımı."),
+        "SERT":  ("İlk 600m'de sert ön çekişme. Önde gidenler son "
+                  "düzlükte yorulur; arkadan gelen kuvvetli avantajlı."),
     }
 
     for tempo in ("YAVAŞ", "ORTA", "SERT"):
+        section_block = []
+        section_block.append(Paragraph(
+            f"{tempo} TEMPO", styles["H2"]))
+        section_block.append(Paragraph(
+            descriptions[tempo], styles["body"]))
         sim = tempo_sims[tempo]
         rp = sim["rank_pct"]
-        # Top-3 by sum of P(1)+P(2)+P(3)
         ranking = sorted(
             ((no, sum(rp.get(no, {}).get(k, 0) for k in (1, 2, 3)),
               rp.get(no, {}).get(1, 0))
              for no in rp.keys()),
             key=lambda x: -x[1]
         )[:3]
-
-        section_block = []
-        section_block.append(Paragraph(
-            f"{tempo} TEMPO", styles["H3"]))
-        section_block.append(Paragraph(
-            descriptions[tempo], styles["small"]))
-        rows = [["Sıra", "No", "At", "Taktik", "1. olma %", "Top-3 % "]]
+        rows = [["Sıra", "No", "At", "Yarış Çizgisi",
+                 "1. olma %", "Top-3 %"]]
         for i, (no, sum_p, p1) in enumerate(ranking, 1):
             nm = name_by_no.get(no, "?")
             pace = pace_by_no.get(no, "mid")
             rows.append([
-                str(i), str(no), nm, PACE_TR.get(pace, "—"),
+                str(i), str(no), nm, PACE_AÇIKLAMA.get(pace, "—"),
                 f"%{p1:.1f}", f"%{sum_p:.1f}",
             ])
-        t = Table(rows, colWidths=[0.8 * cm, 1.0 * cm, 5.0 * cm, 2.8 * cm,
+        t = Table(rows, colWidths=[0.9 * cm, 1.0 * cm, 5.4 * cm, 3.0 * cm,
                                     2.2 * cm, 2.2 * cm])
         t.setStyle(TableStyle([
-            ("FONTNAME", (0, 0), (-1, 0), "Georgia-Bold"),
-            ("FONTSIZE", (0, 0), (-1, 0), 9.5),
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#244a73")),
+            ("FONTNAME", (0, 0), (-1, 0), "Optima-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 10),
+            ("BACKGROUND", (0, 0), (-1, 0), INK),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("FONTNAME", (0, 1), (-1, -1), "Times"),
-            ("FONTSIZE", (0, 1), (-1, -1), 10),
-            ("FONTNAME", (2, 1), (2, -1), "Times-Bold"),
+            ("FONTNAME", (0, 1), (-1, -1), "Palatino"),
+            ("FONTSIZE", (0, 1), (-1, -1), 10.5),
+            ("FONTNAME", (2, 1), (2, -1), "Palatino-Bold"),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1),
-             [colors.white, colors.HexColor("#f3f6fa")]),
+             [colors.white, CELL_TINT]),
             ("ALIGN", (4, 0), (-1, -1), "RIGHT"),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("BOX", (0, 0), (-1, -1), 0.3, colors.HexColor("#244a73")),
+            ("BOX", (0, 0), (-1, -1), 0.3, INK),
+            ("INNERGRID", (0, 1), (-1, -1), 0.25, RULE),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ]))
         section_block.append(t)
-        section_block.append(Spacer(1, 12))
+        section_block.append(Spacer(1, 16))
         out.append(KeepTogether(section_block))
-
     return out
 
 
-def _section_monte_carlo(styles, v8_preds, mc, per_horse, distance):
+# ─── 10000 MC ─────────────────────────────────────────────────────────────
+def _section_mc(styles, v8_preds, mc):
     out = []
-    out.append(Paragraph("10000 KOŞU MONTE CARLO", styles["H2"]))
+    out.append(Paragraph("10.000 Koşu Monte Carlo", styles["H1"]))
     out.append(Paragraph(
-        "Her at için 10000 sanal koşunun istatistiksel sonucu. "
-        "İlk-4 toplamı (Σ) yüksek olanlar en sık ilk-4 görünenler.",
-        styles["body"]))
+        "Her at için 10.000 sanal koşunun istatistiksel sonucu. "
+        "İlk-4 toplamı (Σ) yüksek olan atlar, üst sıralarda en sık "
+        "görünenler.",
+        styles["bodyJ"]))
     rows = [["At", "P(1)", "P(2)", "P(3)", "P(4)", "P(5+)", "İlk-4 Σ"]]
     data = []
     for p in v8_preds:
@@ -673,26 +891,28 @@ def _section_monte_carlo(styles, v8_preds, mc, per_horse, distance):
                      _pct(r[1]), _pct(r[2]), _pct(r[3]),
                      _pct(r[4]), _pct(r[5]), f"<b>{r[6]:.1f}%</b>"])
     formatted = [[Paragraph(c, styles["body"]) for c in r] for r in rows]
-    t = Table(formatted, colWidths=[5.8 * cm, 1.6 * cm, 1.6 * cm, 1.6 * cm,
-                                     1.6 * cm, 1.6 * cm, 1.9 * cm])
+    t = Table(formatted, colWidths=[6.0 * cm, 1.5 * cm, 1.5 * cm, 1.5 * cm,
+                                     1.5 * cm, 1.5 * cm, 1.9 * cm])
     t.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a3a5c")),
+        ("BACKGROUND", (0, 0), (-1, 0), INK),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1),
-         [colors.white, colors.HexColor("#f3f6fa")]),
+         [colors.white, CELL_TINT]),
         ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
-        ("BOX", (0, 0), (-1, -1), 0.3, colors.HexColor("#1a3a5c")),
-        ("INNERGRID", (0, 1), (-1, -1), 0.2, colors.HexColor("#e8eef4")),
+        ("BOX", (0, 0), (-1, -1), 0.3, INK),
+        ("INNERGRID", (0, 1), (-1, -1), 0.2, RULE),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("LEFTPADDING", (0, 0), (-1, -1), 4),
         ("RIGHTPADDING", (0, 0), (-1, -1), 4),
     ]))
     out.append(t)
-    out.append(Spacer(1, 12))
+    out.append(Spacer(1, 10))
 
-    # Top TOP-4 orders
-    out.append(Paragraph("EN SIK ÇIKAN TOP-4 SIRALAMALARI",
-                         styles["H3"]))
+    out.append(Paragraph("En Sık Çıkan Top-4 Sıralamaları",
+                         styles["H2"]))
+    out.append(Paragraph(
+        "10.000 simülasyondan en çok tekrarlanan ilk-dört sıralamaları:",
+        styles["body"]))
     name_by_no = {p.get("horse_no"): p.get("horse_name") for p in v8_preds}
     top_rows = [["Sıra", "Frekans", "1.", "2.", "3.", "4."]]
     for i, (order, cnt) in enumerate(mc["top4_orders"], 1):
@@ -706,38 +926,37 @@ def _section_monte_carlo(styles, v8_preds, mc, per_horse, distance):
     t = Table(top_rows, colWidths=[1.0 * cm, 1.7 * cm, 3.4 * cm, 3.4 * cm,
                                     3.4 * cm, 3.4 * cm])
     t.setStyle(TableStyle([
-        ("FONTNAME", (0, 0), (-1, 0), "Georgia-Bold"),
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#244a73")),
+        ("FONTNAME", (0, 0), (-1, 0), "Optima-Bold"),
+        ("BACKGROUND", (0, 0), (-1, 0), INK_LIGHT),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 1), (-1, -1), "Times"),
+        ("FONTNAME", (0, 1), (-1, -1), "Palatino"),
         ("FONTSIZE", (0, 1), (-1, -1), 9),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1),
-         [colors.white, colors.HexColor("#f3f6fa")]),
+         [colors.white, CELL_TINT]),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("BOX", (0, 0), (-1, -1), 0.3, colors.HexColor("#244a73")),
+        ("BOX", (0, 0), (-1, -1), 0.3, INK_LIGHT),
+        ("INNERGRID", (0, 1), (-1, -1), 0.2, RULE),
     ]))
     out.append(t)
-
-    out.append(Spacer(1, 10))
-    out.append(Paragraph("Yarış gelişim senaryosu (pace okuma)",
-                         styles["H3"]))
-    out.append(Paragraph(pace_narrative(per_horse, distance),
-                         styles["callout"]))
     return out
 
 
+# ─── AGF vs V8 ────────────────────────────────────────────────────────────
 def _section_value(styles, leg, v8_preds):
     out = []
-    out.append(Paragraph("AGF vs V8 — DEĞER ANALİZİ", styles["H2"]))
+    out.append(Paragraph("Halkın Oyu (AGF) ile Model Karşılaştırması",
+                         styles["H1"]))
     out.append(Paragraph(
-        "AGF = halkın oyu, V8 = modelin görüşü. Δrank pozitifse <b>halkın "
-        "kaçırdığı</b> bir at, negatifse <b>halkın şişirdiği</b> bir "
-        "favori. Bu tablo bilgilendirme; bahis tavsiyesi değil.",
-        styles["body"]))
+        "AGF, atın halk arasında ne kadar tutulduğunu gösteren oran. V8 ise "
+        "modelin matematiksel görüşü. Aralarındaki fark <b>halkın "
+        "kaçırdığı (value)</b> ve <b>halkın aşırı tuttuğu (overbet)</b> "
+        "atları açığa çıkarır. Bu tablo bilgilendirme amaçlıdır.",
+        styles["bodyJ"]))
     agf_sorted = sorted(leg, key=lambda h: -(h.get("agf_value") or 0))
     agf_rank = {h.get("horse_no"): i + 1 for i, h in enumerate(agf_sorted)}
     v8_rank = {p.get("horse_no"): i + 1 for i, p in enumerate(v8_preds)}
-    rows = [["No", "At", "AGF", "AGF rank", "V8 rank", "Δrank", "Etiket"]]
+    rows = [["No", "At", "AGF", "AGF sırası", "V8 sırası",
+             "Fark", "Yorum"]]
     deltas = []
     for p in v8_preds:
         no = p.get("horse_no")
@@ -747,9 +966,9 @@ def _section_value(styles, leg, v8_preds):
         vr = v8_rank.get(no, 99)
         d = ar - vr
         if d >= 5:
-            label = "VALUE (kaçırılmış)"
+            label = "Halkın kaçırdığı (value)"
         elif d <= -5:
-            label = "OVERBET (şişmiş)"
+            label = "Halkın şişirdiği (overbet)"
         elif abs(d) <= 2:
             label = "Uyumlu"
         else:
@@ -763,27 +982,28 @@ def _section_value(styles, leg, v8_preds):
             str(ar), str(vr),
             (f"+{d}" if d > 0 else str(d)), lbl,
         ])
-    t = Table(rows, colWidths=[1.0 * cm, 4.6 * cm, 1.6 * cm, 1.7 * cm,
-                                1.7 * cm, 1.4 * cm, 4.2 * cm])
+    t = Table(rows, colWidths=[0.9 * cm, 4.4 * cm, 1.6 * cm, 1.8 * cm,
+                                1.8 * cm, 1.3 * cm, 4.0 * cm])
     t.setStyle(TableStyle([
-        ("FONTNAME", (0, 0), (-1, 0), "Georgia-Bold"),
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a3a5c")),
+        ("FONTNAME", (0, 0), (-1, 0), "Optima-Bold"),
+        ("BACKGROUND", (0, 0), (-1, 0), INK),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 1), (-1, -1), "Times"),
+        ("FONTNAME", (0, 1), (-1, -1), "Palatino"),
         ("FONTSIZE", (0, 1), (-1, -1), 9.5),
-        ("FONTNAME", (1, 1), (1, -1), "Times-Bold"),
+        ("FONTNAME", (1, 1), (1, -1), "Palatino-Bold"),
         ("ALIGN", (2, 0), (5, -1), "RIGHT"),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1),
-         [colors.white, colors.HexColor("#f3f6fa")]),
-        ("BOX", (0, 0), (-1, -1), 0.4, colors.HexColor("#1a3a5c")),
+         [colors.white, CELL_TINT]),
+        ("BOX", (0, 0), (-1, -1), 0.4, INK),
+        ("INNERGRID", (0, 1), (-1, -1), 0.2, RULE),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
     ]))
     out.append(t)
     return out
 
 
+# ─── At başına detay ──────────────────────────────────────────────────────
 def _build_horse_block(idx, horse, p, fc, pace, history_rows, ped, styles):
-    """Bir at için detay bloğu (KeepTogether ile)."""
     block = []
     jk = horse.get("jockey_name") or "—"
     kg = (f"{horse.get('weight'):.1f}"
@@ -824,19 +1044,19 @@ def _build_horse_block(idx, horse, p, fc, pace, history_rows, ped, styles):
     mt = Table(m_row, colWidths=[1.9 * cm, 1.6 * cm, 1.9 * cm, 1.6 * cm,
                                   1.9 * cm, 1.6 * cm, 1.9 * cm, 1.8 * cm])
     mt.setStyle(TableStyle([
-        ("FONTNAME", (0, 0), (-1, -1), "Times"),
+        ("FONTNAME", (0, 0), (-1, -1), "Palatino"),
         ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#1a3a5c")),
-        ("TEXTCOLOR", (2, 0), (2, -1), colors.HexColor("#1a3a5c")),
-        ("TEXTCOLOR", (4, 0), (4, -1), colors.HexColor("#1a3a5c")),
-        ("TEXTCOLOR", (6, 0), (6, -1), colors.HexColor("#1a3a5c")),
-        ("FONTNAME", (1, 0), (1, -1), "Times-Bold"),
-        ("FONTNAME", (3, 0), (3, -1), "Times-Bold"),
-        ("FONTNAME", (5, 0), (5, -1), "Times-Bold"),
-        ("FONTNAME", (7, 0), (7, -1), "Times-Bold"),
-        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f7f9fb")),
-        ("BOX", (0, 0), (-1, -1), 0.3, colors.HexColor("#cfd8e3")),
-        ("INNERGRID", (0, 0), (-1, -1), 0.2, colors.HexColor("#e8eef4")),
+        ("TEXTCOLOR", (0, 0), (0, -1), INK),
+        ("TEXTCOLOR", (2, 0), (2, -1), INK),
+        ("TEXTCOLOR", (4, 0), (4, -1), INK),
+        ("TEXTCOLOR", (6, 0), (6, -1), INK),
+        ("FONTNAME", (1, 0), (1, -1), "Palatino-Bold"),
+        ("FONTNAME", (3, 0), (3, -1), "Palatino-Bold"),
+        ("FONTNAME", (5, 0), (5, -1), "Palatino-Bold"),
+        ("FONTNAME", (7, 0), (7, -1), "Palatino-Bold"),
+        ("BACKGROUND", (0, 0), (-1, -1), CELL_TINT),
+        ("BOX", (0, 0), (-1, -1), 0.3, RULE),
+        ("INNERGRID", (0, 0), (-1, -1), 0.2, colors.HexColor("#e0d8b8")),
         ("LEFTPADDING", (0, 0), (-1, -1), 4),
         ("RIGHTPADDING", (0, 0), (-1, -1), 4),
     ]))
@@ -860,18 +1080,17 @@ def _build_horse_block(idx, horse, p, fc, pace, history_rows, ped, styles):
                                       1.4 * cm, 1.2 * cm, 1.0 * cm,
                                       1.8 * cm, 1.0 * cm])
         ht.setStyle(TableStyle([
-            ("FONTNAME", (0, 0), (-1, 0), "Georgia-Bold"),
+            ("FONTNAME", (0, 0), (-1, 0), "Optima-Bold"),
             ("FONTSIZE", (0, 0), (-1, 0), 8.5),
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#244a73")),
+            ("BACKGROUND", (0, 0), (-1, 0), INK_LIGHT),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("FONTNAME", (0, 1), (-1, -1), "Times"),
+            ("FONTNAME", (0, 1), (-1, -1), "Palatino"),
             ("FONTSIZE", (0, 1), (-1, -1), 8.5),
             ("ROWBACKGROUNDS", (0, 1), (-1, -1),
-             [colors.white, colors.HexColor("#f3f6fa")]),
+             [colors.white, CELL_TINT]),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("BOX", (0, 0), (-1, -1), 0.3, colors.HexColor("#244a73")),
-            ("LEFTPADDING", (0, 0), (-1, -1), 3),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+            ("BOX", (0, 0), (-1, -1), 0.3, INK_LIGHT),
+            ("INNERGRID", (0, 1), (-1, -1), 0.2, RULE),
         ]))
         block.append(ht)
     else:
@@ -885,12 +1104,14 @@ def _build_horse_block(idx, horse, p, fc, pace, history_rows, ped, styles):
 
 
 def _section_horse_details(styles, leg, v8_preds, forecasts,
-                            per_horse_pace, history_map, ped_map):
+                            per_horse_pace, history_map, ped_map,
+                            winner_no):
     out = []
-    out.append(Paragraph("AT BAZINDA ULTRA DETAY", styles["H2"]))
+    out.append(Paragraph("At Bazında Detay", styles["H1"]))
     out.append(Paragraph(
-        "V8 P(top-4) sırasıyla. * işareti finiş'in zamandan tahmin "
-        "edildiğini gösterir (Taydex DSN kapalıyken).",
+        "Yarışın tüm atları, V8 ilk-4 olasılığına göre sıralı. "
+        "Yıldız (*) bitiş sırasının zamandan tahmin edildiğini "
+        "gösterir (Taydex DSN kapalıyken).",
         styles["small"]))
     out.append(Spacer(1, 4))
     for i, p in enumerate(v8_preds, 1):
@@ -910,100 +1131,123 @@ def _section_horse_details(styles, leg, v8_preds, forecasts,
 
 def _section_disclaimer(styles):
     out = []
-    out.append(Paragraph("UYARILAR · VERİ SINIRLARI", styles["H2"]))
+    out.append(Paragraph("Uyarılar ve Veri Sınırları", styles["H1"]))
     out.append(Paragraph(
-        "<b>1) V8 modeli bootstrap prior aşamasında.</b> Henüz gerçek "
-        "sonuçlarla retrain edilmedi (n=3000 sentetik örnek). p_top "
-        "değerleri kalibre tahmin değil, bilgilendirilmiş prior'dır. "
-        "V7 ndcg@4 modeli daha sıkı kalibredir; iki çıktıyı birlikte "
-        "değerlendirin.", styles["body"]))
+        "Bu rapor karar destek aracıdır, bahis tavsiyesi değildir. "
+        "Aşağıdaki sınırlar bilinmelidir.",
+        styles["bodyJ"]))
     out.append(Paragraph(
-        "<b>2) Bitiş sırası (finiş) — yıldız *</b> ile işaretli olanlar "
-        "TJK derece scraper'ının verdiği zamandan tahmin edilmiştir; "
-        "Taydex DSN açık olunca gerçek finiş dolar.", styles["body"]))
-    out.append(Paragraph(
-        "<b>3) Pedigri (baba/anne) —</b> Taydex DB'sine bağlıdır; lokal "
-        "üretildiyse boş olabilir.", styles["body"]))
-    out.append(Paragraph(
-        "<b>4) Tempo senaryolarının pace × strength multiplier'ları</b> "
-        "defansif/literatür-tutarlı şekilde seçilmiştir; mutlak "
-        "değişiklik miktarı tartışmalı kalibrasyondur. Karar verirken "
-        "tek senaryoya bağlı kalmayın, robust kalan atları öncelikleyin.",
+        "<b>V8 modeli bootstrap aşamasında.</b> Henüz gerçek sonuçlarla "
+        "retrain edilmedi (n=3000 sentetik örnek). p_top değerleri kalibre "
+        "tahmin değil, bilgilendirilmiş prior'dır. Olasılıkların mutlak "
+        "değeri yerine göreceli sıralamasına güvenin.",
         styles["body"]))
     out.append(Paragraph(
-        "<b>5) Türk pari-mutuel piyasası matematiksel -EV'dir</b> "
-        "(audit/67). Bu rapor analiz aracıdır; bahis kararı sahibi "
-        "sizsiniz. Garanti edilen sonuç YOKTUR.", styles["body"]))
+        "<b>Bitiş sırası</b> — yıldız * ile işaretliler TJK derece "
+        "kaydının verdiği zamandan tahmin edilmiştir; Taydex DB açık "
+        "olunca gerçek bitiş sırasıyla değişir.",
+        styles["body"]))
+    out.append(Paragraph(
+        "<b>Pedigri (baba/anne)</b> — Taydex DB'sini gerektirir; lokal "
+        "üretilen raporda boş olabilir.",
+        styles["body"]))
+    out.append(Paragraph(
+        "<b>Tempo katsayıları</b> — defansif kalibrasyondur; gerçek "
+        "koşunun pace bias'ı bu üçünden farklı olabilir. Tek senaryoya "
+        "bağlı kalmayın, üç senaryoda da güçlü kalan atlara öncelik verin.",
+        styles["body"]))
+    out.append(Paragraph(
+        "<b>AGF tablosu</b> — yarışın gününden bir gün önce yayınlanır. "
+        "Rapor üretildiği anda AGF güncel olmayabilir.",
+        styles["body"]))
+    out.append(Paragraph(
+        "<b>Türk pari-mutuel piyasası matematiksel olarak -EV'dir</b> "
+        "(yapısal; iç audit raporlarımız bunu doğruladı). Bu raporda "
+        "garanti edilen sonuç yoktur.",
+        styles["body"]))
     return out
 
 
-# ─── PDF Builder (orchestration) ───────────────────────────────────────────
+# ─── Page footer (page numbers) ───────────────────────────────────────────
+def _add_footer(canvas, doc):
+    canvas.saveState()
+    canvas.setFont("Palatino-Italic", 8)
+    canvas.setFillColor(SOFT)
+    canvas.drawString(1.5 * cm, 1.0 * cm,
+                      "TJK Ganyan Bot · V8 Forecast Engine · Karar destek")
+    canvas.drawRightString(A4[0] - 1.5 * cm, 1.0 * cm,
+                            f"Sayfa {doc.page}")
+    # Üst altın çizgi
+    canvas.setStrokeColor(GOLD)
+    canvas.setLineWidth(0.4)
+    canvas.line(1.5 * cm, A4[1] - 1.0 * cm,
+                A4[0] - 1.5 * cm, A4[1] - 1.0 * cm)
+    canvas.restoreState()
+
+
+# ─── PDF Builder ──────────────────────────────────────────────────────────
 def _build_pdf(out_path, leg, v8_preds, forecasts, per_horse_pace,
                mc, tempo_sims, composite, ped_map, history_map,
-               meta_line, ref_date):
+               meta_line, distance, ref_date):
     styles = _styles()
     doc = SimpleDocTemplate(out_path, pagesize=A4,
-                            leftMargin=1.5 * cm, rightMargin=1.5 * cm,
-                            topMargin=1.4 * cm, bottomMargin=1.4 * cm,
-                            title="Gazi 2026 — V8 ULTRA Rapor")
+                            leftMargin=1.6 * cm, rightMargin=1.6 * cm,
+                            topMargin=1.5 * cm, bottomMargin=1.5 * cm,
+                            title="Gazi 2026 — V8 Ultra Rapor")
     flow = []
-
     winner = composite["winner"]
     runners_up = composite["ranking"][1:4]
     top5 = composite["ranking"][:5]
+    winner_history = history_map.get((winner["no"], winner["name"]), [])
+    winner_ped = ped_map.get((winner["no"], winner["name"]), {})
 
-    # P1: COVER
+    # P1: KAPAK
     flow.extend(_section_cover(
-        styles, meta_line, ref_date, len(leg), winner))
+        styles, meta_line, distance, ref_date, len(leg), winner))
     flow.append(PageBreak())
 
-    # P2: METHODOLOGY
+    # P2: METODOLOJİ
     flow.extend(_section_methodology(styles))
     flow.append(PageBreak())
 
-    # P3: WINNER
-    flow.extend(_section_winner(
-        styles, winner, runners_up, mc["rank_pct"]))
+    # P3: KAZANAN DERİN ANALİZ
+    flow.extend(_section_winner_deep(
+        styles, winner, runners_up, mc, leg, forecasts,
+        winner_history, winner_ped))
     flow.append(PageBreak())
 
     # P4: TOP-5
     flow.extend(_section_top5(styles, top5, mc))
     flow.append(PageBreak())
 
-    # P5: 3 TEMPO SCENARIOS
+    # P5: 3 TEMPO
     name_by_no = {p.get("horse_no"): p.get("horse_name") for p in v8_preds}
-    flow.extend(_section_tempo_scenarios(
+    flow.extend(_section_tempo(
         styles, tempo_sims, name_by_no, per_horse_pace))
     flow.append(PageBreak())
 
     # P6: 10000 MC
-    distance = (leg[0].get("distance") or 2400) if leg else 2400
-    try:
-        distance = int(distance)
-    except Exception:
-        distance = 2400
-    flow.extend(_section_monte_carlo(
-        styles, v8_preds, mc, per_horse_pace, distance))
+    flow.extend(_section_mc(styles, v8_preds, mc))
     flow.append(PageBreak())
 
     # P7: AGF vs V8
     flow.extend(_section_value(styles, leg, v8_preds))
     flow.append(PageBreak())
 
-    # P8+: HORSE DETAILS
+    # P8+: At başına detay
     flow.extend(_section_horse_details(
         styles, leg, v8_preds, forecasts, per_horse_pace,
-        history_map, ped_map))
+        history_map, ped_map, winner["no"]))
     flow.append(PageBreak())
 
-    # END: DISCLAIMER
+    # END: Uyarılar
     flow.extend(_section_disclaimer(styles))
 
-    doc.build(flow)
+    doc.build(flow, onFirstPage=_add_footer, onLaterPages=_add_footer)
     return out_path
 
 
-# ─── Orchestration ─────────────────────────────────────────────────────────
+# ─── Orchestration ────────────────────────────────────────────────────────
 def make_gazi_ultra(target: date, out_dir: str = "/Users/berkay/Downloads"):
     print(f"[1/6] Yarış kartı çekiliyor — {target} …", flush=True)
     gazi_leg, _ = _find_races(target)
@@ -1056,19 +1300,23 @@ def make_gazi_ultra(target: date, out_dir: str = "/Users/berkay/Downloads"):
           f"{composite['winner']['name']} (skor "
           f"{composite['winner']['score']:.3f})")
 
-    # Meta line
     h0 = gazi_leg[0]
     grp = " ".join((h0.get("group_name") or "").split())
+    distance = h0.get("distance") or 2400
+    try:
+        distance = int(distance)
+    except Exception:
+        distance = 2400
     meta_line = (f"{(h0.get('race_time') or '')[:5]} · {grp} · "
-                 f"{h0.get('distance')}m {h0.get('track_type')}")
+                 f"{distance}m {h0.get('track_type')}")
 
     ts = __import__("datetime").datetime.now().strftime("%H%M")
-    out = os.path.join(out_dir, f"Gazi_V8_ULTRA_v2_28Haz2026_{ts}.pdf")
+    out = os.path.join(out_dir, f"Gazi_V8_ULTRA_v3_28Haz2026_{ts}.pdf")
 
     print(f"[6/6] PDF: {out}", flush=True)
     _build_pdf(out, gazi_leg, v8_preds, forecasts, per_horse_pace,
                mc, tempo_sims, composite, ped_map, history_map,
-               meta_line, ref_date)
+               meta_line, distance, ref_date)
     print(f"\n✓ Tamam: {out}")
     return out
 
