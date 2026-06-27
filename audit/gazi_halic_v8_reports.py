@@ -63,6 +63,21 @@ _register_fonts()
 
 
 # ─── Veri çekme ────────────────────────────────────────────────────────────
+def _normalize_horse(h: dict) -> dict:
+    """smart_coupon dict → alias'lar (horse_no, name, jockey, weight)."""
+    no = h.get("horse_number")
+    if no is not None and h.get("horse_no") is None:
+        h["horse_no"] = no
+    nm = h.get("horse_name")
+    if nm and not h.get("name"):
+        h["name"] = nm
+    jk = h.get("jockey_name")
+    if jk and not h.get("jockey"):
+        h["jockey"] = jk
+    # Smart-coupon legs kilo taşımaz; gerekirse '—' kalır
+    return h
+
+
 def _find_races(target: date):
     """28 Haz İstanbul'dan Gazi (R6) ve Haliç (R7)'yi çıkar."""
     from smart_coupon_service import build_all_hippos
@@ -76,6 +91,8 @@ def _find_races(target: date):
         for leg in p.get("race_legs") or []:
             if not leg:
                 continue
+            for h in leg:
+                _normalize_horse(h)
             rn = leg[0].get("race_number")
             if rn == 6:
                 gazi = leg
