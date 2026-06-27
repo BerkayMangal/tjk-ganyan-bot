@@ -468,7 +468,7 @@ def _styles():
     # Title (kapakta büyük başlık)
     cover_title = ParagraphStyle(
         "cover_title", parent=base["Title"], fontName="Didot-Bold",
-        fontSize=42, leading=46, spaceAfter=4, textColor=INK, alignment=1)
+        fontSize=44, leading=48, spaceAfter=2, textColor=INK, alignment=1)
     cover_sub = ParagraphStyle(
         "cover_sub", parent=base["BodyText"], fontName="Palatino-Italic",
         fontSize=13, leading=17, spaceAfter=2, textColor=INK_LIGHT,
@@ -477,18 +477,25 @@ def _styles():
         "cover_meta", parent=base["BodyText"], fontName="Palatino",
         fontSize=11, leading=15, spaceAfter=2, textColor=SOFT,
         alignment=1)
+    cover_section = ParagraphStyle(
+        "cover_section", parent=base["BodyText"], fontName="Optima-Bold",
+        fontSize=10, leading=13, spaceAfter=4, textColor=GOLD,
+        alignment=1)
+    # H1 — sayfa başlığı (her bölümün ilk başlığı)
     H1 = ParagraphStyle(
         "H1", parent=base["Title"], fontName="Optima-Bold",
-        fontSize=22, leading=26, spaceBefore=2, spaceAfter=8,
-        textColor=INK, alignment=0)
+        fontSize=22, leading=26, spaceBefore=0, spaceAfter=10,
+        textColor=INK, alignment=0, keepWithNext=True)
+    # H2 — section başlığı; sonraki paragrafla beraber kalır
     H2 = ParagraphStyle(
         "H2", parent=base["Heading2"], fontName="Optima-Bold",
-        fontSize=14, leading=18, spaceBefore=10, spaceAfter=6,
-        textColor=INK)
+        fontSize=14, leading=18, spaceBefore=14, spaceAfter=6,
+        textColor=INK, keepWithNext=True)
+    # H3 — alt başlık; sonraki paragrafla beraber kalır
     H3 = ParagraphStyle(
         "H3", parent=base["Heading3"], fontName="Optima-Bold",
-        fontSize=11.5, leading=15, spaceBefore=8, spaceAfter=2,
-        textColor=INK_LIGHT)
+        fontSize=11.5, leading=15, spaceBefore=10, spaceAfter=3,
+        textColor=INK_LIGHT, keepWithNext=True)
     body = ParagraphStyle(
         "body", parent=base["BodyText"], fontName="Palatino",
         fontSize=10.5, leading=14.5, spaceAfter=4)
@@ -534,7 +541,8 @@ def _styles():
         borderWidth=0.5, borderPadding=8)
     return {
         "cover_title": cover_title, "cover_sub": cover_sub,
-        "cover_meta": cover_meta, "winner_box": winner_box,
+        "cover_meta": cover_meta, "cover_section": cover_section,
+        "winner_box": winner_box,
         "H1": H1, "H2": H2, "H3": H3,
         "body": body, "bodyJ": bodyJ, "bodyB": bodyB, "bullet": bullet,
         "small": small, "note": note, "callout": callout,
@@ -543,51 +551,189 @@ def _styles():
 
 
 # ─── KAPAK ─────────────────────────────────────────────────────────────────
-def _section_cover(styles, meta_line, distance, ref_date, n_horses, winner):
+TR_GUNLER = ["Pazartesi", "Salı", "Çarşamba", "Perşembe",
+             "Cuma", "Cumartesi", "Pazar"]
+TR_AYLAR = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
+            "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
+
+
+def _tr_tarih(d):
+    try:
+        from datetime import date as _d
+        if isinstance(d, str):
+            d = _d.fromisoformat(d)
+        return (f"{d.day} {TR_AYLAR[d.month - 1]} {d.year} "
+                f"{TR_GUNLER[d.weekday()]}")
+    except Exception:
+        return str(d)
+
+
+def _gold_rule(width_cm=17.8, height_pt=2):
+    """İnce altın çizgi (kapak / section separator)."""
+    rule = Table([[""]], colWidths=[width_cm * cm], rowHeights=[height_pt])
+    rule.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), GOLD),
+    ]))
+    return rule
+
+
+def _double_rule(width_cm=17.8):
+    """Çift altın çizgi (dekoratif)."""
+    rule = Table(
+        [[""], [""]],
+        colWidths=[width_cm * cm], rowHeights=[1.5, 1.5])
+    rule.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), GOLD),
+        ("BACKGROUND", (0, 1), (-1, 1), GOLD),
+        ("LINEBELOW", (0, 0), (-1, 0), 1.5, colors.white),
+    ]))
+    return rule
+
+
+def _ornament_row(styles):
+    """Dekoratif süs ⁂ ⁂ ⁂ ortada — vintage atçı raporu havası."""
+    return Paragraph(
+        '<font color="#b8860b" size="14">❦ &nbsp;&nbsp; ❦ &nbsp;&nbsp; ❦</font>',
+        ParagraphStyle("orn", fontName="Palatino", alignment=1,
+                       spaceBefore=4, spaceAfter=4))
+
+
+def _stat_card(label, value, styles):
+    """Kapak 4'lü grid için tek kart."""
+    return [
+        Paragraph(
+            f'<font color="#b8860b" size="22"><b>{value}</b></font>',
+            ParagraphStyle("statv", fontName="Didot-Bold", alignment=1,
+                           leading=26)),
+        Paragraph(
+            f'<font color="#3d5276" size="9">{label}</font>',
+            ParagraphStyle("statl", fontName="Optima", alignment=1,
+                           leading=11)),
+    ]
+
+
+def _section_cover(styles, meta_line, distance, ref_date, n_horses,
+                   winner, runners_up, per_horse_pace,
+                   composite_score_avg=None):
     out = []
-    out.append(Spacer(1, 1.6 * cm))
-    out.append(Paragraph("Gazi Koşusu", styles["cover_title"]))
+    # Üst boşluk
+    out.append(Spacer(1, 0.6 * cm))
+    # Üstte dekoratif çift çizgi
+    out.append(_double_rule())
+    out.append(Spacer(1, 0.4 * cm))
+    # Başlık
+    out.append(Paragraph("GAZİ KOŞUSU", styles["cover_title"]))
     out.append(Paragraph(
         "53. Tertibi · Birinci Kategori (G1) Klasik Koşu",
         styles["cover_sub"]))
-    out.append(Paragraph("Veliefendi Hipodromu, İstanbul",
+    out.append(Paragraph("Veliefendi Hipodromu · İstanbul",
                          styles["cover_sub"]))
-    out.append(Spacer(1, 14))
-    # Altın çizgi
-    rule = Table([[""]], colWidths=[16 * cm], rowHeights=[2])
-    rule.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), GOLD),
-        ("LINEBELOW", (0, 0), (-1, -1), 0.5, RULE),
-    ]))
-    out.append(rule)
-    out.append(Spacer(1, 14))
+    out.append(Spacer(1, 6))
+    out.append(_ornament_row(styles))
+    out.append(Spacer(1, 4))
+    # Tarih + meta
     out.append(Paragraph(
-        f"<b>{meta_line}</b>", styles["cover_meta"]))
-    out.append(Paragraph(
-        f"Rapor: {ref_date} · {n_horses} at analiz edildi",
-        styles["cover_meta"]))
-    out.append(Spacer(1, 1.6 * cm))
+        f"<b>{_tr_tarih(ref_date)}</b>", styles["cover_meta"]))
+    out.append(Paragraph(f"{meta_line}", styles["cover_meta"]))
+    out.append(Spacer(1, 14))
 
-    out.append(Paragraph("Tahminim", ParagraphStyle(
-        "tahminim", parent=styles["cover_sub"],
-        fontName="Optima", fontSize=12, leading=14,
-        textColor=GOLD, spaceAfter=6)))
+    # YARIŞ ÖZET KARTI — 4 metric grid
+    n_front = sum(1 for h in per_horse_pace if h["pace"] == "front")
+    n_closer = sum(1 for h in per_horse_pace if h["pace"] == "closer")
+    stat_row = [
+        _stat_card(f"AT", str(n_horses), styles),
+        _stat_card("SİMÜLASYON", "10.000", styles),
+        _stat_card("TEMPO SENARYOSU", "3", styles),
+        _stat_card("ÖNE GİDEN AT", str(n_front), styles),
+    ]
+    stat_table = Table([stat_row], colWidths=[4.45 * cm] * 4)
+    stat_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LINEABOVE", (0, 0), (-1, 0), 0.6, GOLD),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.6, GOLD),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+    ]))
+    out.append(stat_table)
+    out.append(Spacer(1, 0.9 * cm))
+
+    # KAZANAN
+    out.append(Paragraph("T A H M İ N İ M", styles["cover_section"]))
     out.append(Paragraph(
         f"#{winner['no']} {winner['name']}", styles["winner_box"]))
-    out.append(Spacer(1, 8))
+    out.append(Spacer(1, 4))
     out.append(Paragraph(
-        f"Yarış çizgisi: <b>{PACE_AÇIKLAMA.get(winner['pace'], '—')}</b>"
-        f"  ·  Birleşik puan: <b>{winner['score']:.3f}</b>",
+        f"<i>Yarış çizgisi:</i> "
+        f"<b>{PACE_AÇIKLAMA.get(winner['pace'], '—').upper()}</b>"
+        f"  &nbsp;·&nbsp;  <i>Birleşik puan:</i> "
+        f"<b>{winner['score']:.3f}</b>"
+        f"  &nbsp;·&nbsp;  <i>Tempo dayanıklılığı:</i> "
+        f"<b>{winner['tempo_top3_count']}/3</b>",
         styles["cover_meta"]))
-    out.append(Spacer(1, 1.2 * cm))
-    # Bottom rule
-    out.append(rule)
-    out.append(Spacer(1, 8))
-    out.append(Paragraph(
-        "Bu rapor V8 multi-head model, Glicko-2 rating, 10000 sanal "
-        "koşu (Monte Carlo) ve 3 farklı tempo senaryosu kullanılarak "
-        "üretilmiştir. Karar destek aracıdır.",
-        styles["small"]))
+    out.append(Spacer(1, 10))
+
+    # Top-3 mini özet (yan yana)
+    if runners_up and len(runners_up) >= 2:
+        mini = [["YAKIN TAKİPÇİLER", "", ""],
+                [f"#{runners_up[0]['no']}",
+                 f"#{runners_up[1]['no']}",
+                 f"#{runners_up[2]['no']}" if len(runners_up) > 2 else ""],
+                [runners_up[0]['name'],
+                 runners_up[1]['name'],
+                 runners_up[2]['name'] if len(runners_up) > 2 else ""],
+                [f"puan {runners_up[0]['score']:.3f}",
+                 f"puan {runners_up[1]['score']:.3f}",
+                 f"puan {runners_up[2]['score']:.3f}"
+                 if len(runners_up) > 2 else ""]]
+        mt = Table(mini, colWidths=[5.93 * cm] * 3)
+        mt.setStyle(TableStyle([
+            ("SPAN", (0, 0), (-1, 0)),
+            ("FONTNAME", (0, 0), (-1, 0), "Optima-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 9),
+            ("TEXTCOLOR", (0, 0), (-1, 0), GOLD),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("FONTNAME", (0, 1), (-1, 1), "Optima-Bold"),
+            ("FONTSIZE", (0, 1), (-1, 1), 13),
+            ("TEXTCOLOR", (0, 1), (-1, 1), INK_LIGHT),
+            ("FONTNAME", (0, 2), (-1, 2), "Palatino-Bold"),
+            ("FONTSIZE", (0, 2), (-1, 2), 11),
+            ("TEXTCOLOR", (0, 2), (-1, 2), INK),
+            ("FONTNAME", (0, 3), (-1, 3), "Palatino-Italic"),
+            ("FONTSIZE", (0, 3), (-1, 3), 9),
+            ("TEXTCOLOR", (0, 3), (-1, 3), SOFT),
+            ("LINEABOVE", (0, 0), (-1, 0), 0.4, RULE),
+            ("LINEBELOW", (0, 3), (-1, 3), 0.4, RULE),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ]))
+        out.append(mt)
+
+    out.append(Spacer(1, 0.9 * cm))
+    out.append(_ornament_row(styles))
+    out.append(Spacer(1, 6))
+
+    # İçerik özeti — 6 madde
+    out.append(Paragraph("B U &nbsp; R A P O R D A",
+                         styles["cover_section"]))
+    icindekiler = [
+        "Tahminin gerekçesi · kazanan adayı için derin analiz",
+        "Top-5 favori at · birleşik puan + güven seviyesi",
+        "Üç farklı tempo senaryosu (yavaş / orta / sert)",
+        "10.000 koşu simülasyonu · at başına olasılık dağılımı",
+        "At başına detay · son yarışlar, Glicko, taktik profili",
+        "Veri sınırları ve uyarılar",
+    ]
+    for it in icindekiler:
+        out.append(Paragraph(
+            f"<font color='#b8860b'>◆</font> &nbsp; {it}",
+            ParagraphStyle("ic", fontName="Palatino", fontSize=10,
+                           leading=14, alignment=0, leftIndent=2 * cm,
+                           textColor=INK)))
+    out.append(Spacer(1, 12))
+    out.append(_double_rule())
     return out
 
 
@@ -1368,20 +1514,37 @@ def _section_disclaimer(styles):
     return out
 
 
-# ─── Page footer (page numbers) ───────────────────────────────────────────
-def _add_footer(canvas, doc):
+# ─── Page footer / running header ─────────────────────────────────────────
+def _add_chrome(canvas, doc):
+    """Üst altın çizgi + running header + footer (kapak hariç)."""
     canvas.saveState()
+    if doc.page == 1:
+        canvas.restoreState()
+        return
+    # Üst yatay altın çizgi
+    canvas.setStrokeColor(GOLD)
+    canvas.setLineWidth(0.6)
+    canvas.line(1.5 * cm, A4[1] - 1.0 * cm,
+                A4[0] - 1.5 * cm, A4[1] - 1.0 * cm)
+    # Running header: sol "GAZİ KOŞUSU 2026", sağ "V8 ULTRA RAPOR"
+    canvas.setFont("Optima-Bold", 7.5)
+    canvas.setFillColor(GOLD)
+    canvas.drawString(1.5 * cm, A4[1] - 0.7 * cm, "GAZİ KOŞUSU 2026")
+    canvas.drawRightString(A4[0] - 1.5 * cm, A4[1] - 0.7 * cm,
+                            "V8 ULTRA RAPOR")
+    # Alt: imza + sayfa numarası
     canvas.setFont("Palatino-Italic", 8)
     canvas.setFillColor(SOFT)
     canvas.drawString(1.5 * cm, 1.0 * cm,
                       "TJK Ganyan Bot · V8 Forecast Engine · Karar destek")
-    canvas.drawRightString(A4[0] - 1.5 * cm, 1.0 * cm,
-                            f"Sayfa {doc.page}")
-    # Üst altın çizgi
+    canvas.setFont("Optima-Bold", 9)
+    canvas.setFillColor(INK)
+    canvas.drawRightString(A4[0] - 1.5 * cm, 1.0 * cm, f"— {doc.page} —")
+    # Alt yatay altın çizgi
     canvas.setStrokeColor(GOLD)
-    canvas.setLineWidth(0.4)
-    canvas.line(1.5 * cm, A4[1] - 1.0 * cm,
-                A4[0] - 1.5 * cm, A4[1] - 1.0 * cm)
+    canvas.setLineWidth(0.3)
+    canvas.line(1.5 * cm, 1.4 * cm,
+                A4[0] - 1.5 * cm, 1.4 * cm)
     canvas.restoreState()
 
 
@@ -1401,9 +1564,10 @@ def _build_pdf(out_path, leg, v8_preds, forecasts, per_horse_pace,
     winner_history = history_map.get((winner["no"], winner["name"]), [])
     winner_ped = ped_map.get((winner["no"], winner["name"]), {})
 
-    # P1: KAPAK
+    # P1: KAPAK (zengin)
     flow.extend(_section_cover(
-        styles, meta_line, distance, ref_date, len(leg), winner))
+        styles, meta_line, distance, ref_date, len(leg), winner,
+        runners_up, per_horse_pace))
     flow.append(PageBreak())
 
     # P2: METODOLOJİ
@@ -1441,7 +1605,7 @@ def _build_pdf(out_path, leg, v8_preds, forecasts, per_horse_pace,
     # END: Uyarılar
     flow.extend(_section_disclaimer(styles))
 
-    doc.build(flow, onFirstPage=_add_footer, onLaterPages=_add_footer)
+    doc.build(flow, onFirstPage=_add_chrome, onLaterPages=_add_chrome)
     return out_path
 
 
@@ -1511,7 +1675,7 @@ def make_gazi_ultra(target: date, out_dir: str = "/Users/berkay/Downloads"):
                  f"{distance}m {track_type}")
 
     ts = __import__("datetime").datetime.now().strftime("%H%M")
-    out = os.path.join(out_dir, f"Gazi_V8_ULTRA_v4_28Haz2026_{ts}.pdf")
+    out = os.path.join(out_dir, f"Gazi_V8_ULTRA_v5_28Haz2026_{ts}.pdf")
 
     print(f"[6/6] PDF: {out}", flush=True)
     _build_pdf(out, gazi_leg, v8_preds, forecasts, per_horse_pace,
