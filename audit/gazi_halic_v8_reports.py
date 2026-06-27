@@ -64,7 +64,7 @@ _register_fonts()
 
 # ─── Veri çekme ────────────────────────────────────────────────────────────
 def _normalize_horse(h: dict) -> dict:
-    """smart_coupon dict → alias'lar (horse_no, name, jockey, weight)."""
+    """smart_coupon dict → alias'lar (horse_no, name, jockey)."""
     no = h.get("horse_number")
     if no is not None and h.get("horse_no") is None:
         h["horse_no"] = no
@@ -74,8 +74,62 @@ def _normalize_horse(h: dict) -> dict:
     jk = h.get("jockey_name")
     if jk and not h.get("jockey"):
         h["jockey"] = jk
-    # Smart-coupon legs kilo taşımaz; gerekirse '—' kalır
     return h
+
+
+def _fold_name(s: str) -> str:
+    """Türkçe duyarsız ad eşleme (BAY NALÇAKAN ≈ BAY NALCAKAN)."""
+    if not s:
+        return ""
+    tr = {"ı": "i", "İ": "i", "ş": "s", "Ş": "s", "ğ": "g", "Ğ": "g",
+          "ü": "u", "Ü": "u", "ö": "o", "Ö": "o", "ç": "c", "Ç": "c"}
+    out = "".join(tr.get(ch, ch) for ch in s)
+    return out.upper().strip()
+
+
+def _enrich_with_kilo(leg: list, target: date, race_no: int) -> None:
+    """leg dict'lerine kilo (weight) enjekte et — TJK HTML programmes'tan.
+
+    Smart_coupon legs çıktısı kilo taşımaz; modelin kullandığı kilo ayrı
+    scraper'dan geliyor. PDF için at-adı (ya da no) bazlı lookup.
+    """
+    try:
+        from scraper.tjk_html_scraper import get_todays_races_html
+        data = get_todays_races_html(target) or []
+    except Exception as exc:
+        log.warning(f"tjk_html kilo skip: {exc}")
+        return
+    name_kg: dict[str, float] = {}
+    no_kg: dict[int, float] = {}
+    for hippo in data:
+        if "stanbul" not in (hippo.get("hippodrome") or ""):
+            continue
+        for race in (hippo.get("races") or []):
+            if race.get("race_number") != race_no:
+                continue
+            for h in (race.get("horses") or []):
+                wt = h.get("weight")
+                if not isinstance(wt, (int, float)) or wt <= 0:
+                    continue
+                if (nm := h.get("horse_name")):
+                    name_kg[_fold_name(nm)] = float(wt)
+                if (n := h.get("horse_number")) is not None:
+                    try:
+                        no_kg[int(n)] = float(wt)
+                    except (TypeError, ValueError):
+                        pass
+    matched = 0
+    for h in leg:
+        no = h.get("horse_no") or h.get("horse_number")
+        nm = h.get("horse_name") or h.get("name") or ""
+        wt = no_kg.get(int(no)) if no is not None else None
+        if wt is None:
+            wt = name_kg.get(_fold_name(nm))
+        if wt is not None:
+            h["weight"] = wt
+            h["kilo"] = wt
+            matched += 1
+    log.info(f"kilo enrich R{race_no}: {matched}/{len(leg)} eşleşti")
 
 
 def _find_races(target: date):
@@ -98,6 +152,11 @@ def _find_races(target: date):
                 gazi = leg
             elif rn == 7:
                 halic = leg
+    # Kilo enjekte (TJK HTML programmes)
+    if gazi:
+        _enrich_with_kilo(gazi, target, race_no=6)
+    if halic:
+        _enrich_with_kilo(halic, target, race_no=7)
     return gazi, halic
 
 
@@ -494,8 +553,9 @@ def make_reports(target: date, out_dir: str = "/Users/berkay/Downloads"):
 
         # PDF
         slug = "Gazi" if "GAZ" in race_name else "Halic"
+        ts = __import__("datetime").datetime.now().strftime("%H%M")
         out = os.path.join(out_dir,
-                           f"{slug}_V8_Raporu_28Haz2026.pdf")
+                           f"{slug}_V8_Raporu_28Haz2026_{ts}.pdf")
         print(f"  PDF: {out}", flush=True)
         _build_pdf(out, race_name, race_subtitle, meta, ref_date,
                    leg, v8_preds, forecasts, pace_data, tempo, top_n=4)
