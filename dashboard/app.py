@@ -10,6 +10,13 @@ if PARENT not in sys.path:
     sys.path.insert(0, PARENT)
 
 app = Flask(__name__, static_folder=".", template_folder=".")
+
+# Forecast (V8 forward-looking) blueprint — graceful no-op if forecast pkg fails
+try:
+    from forecast_api import build_forecast_blueprint
+    app.register_blueprint(build_forecast_blueprint())
+except Exception as _e_fc:
+    print(f"[forecast_api] blueprint skipped: {_e_fc}")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
 # Phase 5.8.51 — Pre-race AGF live scanner + T-3 kupon scheduler
