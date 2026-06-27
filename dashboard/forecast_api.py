@@ -171,13 +171,38 @@ def build_forecast_blueprint() -> Blueprint:
                 glicko_ledger=ledger,
                 ref_date=date,
             )
-            # Sort by refined_probability desc
-            forecasts.sort(key=lambda f: -(f.get("refined_probability") or 0))
+            # V8 predictions (if model loaded)
+            v8_preds = []
+            try:
+                from model.v8.inference import predict_race as v8_predict_race
+                v8_preds = v8_predict_race(
+                    horses=race_horses,
+                    history_lookup=lambda n: _fetch_history(n),
+                    glicko_ledger=ledger,
+                    ref_date=date,
+                )
+                v8_map = {(p["horse_no"], p["horse_name"]): p
+                          for p in v8_preds}
+                for f in forecasts:
+                    key = (f.get("horse_no"), f.get("horse_name"))
+                    if key in v8_map:
+                        f["v8"] = v8_map[key]
+            except Exception as exc:
+                logger.debug(f"v8 predict skipped: {exc}")
+            # Sort by V8 p_top4 (if loaded) else refined_probability
+            forecasts.sort(
+                key=lambda f: -(
+                    (f.get("v8") or {}).get("p_top4")
+                    or f.get("refined_probability")
+                    or 0
+                )
+            )
             return jsonify({
                 "date": date,
                 "hippo": hippo,
                 "race_no": race_no,
                 "n_horses": len(forecasts),
+                "v8_loaded": bool(v8_preds and v8_preds[0].get("model_loaded")),
                 "forecasts": forecasts,
             })
         except Exception as exc:
