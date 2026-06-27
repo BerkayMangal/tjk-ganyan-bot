@@ -87,6 +87,23 @@ def _predict_race(race_horses: list, ref_date: str, ledger) -> list:
         return []
 
 
+def _analyze_race(race_horses: list, ref_date: str, ledger,
+                  n_mc: int = 10000, n_tempo: int = 5000) -> dict:
+    """V8 + MC + tempo + composite analizi (race_analyzer kullanır)."""
+    try:
+        from forecast.race_analyzer import analyze_race
+        return analyze_race(
+            leg=race_horses,
+            ref_date=ref_date,
+            ledger=ledger,
+            history_lookup=_load_history,
+            n_mc=n_mc, n_tempo=n_tempo,
+        )
+    except Exception as exc:
+        logger.warning(f"v8 analyze_race fail: {exc}")
+        return {}
+
+
 def run_daily(target: _date_type) -> dict:
     """Günün tüm hipodromlarını V8'den geçir."""
     target = _coerce_date(target)
@@ -114,17 +131,34 @@ def run_daily(target: _date_type) -> dict:
             if not leg:
                 continue
             race_no = leg[0].get("race_number") or 0
-            preds = _predict_race(leg, str(target), ledger)
-            if not preds:
+            # Tam analiz: V8 + 10K MC + 3 tempo + composite + 3×top-4
+            analysis = _analyze_race(leg, str(target), ledger)
+            if not analysis:
                 continue
-            # sort by p_top4 desc
-            preds.sort(key=lambda p: -(p.get("p_top4") or 0))
+            v8_preds = analysis.get("v8_preds") or []
+            winner = analysis.get("winner") or {}
+            # Hafif persistable view — full MC matrix/rank_pct'i kısa tut
             races_out.append({
                 "race_no": race_no,
-                "n_horses": len(preds),
-                "predictions": preds,
+                "n_horses": analysis.get("n_horses") or len(v8_preds),
+                "race_tempo_verdict": analysis.get("race_tempo_verdict"),
+                "n_front": analysis.get("n_front"),
+                "n_closer": analysis.get("n_closer"),
+                "top4_overlap": analysis.get("top4_overlap"),
+                "winner": {
+                    "no": winner.get("no"), "name": winner.get("name"),
+                    "score": winner.get("score"),
+                    "mc_p1": winner.get("mc_p1"),
+                    "v8_p4": winner.get("v8_p4"),
+                    "tempo_top3_count": winner.get("tempo_top3_count"),
+                    "pace": winner.get("pace"),
+                },
+                "v8_top4": analysis.get("v8_top4"),
+                "mc_top4": analysis.get("mc_top4"),
+                "composite_top4": analysis.get("composite_top4"),
+                "predictions": v8_preds,
             })
-            n_horses_total += len(preds)
+            n_horses_total += len(v8_preds)
             n_races_total += 1
         if races_out:
             out["pools"].append({"hippo": hippo, "races": races_out})
@@ -137,22 +171,12 @@ def run_daily(target: _date_type) -> dict:
     return out
 
 
-def _format_horse_pick(p: dict, idx: int) -> str:
-    """At satırı format."""
-    no = p.get("horse_no") or "?"
-    name = p.get("horse_name") or "?"
-    p4 = p.get("p_top4")
-    p1 = p.get("p_top1")
-    p4_str = f"{p4 * 100:.1f}%" if isinstance(p4, (int, float)) else "—"
-    p1_str = f"{p1 * 100:.1f}%" if isinstance(p1, (int, float)) else "—"
-    return f"  {idx}) #{no} {name}  T4 {p4_str}  T1 {p1_str}"
-
-
 def format_telegram_digest(result: dict, top_n: int = 4) -> str:
-    """Günün V8 digest mesajı (Telegram).
-
-    Her yarış için top-N tahmin, p_top4 sorted.
-    """
+    """V8 günlük digest: her yarış için kazanan adayı + composite top-4
+    + tempo + güven (üç top-4 listesinin örtüşmesi)."""
+    from forecast.race_analyzer import (
+        race_summary_lines, confidence_tag, PACE_TR,
+    )
     lines = []
     date_str = result.get("date")
     summ = result.get("summary") or {}
@@ -160,7 +184,7 @@ def format_telegram_digest(result: dict, top_n: int = 4) -> str:
     lines.append(
         f"   {summ.get('n_pools', 0)} hipodrom · "
         f"{summ.get('n_races', 0)} yarış · "
-        f"{summ.get('n_horses', 0)} at"
+        f"{summ.get('n_horses', 0)} at  ·  10K MC + 3 tempo"
     )
     lines.append("")
     for pool in result.get("pools") or []:
@@ -168,14 +192,27 @@ def format_telegram_digest(result: dict, top_n: int = 4) -> str:
         lines.append(f"━━━ <b>{hippo}</b> ━━━")
         for race in pool.get("races") or []:
             rn = race.get("race_no")
-            preds = race.get("predictions") or []
-            if not preds:
+            w = race.get("winner") or {}
+            tempo = race.get("race_tempo_verdict", "—")
+            overlap = race.get("top4_overlap", 0)
+            tag = confidence_tag(overlap)
+            if not w.get("no"):
                 continue
-            lines.append(f"<b>{rn}. KOŞU</b>  ({len(preds)} at)")
-            for idx, p in enumerate(preds[:top_n], 1):
-                lines.append(_format_horse_pick(p, idx))
+            lines.append(f"<b>{rn}. KOŞU</b>  ·  tempo: {tempo}  ·  "
+                         f"güven: {tag} ({overlap}/4)")
+            lines.append(
+                f"  🏆 <b>#{w['no']} {w['name']}</b>  "
+                f"(MC %{(w.get('mc_p1') or 0):.1f} · "
+                f"ilk-4 %{(w.get('v8_p4') or 0):.1f} · "
+                f"{PACE_TR.get(w.get('pace', 'mid'), '—')})"
+            )
+            comp4 = race.get("composite_top4") or []
+            if comp4:
+                names = " · ".join(f"#{x['no']} {x['name']}" for x in comp4)
+                lines.append(f"  🎯 TOP-4: {names}")
             lines.append("")
     lines.append("⚠ Karar destek aracı — V7 production AYNEN devam ediyor.")
+    lines.append("📊 Güven = V8 / Monte Carlo / Composite top-4 örtüşmesi.")
     return "\n".join(lines)
 
 
