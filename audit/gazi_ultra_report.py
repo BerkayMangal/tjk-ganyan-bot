@@ -598,6 +598,26 @@ def _ornament_row(styles):
                        spaceBefore=4, spaceAfter=4))
 
 
+def _winner_box_table(name_text: str, width_cm: float = 17.8):
+    """KAZANAN sarı çerçeveli kutu — Table ile frame'e tam oturur."""
+    inner = Paragraph(
+        f'<font color="#1f3354" size="26"><b>{name_text}</b></font>',
+        ParagraphStyle("wb_inner", fontName="Didot-Bold",
+                       fontSize=26, leading=32, alignment=1,
+                       textColor=INK))
+    t = Table([[inner]], colWidths=[width_cm * cm])
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), WIN_BG),
+        ("BOX", (0, 0), (-1, -1), 1.5, WIN_BORDER),
+        ("LEFTPADDING", (0, 0), (-1, -1), 16),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 16),
+        ("TOPPADDING", (0, 0), (-1, -1), 16),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 16),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    return t
+
+
 def _stat_card(label, value, styles):
     """Kapak 4'lü grid için tek kart."""
     return [
@@ -661,9 +681,8 @@ def _section_cover(styles, meta_line, distance, ref_date, n_horses,
 
     # KAZANAN
     out.append(Paragraph("T A H M İ N İ M", styles["cover_section"]))
-    out.append(Paragraph(
-        f"#{winner['no']} {winner['name']}", styles["winner_box"]))
-    out.append(Spacer(1, 4))
+    out.append(_winner_box_table(f"#{winner['no']} {winner['name']}"))
+    out.append(Spacer(1, 8))
     out.append(Paragraph(
         f"<i>Yarış çizgisi:</i> "
         f"<b>{PACE_AÇIKLAMA.get(winner['pace'], '—').upper()}</b>"
@@ -878,8 +897,8 @@ def _section_winner_deep(styles, winner, runners_up, mc, leg, forecasts,
                          track_type):
     out = []
     out.append(Paragraph("Kazanan Adayım", styles["H1"]))
-    out.append(Paragraph(
-        f"#{winner['no']} {winner['name']}", styles["winner_box"]))
+    out.append(_winner_box_table(f"#{winner['no']} {winner['name']}"))
+    out.append(Spacer(1, 6))
     horse = next((h for h in leg if h.get("horse_no") == winner["no"]), {})
     kg = (f"{horse.get('weight'):.1f}"
           if isinstance(horse.get("weight"), (int, float)) else "—")
@@ -1675,7 +1694,7 @@ def make_gazi_ultra(target: date, out_dir: str = "/Users/berkay/Downloads"):
                  f"{distance}m {track_type}")
 
     ts = __import__("datetime").datetime.now().strftime("%H%M")
-    out = os.path.join(out_dir, f"Gazi_V8_ULTRA_v5_28Haz2026_{ts}.pdf")
+    out = os.path.join(out_dir, f"Gazi_V8_ULTRA_v6_28Haz2026_{ts}.pdf")
 
     print(f"[6/6] PDF: {out}", flush=True)
     _build_pdf(out, gazi_leg, v8_preds, forecasts, per_horse_pace,
