@@ -63,8 +63,8 @@ def build_altili(
     altili_no: int = 1,
     hippo_name: str = "",
     min_at_per_ayak: int = 0,
-    n_mc: int = 10000,
-    n_tempo: int = 5000,
+    n_mc: int = 5000,
+    n_tempo: int = 3000,
 ) -> dict:
     """6-ayak altılı için dinamik kupon.
 

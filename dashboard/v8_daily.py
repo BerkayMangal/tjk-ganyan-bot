@@ -88,7 +88,7 @@ def _predict_race(race_horses: list, ref_date: str, ledger) -> list:
 
 
 def _analyze_race(race_horses: list, ref_date: str, ledger,
-                  n_mc: int = 10000, n_tempo: int = 5000) -> dict:
+                  n_mc: int = 5000, n_tempo: int = 3000) -> dict:
     """V8 + MC + tempo + composite analizi (race_analyzer kullanır)."""
     try:
         from forecast.race_analyzer import analyze_race
@@ -184,7 +184,7 @@ def format_telegram_digest(result: dict, top_n: int = 4) -> str:
     lines.append(
         f"   {summ.get('n_pools', 0)} hipodrom · "
         f"{summ.get('n_races', 0)} yarış · "
-        f"{summ.get('n_horses', 0)} at  ·  10K MC + 3 tempo"
+        f"{summ.get('n_horses', 0)} at  ·  5K MC + 3 tempo"
     )
     lines.append("")
     for pool in result.get("pools") or []:

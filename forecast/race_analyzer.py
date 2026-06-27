@@ -183,8 +183,8 @@ def analyze_race(
     ref_date: str,
     ledger=None,
     history_lookup: Optional[Callable[[str], list]] = None,
-    n_mc: int = 10000,
-    n_tempo: int = 5000,
+    n_mc: int = 5000,
+    n_tempo: int = 3000,
 ) -> dict:
     """Tek bir koşunun derin analizi. NEVER raises (boş dict döner)."""
     if not leg:

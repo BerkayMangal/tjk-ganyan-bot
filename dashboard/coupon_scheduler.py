@@ -382,6 +382,87 @@ def _maybe_send_v8_daily(now, logger):
         _log(logger, f"[v8-daily] skip: {repr(e)[:200]}")
 
 
+def _maybe_send_v8_altili(pools, now, logger):
+    """V8 dinamik altılı kupon — env-gated.
+
+    Env flags:
+      TJK_V8_ALTILI=1            → her hipodrom için altılı build + log
+      TJK_V8_ALTILI_TELEGRAM=1   → Telegram'a da gönder
+
+    Mantık: race_analyzer top4_overlap güven skoruyla dinamik at sayısı:
+      4/4 ÇOK YÜKSEK → 2 at  (banker)
+      3/4 YÜKSEK     → 3 at
+      2/4 ORTA       → 4 at
+      1/4 DÜŞÜK      → 6 at  (sürpriz açık)
+      0/4 ÇOK DÜŞÜK  → PAS
+
+    V7 prod akışını DEĞİŞTİRMEZ. NEVER raises into the caller.
+    """
+    if os.environ.get('TJK_V8_ALTILI', '0') != '1':
+        return
+    try:
+        try:
+            from forecast.altili_builder import build_altili
+        except Exception as _e_imp:
+            _log(logger, f"[v8-altili] import skip: {repr(_e_imp)[:160]}")
+            return
+        try:
+            from dashboard.forecast_api import _fetch_history
+        except Exception:
+            _fetch_history = None
+        try:
+            from forecast.glicko import GlickoLedger
+            import json as _json
+            from pathlib import Path as _Path
+            _p = (_Path(__file__).resolve().parent.parent
+                  / "model" / "v8" / "glicko_ledger.json")
+            if _p.exists():
+                with open(_p) as _f:
+                    ledger = GlickoLedger.from_json(_json.load(_f))
+            else:
+                ledger = GlickoLedger()
+        except Exception:
+            ledger = None
+
+        target = now.date()
+        ref_date = str(target)
+        sent_total = 0
+        skipped = 0
+        for pool in (pools or []):
+            if pool.get('status') != 'ok':
+                continue
+            hippo = pool.get('hippo') or '?'
+            legs = pool.get('race_legs') or []
+            if len(legs) < 6:
+                skipped += 1
+                continue
+            try:
+                result = build_altili(
+                    legs=legs, ref_date=ref_date, ledger=ledger,
+                    history_lookup=_fetch_history,
+                    altili_no=1, hippo_name=hippo,
+                )
+            except Exception as _e_bld:
+                _log(logger, f"[v8-altili] build {hippo} fail: "
+                              f"{repr(_e_bld)[:160]}")
+                continue
+            _log(logger, f"[v8-altili] {hippo}: status={result.get('status')} "
+                          f"combos={result.get('combos')} "
+                          f"pas={result.get('pas_count')}")
+            if (os.environ.get('TJK_V8_ALTILI_TELEGRAM', '0') == '1'
+                    and result.get('summary_text')):
+                try:
+                    _svc().send_telegram(result['summary_text'])
+                    sent_total += 1
+                except Exception as _e_tg:
+                    _log(logger, f"[v8-altili] {hippo} send fail: "
+                                  f"{repr(_e_tg)[:160]}")
+        _log(logger, f"[v8-altili] toplam Telegram gönderim: {sent_total}, "
+                     f"atlanan (n_legs<6): {skipped}")
+    except Exception as e:
+        _log(logger, f"[v8-altili] skip: {repr(e)[:200]}")
+
+
 def morning_job(logger=None):
     """09:00 İst — build; AGF'si taze havuzları gönder, bayatları beklet."""
     if not _LOCK.acquire(blocking=False):
@@ -432,6 +513,9 @@ def _morning_locked(logger, bootstrap=False):
             # V8 günlük forward forecast — env-gated, gün başında 1×
             _maybe_send_v8_daily(now, logger)
             st['v8_daily_sent_today'] = True
+            # V8 dinamik altılı — env-gated, AGF taze pool'lara
+            _maybe_send_v8_altili(pools, now, logger)
+            st['v8_altili_sent_today'] = True
     elif stale:
         tag = "yeniden başlatma" if bootstrap else "sabah"
         _svc().send_telegram(

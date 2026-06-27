@@ -68,11 +68,28 @@ def predict_race(
 ) -> list[dict]:
     """Bir yarışın tüm atları için V8 tahmin.
 
-    Returns: list of dicts with keys:
-        horse_no, horse_name, p_top1, p_top2, p_top3, p_top4
+    Öncelik chain (Phase 2026-06-27):
+      1. v8_real.json XGBoost (varsa) — GERÇEK backfill ile eğitilmiş
+      2. v8_active.json bootstrap (fallback)
+      3. Uniform graceful degrade
+
+    Returns: list of {horse_no, horse_name, p_top1..4, model_loaded}.
     """
-    model = load_model(model_path)
     horses = list(horses)
+    # 1) XGBoost real model dene
+    try:
+        from model.v8.inference_xgb import predict_race_xgb
+        xgb_out = predict_race_xgb(
+            horses=horses, history_lookup=history_lookup,
+            ref_date=ref_date,
+        )
+        if xgb_out is not None and len(xgb_out) == len(horses):
+            return xgb_out
+    except Exception as exc:
+        logger.debug(f"V8 XGBoost path skip: {exc}")
+
+    # 2) Eski bootstrap fallback
+    model = load_model(model_path)
     feature_matrix = build_race_matrix(
         horses,
         history_lookup=history_lookup,
