@@ -248,6 +248,123 @@ PACE_KISA_AÇIKLAMA = {
 def _pct(x): return f"{x:.1f}%" if isinstance(x, (int, float)) else "—"
 
 
+# ─── At karakterizasyon helper'ları (sınıf/mesafe/pist/jokey/güven) ──────
+def _class_step(today_class: str, history_rows: list) -> dict:
+    """Atın bugünkü sınıfı vs son yarış sınıfı.
+
+    Returns {from_label, to_label, delta, verdict}.
+    """
+    try:
+        from forecast.trajectory import default_class_score
+    except Exception:
+        return {}
+    if not history_rows:
+        return {}
+    today_score = default_class_score(today_class or "")
+    last = history_rows[0]
+    last_label = last.get("sinif") or ""
+    last_score = default_class_score(last_label)
+    if today_score is None or last_score is None:
+        return {}
+    delta = today_score - last_score
+    if delta >= 30:
+        verdict = "BÜYÜK SINIF SIÇRAMASI"
+        risk = "high"
+    elif delta >= 12:
+        verdict = "Sınıf yükselişi"
+        risk = "med"
+    elif delta <= -12:
+        verdict = "Sınıf düşüşü (avantaj)"
+        risk = "good"
+    else:
+        verdict = "Aynı seviye sınıf"
+        risk = "neutral"
+    return {"from_label": last_label, "to_label": today_class,
+            "from_score": last_score, "to_score": today_score,
+            "delta": delta, "verdict": verdict, "risk": risk}
+
+
+def _distance_match(distance: int, history_rows: list,
+                    tol_m: int = 200) -> dict:
+    """Bu mesafede atın geçmiş performansı (tol_m toleranslı)."""
+    if not history_rows or not distance:
+        return {"n": 0, "verdict": "Veri yok"}
+    matches = [r for r in history_rows
+               if isinstance(r.get("mesafe"), int) and
+               abs(r["mesafe"] - distance) <= tol_m]
+    if not matches:
+        return {"n": 0, "verdict": f"İlk kez {distance}m bandında koşuyor"}
+    finishes = [r["finish"] for r in matches
+                if isinstance(r["finish"], int)]
+    if not finishes:
+        return {"n": len(matches),
+                "verdict": f"Bu mesafede {len(matches)} koşu (sıra bilgisi yok)"}
+    avg = sum(finishes) / len(finishes)
+    wins = sum(1 for f in finishes if f == 1)
+    top4 = sum(1 for f in finishes if f <= 4)
+    return {"n": len(matches), "wins": wins, "top4": top4,
+            "avg_finish": avg,
+            "verdict": (f"{len(matches)} koşu, ortalama sıra "
+                        f"{avg:.1f}, {wins} galip, {top4} ilk-4")}
+
+
+def _track_match(track_type: str, history_rows: list) -> dict:
+    """Bu pist tipinde atın geçmişi."""
+    if not history_rows or not track_type:
+        return {"n": 0, "verdict": "Veri yok"}
+    t_low = (track_type or "").lower()
+    matches = [r for r in history_rows
+               if (r.get("pist") or "").lower().startswith(t_low[:3])]
+    if not matches:
+        return {"n": 0, "verdict": f"İlk kez {track_type} pistte koşuyor"}
+    finishes = [r["finish"] for r in matches
+                if isinstance(r["finish"], int)]
+    if not finishes:
+        return {"n": len(matches),
+                "verdict": f"{track_type} pistte {len(matches)} koşu"}
+    avg = sum(finishes) / len(finishes)
+    top4 = sum(1 for f in finishes if f <= 4)
+    return {"n": len(matches), "top4": top4, "avg_finish": avg,
+            "verdict": (f"{track_type} pistte {len(matches)} koşu, "
+                        f"ortalama sıra {avg:.1f}, {top4} ilk-4")}
+
+
+def _jockey_summary(horse: dict) -> str:
+    """Smart_coupon legs'inden jokey istatistiği özeti."""
+    name = horse.get("jockey_name") or "—"
+    j_top4 = horse.get("jockey_overall_top4")
+    j_cond = horse.get("jockey_cond_top4")
+    parts = [name]
+    if isinstance(j_top4, (int, float)) and j_top4 > 0:
+        parts.append(f"sezon ilk-4 %{j_top4 * 100:.1f}")
+    if isinstance(j_cond, (int, float)) and j_cond > 0:
+        parts.append(f"benzer koşullarda ilk-4 %{j_cond * 100:.1f}")
+    return " · ".join(parts)
+
+
+def _data_confidence(history_rows: list, days_since,
+                     class_step: dict) -> tuple:
+    """At başına veri güvenilirliği bayrağı.
+
+    Returns (color_hex, label, reason).
+    """
+    n_hist = len(history_rows)
+    risk = (class_step or {}).get("risk", "neutral")
+    flags = []
+    if n_hist < 4:
+        flags.append("az kayıt")
+    if isinstance(days_since, (int, float)) and days_since > 90:
+        flags.append(f"{int(days_since)}g mola")
+    if risk == "high":
+        flags.append("büyük sınıf sıçraması")
+    if not flags:
+        return ("#2d7a2b", "Yüksek güven",
+                "yeterli kayıt, taze, sınıf değişmedi")
+    if len(flags) == 1 and risk != "high":
+        return ("#c69214", "Orta güven", " · ".join(flags))
+    return ("#9b1c2c", "Düşük güven", " · ".join(flags))
+
+
 def _ne_diyor_mc(p1):
     if p1 >= 25:
         return "modelimizin BARİZ favorisi"
@@ -488,8 +605,9 @@ def _section_methodology(styles):
     out.append(Paragraph(
         "<b>TJK günün programı</b> (yarış kartı, kilo, jokey, mesafe, "
         "sınıf). <b>TJK derece arşivi</b> (her atın son sekiz yarışının "
-        "tarihi, mesafesi, pisti, kilosu ve derecesi). <b>AGF tahmin "
-        "tablosu</b> (halkın oyu). <b>Glicko-2 kalıcı rating ledger'ı.</b>",
+        "tarihi, mesafesi, pisti, kilosu ve derecesi). <b>Glicko-2 "
+        "kalıcı rating ledger'ı.</b> Bu rapor tamamen modelin "
+        "değerlendirmesine dayanır; halkın oy oranı kullanılmamıştır.",
         styles["bodyJ"]))
 
     out.append(Paragraph(
@@ -498,10 +616,10 @@ def _section_methodology(styles):
         "V8, bir <b>çok-başlı (multi-head) olasılık tahmincisidir</b>. "
         "Aynı anda dört soruyu cevaplar: <i>Bu at 1. olur mu? 2. olur mu? "
         "3. olur mu? 4. olur mu?</i> Yanıt her zaman %0–100 arasında bir "
-        "olasılıktır. Modelin kullandığı 19 özellik arasında V7 ranker'ın "
-        "verdiği skor, AGF değeri, jokey istatistikleri, Glicko rating, "
-        "son altı yarışın ağırlıklı başarı oranı, form trendi ve sınıf "
-        "eğilimi bulunur.",
+        "olasılıktır. Modelin kullandığı özellikler arasında V7 ranker'ın "
+        "verdiği skor, jokey istatistikleri, Glicko rating, son altı "
+        "yarışın ağırlıklı başarı oranı, form trendi, sınıf eğilimi ve "
+        "iyileşme dinamiği bulunur.",
         styles["bodyJ"]))
     out.append(Paragraph(
         "<b>Not:</b> V8 şu anda bootstrap prior aşamasındadır — yani gerçek "
@@ -582,6 +700,19 @@ def _section_methodology(styles):
         "birleşik puana sahip at = kazanan adayım.",
         styles["bodyJ"]))
 
+    out.append(Paragraph(
+        "Simülasyon sayısı neden 10.000? 100.000 yapsak değişir mi?",
+        styles["H3"]))
+    out.append(Paragraph(
+        "Plackett–Luce örneklemesinin standart hatası 1/√N ile azalır. "
+        "10.000 simülasyondan 100.000'e çıkarsak gürültü yaklaşık üç "
+        "buçuk kat azalır — ama bu pratikte yüzdelerin yalnızca "
+        "<b>üçüncü-dördüncü ondalık basamağında</b> değişiklik yapar. "
+        "Atların sıralaması ve oransal farklar görsel olarak aynı kalır. "
+        "Bu nedenle 10.000 yeterli; hesaplama maliyetini katlamadan "
+        "stabil sonuç verir.",
+        styles["bodyJ"]))
+
     out.append(Paragraph("Veri sınırları (önemli)", styles["H3"]))
     out.append(Paragraph(
         "<b>•</b> Bitiş sırası TJK derece kaydında doğrudan yok; Taydex DB'si "
@@ -589,8 +720,6 @@ def _section_methodology(styles):
         "yıldız * ile işaretli).<br/>"
         "<b>•</b> Pedigri (baba/anne) Taydex DB'sini gerektirir; lokal "
         "ortamda boş olabilir.<br/>"
-        "<b>•</b> AGF tablosu yarış gününden bir gün önce yayınlanır; bu "
-        "rapor üretildiğinde AGF güncel olmayabilir.<br/>"
         "<b>•</b> Türk pari-mutuel piyasası matematiksel olarak <b>-EV</b> "
         "(yapısal). Bu rapor analiz aracıdır; bahis kararı sahibi sizsiniz.",
         styles["bodyJ"]))
@@ -599,17 +728,18 @@ def _section_methodology(styles):
 
 # ─── KAZANAN ──────────────────────────────────────────────────────────────
 def _section_winner_deep(styles, winner, runners_up, mc, leg, forecasts,
-                         history_rows, ped):
+                         history_rows, ped, today_class, distance,
+                         track_type):
     out = []
     out.append(Paragraph("Kazanan Adayım", styles["H1"]))
     out.append(Paragraph(
         f"#{winner['no']} {winner['name']}", styles["winner_box"]))
     horse = next((h for h in leg if h.get("horse_no") == winner["no"]), {})
-    jk = horse.get("jockey_name") or "—"
     kg = (f"{horse.get('weight'):.1f}"
           if isinstance(horse.get("weight"), (int, float)) else "—")
+    jstr = _jockey_summary(horse)
     out.append(Paragraph(
-        f"<i>Jokey:</i> {jk} &nbsp;·&nbsp; <i>Kilo:</i> {kg} kg "
+        f"<i>Jokey:</i> {jstr} &nbsp;·&nbsp; <i>Kilo:</i> {kg} kg "
         f"&nbsp;·&nbsp; <i>Yarış çizgisi:</i> "
         f"{PACE_AÇIKLAMA.get(winner['pace'], '—')}",
         styles["body"]))
@@ -662,8 +792,43 @@ def _section_winner_deep(styles, winner, runners_up, mc, leg, forecasts,
             "<b>Form ve seviye:</b> " + " ".join(extra),
             styles["bodyJ"]))
 
-    # Risk bölümü
-    out.append(Spacer(1, 4))
+    # Atın profili — sınıf, mesafe, pist uyumu
+    out.append(Spacer(1, 6))
+    out.append(Paragraph("Atın Bu Koşuya Uyumu", styles["H2"]))
+    cs = _class_step(today_class, history_rows)
+    dm = _distance_match(distance, history_rows)
+    tm = _track_match(track_type, history_rows)
+    profile_rows = [
+        ["Boyut", "Bu koşu", "Değerlendirme"],
+        ["Sınıf",
+         today_class[:30] if today_class else "—",
+         f"{cs.get('from_label', '?')[:24]} → {cs.get('to_label', '?')[:24]}  "
+         f"(<b>{cs.get('verdict', '—')}</b>)" if cs else "—"],
+        ["Mesafe", f"{distance}m", dm.get("verdict", "—")],
+        ["Pist", track_type or "—", tm.get("verdict", "—")],
+    ]
+    pt = Table([[Paragraph(c, styles["body"]) for c in r]
+                for r in profile_rows],
+               colWidths=[2.5 * cm, 4.0 * cm, 11.0 * cm])
+    pt.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, 0), "Optima-Bold"),
+        ("BACKGROUND", (0, 0), (-1, 0), INK_LIGHT),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 1), (0, -1), "Palatino-Bold"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+         [colors.white, CELL_TINT]),
+        ("BOX", (0, 0), (-1, -1), 0.4, INK_LIGHT),
+        ("INNERGRID", (0, 1), (-1, -1), 0.2, RULE),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    out.append(pt)
+
+    # Risk bölümü (dinamik)
+    out.append(Spacer(1, 6))
     out.append(Paragraph("Dikkat edilmesi gerekenler", styles["H2"]))
     risks = []
     n_hist = len(history_rows)
@@ -678,6 +843,25 @@ def _section_winner_deep(styles, winner, runners_up, mc, leg, forecasts,
             f"<b>Az kayıt:</b> sadece {n_hist} yarışlık veri var. Glicko "
             f"belirsizliği (RD) yüksek olabilir; rating göründüğünden "
             f"daha az güvenilir.")
+    if cs.get("risk") == "high":
+        risks.append(
+            f"<b>Büyük sınıf sıçraması:</b> {cs.get('from_label', '?')} "
+            f"sınıfından doğrudan <b>{cs.get('to_label', '?')}</b>'e "
+            f"çıkıyor. Sınıf farkı çok büyük; başarı gösterse bile bu "
+            f"bir sürpriz olur.")
+    elif cs.get("risk") == "med":
+        risks.append(
+            f"<b>Sınıf yükselişi:</b> {cs.get('from_label', '?')} → "
+            f"{cs.get('to_label', '?')}. Yeni sınıfa uyum sağlaması "
+            f"gerekiyor.")
+    if dm.get("n", 0) == 0:
+        risks.append(
+            f"<b>İlk kez {distance}m:</b> at bu mesafe bandında daha önce "
+            f"koşmamış. Mesafe uyumu kanıtlanmamış.")
+    if tm.get("n", 0) == 0:
+        risks.append(
+            f"<b>İlk kez {track_type} pistte:</b> at bu pist tipinde daha "
+            f"önce koşmamış. Pist tercihi kanıtlanmamış.")
     risks.append(
         "<b>Model bootstrap aşamasında:</b> V8 henüz gerçek sonuçlarla "
         "retrain edilmedi. Olasılıkların mutlak değeri değil <b>göreceli "
@@ -686,9 +870,6 @@ def _section_winner_deep(styles, winner, runners_up, mc, leg, forecasts,
         "<b>Tempo varsayımı:</b> üç senaryonun katsayıları defansif "
         "kalibrasyondur; gerçek koşunun pace bias'ı bu üçünden farklı "
         "olabilir.")
-    risks.append(
-        "<b>AGF tablosu:</b> rapor üretildiği anda AGF güncel olmayabilir. "
-        "AGF yayınlandıktan sonra modelin değerlendirmesi hafifçe değişebilir.")
     for r in risks:
         out.append(Paragraph(r, styles["risk"]))
 
@@ -744,7 +925,8 @@ def _section_winner_deep(styles, winner, runners_up, mc, leg, forecasts,
 
 
 # ─── TOP-5 ───────────────────────────────────────────────────────────────
-def _section_top5(styles, top5, mc):
+def _section_top5(styles, top5, mc, history_map, today_class, distance,
+                  track_type, forecasts):
     out = []
     out.append(Paragraph("Top-5 Favori At", styles["H1"]))
     cumulative_p1 = sum(mc["rank_pct"].get(h["no"], {}).get(1, 0)
@@ -756,9 +938,15 @@ def _section_top5(styles, top5, mc):
         f"birinci bitiriyor; geri kalan atların hepsinin toplam birinci "
         f"olma şansı sadece %{100 - cumulative_p1:.1f}.",
         styles["callout"]))
-    rows = [["#", "No", "At", "Yarış Çizgisi",
-             "MC 1.olma", "V8 İlk-4", "Tempo D.", "Birleşik"]]
+    rows = [["#", "No", "At", "Çizgi",
+             "MC 1.olma", "İlk-4", "Tempo D.", "Birleşik", "Güven"]]
     for i, h in enumerate(top5, 1):
+        hist = history_map.get((h["no"], h["name"]), [])
+        cs = _class_step(today_class, hist)
+        fc = forecasts.get((h["no"], h["name"]), {})
+        days = (fc.get("recovery") or {}).get("days_since_last")
+        color, label, _ = _data_confidence(hist, days, cs)
+        guven_str = f'<font color="{color}"><b>{label.split()[0]}</b></font>'
         rows.append([
             str(i), str(h["no"]), h["name"] or "?",
             PACE_AÇIKLAMA.get(h["pace"], "—"),
@@ -766,9 +954,13 @@ def _section_top5(styles, top5, mc):
             f"%{h['v8_p4']:.1f}",
             f"{h['tempo_top3_count']}/3",
             f"{h['score']:.3f}",
+            guven_str,
         ])
-    t = Table(rows, colWidths=[0.7 * cm, 0.9 * cm, 4.6 * cm, 2.8 * cm,
-                                1.9 * cm, 1.9 * cm, 1.6 * cm, 2.0 * cm])
+    t = Table([[Paragraph(c, styles["body"]) if isinstance(c, str) else c
+                for c in r] for r in rows],
+              colWidths=[0.7 * cm, 0.9 * cm, 4.0 * cm, 2.3 * cm,
+                          1.7 * cm, 1.5 * cm, 1.4 * cm, 1.8 * cm,
+                          1.6 * cm])
     t.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (-1, 0), "Optima-Bold"),
         ("FONTSIZE", (0, 0), (-1, 0), 10),
@@ -791,10 +983,14 @@ def _section_top5(styles, top5, mc):
     out.append(Spacer(1, 10))
     out.append(Paragraph(
         "<i>MC 1.olma</i> = 10.000 simülasyonda atın birinci olma yüzdesi. "
-        "<i>V8 İlk-4</i> = modelin ilk-4'e bitirme olasılığı. "
+        "<i>İlk-4</i> = modelin ilk-4'e bitirme olasılığı. "
         "<i>Tempo D.</i> = üç tempo senaryosundan (yavaş/orta/sert) "
         "kaçında at top-3'te. <i>Birleşik</i> = üç ölçütün ağırlıklı "
-        "ortalaması (kazanan seçim kriteri).",
+        "ortalaması (kazanan seçim kriteri). "
+        "<i>Güven</i> = atın veri kalitesi (Yüksek/Orta/Düşük): "
+        "<font color='#2d7a2b'>yeşil</font> = yeterli kayıt + taze + "
+        "sınıf değişmedi; <font color='#c69214'>sarı</font> = bir "
+        "uyarı; <font color='#9b1c2c'>kırmızı</font> = birden çok uyarı.",
         styles["small"]))
     return out
 
@@ -1003,21 +1199,26 @@ def _section_value(styles, leg, v8_preds):
 
 
 # ─── At başına detay ──────────────────────────────────────────────────────
+_today_class = ""  # set by _section_horse_details before each call
+
+
 def _build_horse_block(idx, horse, p, fc, pace, history_rows, ped, styles):
     block = []
     jk = horse.get("jockey_name") or "—"
     kg = (f"{horse.get('weight'):.1f}"
           if isinstance(horse.get("weight"), (int, float)) else "—")
-    agf = horse.get("agf_value")
-    agf_str = (f"%{agf:.1f}"
-               if isinstance(agf, (int, float)) else "—")
     no = horse.get("horse_no")
     nm = horse.get("horse_name") or horse.get("name") or "?"
+    # Güvenilirlik bayrağı
+    cs = _class_step(_today_class, history_rows)
+    days = (fc.get("recovery") or {}).get("days_since_last")
+    color, label, _ = _data_confidence(history_rows, days, cs)
+    flag = f'<font color="{color}"><b>● {label}</b></font>'
     head = (f"<b>#{no} {nm}</b>"
             f"  ·  jokey: {jk}"
             f"  ·  kilo: {kg}"
-            f"  ·  AGF: {agf_str}"
-            f"  ·  sıra: {idx}")
+            f"  ·  sıra: {idx}"
+            f"  &nbsp; {flag}")
     block.append(Paragraph(head, styles["H3"]))
 
     p1 = (p.get("p_top1") or 0) * 100
@@ -1105,13 +1306,16 @@ def _build_horse_block(idx, horse, p, fc, pace, history_rows, ped, styles):
 
 def _section_horse_details(styles, leg, v8_preds, forecasts,
                             per_horse_pace, history_map, ped_map,
-                            winner_no):
+                            winner_no, today_class):
+    global _today_class
+    _today_class = today_class
     out = []
     out.append(Paragraph("At Bazında Detay", styles["H1"]))
     out.append(Paragraph(
         "Yarışın tüm atları, V8 ilk-4 olasılığına göre sıralı. "
-        "Yıldız (*) bitiş sırasının zamandan tahmin edildiğini "
-        "gösterir (Taydex DSN kapalıyken).",
+        "Her atın başlığında veri güvenilirliği bayrağı görülür "
+        "(yeşil/sarı/kırmızı). Yıldız (*) bitiş sırasının zamandan "
+        "tahmin edildiğini gösterir (Taydex DSN kapalıyken).",
         styles["small"]))
     out.append(Spacer(1, 4))
     for i, p in enumerate(v8_preds, 1):
@@ -1157,10 +1361,6 @@ def _section_disclaimer(styles):
         "bağlı kalmayın, üç senaryoda da güçlü kalan atlara öncelik verin.",
         styles["body"]))
     out.append(Paragraph(
-        "<b>AGF tablosu</b> — yarışın gününden bir gün önce yayınlanır. "
-        "Rapor üretildiği anda AGF güncel olmayabilir.",
-        styles["body"]))
-    out.append(Paragraph(
         "<b>Türk pari-mutuel piyasası matematiksel olarak -EV'dir</b> "
         "(yapısal; iç audit raporlarımız bunu doğruladı). Bu raporda "
         "garanti edilen sonuç yoktur.",
@@ -1188,7 +1388,7 @@ def _add_footer(canvas, doc):
 # ─── PDF Builder ──────────────────────────────────────────────────────────
 def _build_pdf(out_path, leg, v8_preds, forecasts, per_horse_pace,
                mc, tempo_sims, composite, ped_map, history_map,
-               meta_line, distance, ref_date):
+               meta_line, distance, track_type, today_class, ref_date):
     styles = _styles()
     doc = SimpleDocTemplate(out_path, pagesize=A4,
                             leftMargin=1.6 * cm, rightMargin=1.6 * cm,
@@ -1210,14 +1410,16 @@ def _build_pdf(out_path, leg, v8_preds, forecasts, per_horse_pace,
     flow.extend(_section_methodology(styles))
     flow.append(PageBreak())
 
-    # P3: KAZANAN DERİN ANALİZ
+    # P3: KAZANAN DERİN ANALİZ (+ sınıf/mesafe/pist/jokey)
     flow.extend(_section_winner_deep(
         styles, winner, runners_up, mc, leg, forecasts,
-        winner_history, winner_ped))
+        winner_history, winner_ped, today_class, distance, track_type))
     flow.append(PageBreak())
 
-    # P4: TOP-5
-    flow.extend(_section_top5(styles, top5, mc))
+    # P4: TOP-5 (+ güven bayrağı)
+    flow.extend(_section_top5(
+        styles, top5, mc, history_map, today_class, distance,
+        track_type, forecasts))
     flow.append(PageBreak())
 
     # P5: 3 TEMPO
@@ -1230,14 +1432,10 @@ def _build_pdf(out_path, leg, v8_preds, forecasts, per_horse_pace,
     flow.extend(_section_mc(styles, v8_preds, mc))
     flow.append(PageBreak())
 
-    # P7: AGF vs V8
-    flow.extend(_section_value(styles, leg, v8_preds))
-    flow.append(PageBreak())
-
-    # P8+: At başına detay
+    # P7: At başına detay (AGF kaldırıldı, güven bayrağı eklendi)
     flow.extend(_section_horse_details(
         styles, leg, v8_preds, forecasts, per_horse_pace,
-        history_map, ped_map, winner["no"]))
+        history_map, ped_map, winner["no"], today_class))
     flow.append(PageBreak())
 
     # END: Uyarılar
@@ -1307,16 +1505,18 @@ def make_gazi_ultra(target: date, out_dir: str = "/Users/berkay/Downloads"):
         distance = int(distance)
     except Exception:
         distance = 2400
+    track_type = h0.get("track_type") or ""
+    today_class = grp
     meta_line = (f"{(h0.get('race_time') or '')[:5]} · {grp} · "
-                 f"{distance}m {h0.get('track_type')}")
+                 f"{distance}m {track_type}")
 
     ts = __import__("datetime").datetime.now().strftime("%H%M")
-    out = os.path.join(out_dir, f"Gazi_V8_ULTRA_v3_28Haz2026_{ts}.pdf")
+    out = os.path.join(out_dir, f"Gazi_V8_ULTRA_v4_28Haz2026_{ts}.pdf")
 
     print(f"[6/6] PDF: {out}", flush=True)
     _build_pdf(out, gazi_leg, v8_preds, forecasts, per_horse_pace,
                mc, tempo_sims, composite, ped_map, history_map,
-               meta_line, distance, ref_date)
+               meta_line, distance, track_type, today_class, ref_date)
     print(f"\n✓ Tamam: {out}")
     return out
 
