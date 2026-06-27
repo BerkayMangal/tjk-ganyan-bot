@@ -96,7 +96,11 @@ def _tempo_scenario_sim(v8_preds: list, pace_by_no: dict, tempo: str,
 
 
 def _load_calibrated_weights():
-    """simulation/calibrators/composite_weights.json → (α, β, γ)."""
+    """simulation/calibrators/composite_weights.json → (α, β, γ, δ).
+
+    α = MC(1.olma), β = V8(p_top4), γ = tempo robust, δ = V7(model_prob).
+    Eski 3-değişken composite (delta yoksa) backward-compat: δ=0.
+    """
     import json
     from pathlib import Path
     p = (Path(__file__).resolve().parent.parent
@@ -105,24 +109,31 @@ def _load_calibrated_weights():
         with open(p) as f:
             d = json.load(f)
         b = d.get("best") or {}
-        return (b.get("alpha", 0.50), b.get("beta", 0.35),
-                b.get("gamma", 0.15))
+        return (
+            b.get("alpha", 0.60), b.get("beta", 0.25),
+            b.get("gamma", 0.15), b.get("delta", 0.0),
+        )
     except Exception:
-        return (0.50, 0.35, 0.15)  # default: kalibre edilmiş
+        return (0.60, 0.25, 0.15, 0.0)
 
 
 COMPOSITE_WEIGHTS = _load_calibrated_weights()
 
 
 def _composite_winner(v8_preds: list, mc: dict, tempo_sims: dict,
-                      pace_by_no: dict) -> dict:
-    """Composite skor — kalibre edilmiş ağırlıklar (composite_weights.json).
+                      pace_by_no: dict, v7_prob_by_no: dict = None) -> dict:
+    """Composite skor — V7+V8 HİBRİT (kalibre ağırlık).
 
     score = α × MC(1.olma) + β × V8(p_top4) + γ × tempo_robust
-    Default kalibrasyon (284 koşu üzerinde grid search):
-        α=0.50, β=0.35, γ=0.15  → top-1 %35.2, top-4 recall %69.0
+            + δ × V7(model_prob)
+
+    Default kalibrasyon (60g grid search):
+        α=0.60, β=0.25, γ=0.15, δ=0.00 (delta>0 → recalibrate)
     """
-    alpha, beta, gamma = COMPOSITE_WEIGHTS
+    alpha, beta, gamma, delta = COMPOSITE_WEIGHTS
+    if v7_prob_by_no is None:
+        v7_prob_by_no = {}
+
     robust: Counter = Counter()
     for t in ("YAVAŞ", "ORTA", "SERT"):
         sim = tempo_sims.get(t, {})
@@ -130,21 +141,28 @@ def _composite_winner(v8_preds: list, mc: dict, tempo_sims: dict,
         ranking = sorted(top1c.items(), key=lambda x: -x[1])[:3]
         for no, _ in ranking:
             robust[no] += 1
+
     max_p4 = max((p.get("p_top4") or 0) for p in v8_preds) or 1.0
     mc_p1 = {no: pct.get(1, 0) for no, pct in mc.get("rank_pct", {}).items()}
     max_mc1 = max(mc_p1.values()) if mc_p1 else 1.0
+    max_v7 = max((v or 0) for v in v7_prob_by_no.values()) or 1.0
+
     scores = []
     for p in v8_preds:
         no = p.get("horse_no")
         mc1n = (mc_p1.get(no, 0) / max_mc1) if max_mc1 else 0
         p4n = ((p.get("p_top4") or 0) / max_p4) if max_p4 else 0
         rb = robust.get(no, 0) / 3.0
+        v7_raw = v7_prob_by_no.get(no, 0) or 0
+        v7n = (v7_raw / max_v7) if max_v7 else 0
         scores.append({
             "no": no, "name": p.get("horse_name"),
-            "score": alpha * mc1n + beta * p4n + gamma * rb,
+            "score": (alpha * mc1n + beta * p4n + gamma * rb
+                      + delta * v7n),
             "mc_p1": mc_p1.get(no, 0),
             "v8_p4": (p.get("p_top4") or 0) * 100,
             "v8_p1": (p.get("p_top1") or 0) * 100,
+            "v7_prob": v7_raw * 100,
             "tempo_top3_count": robust.get(no, 0),
             "pace": pace_by_no.get(no, "mid"),
         })
@@ -231,9 +249,18 @@ def analyze_race(
             for t in ("YAVAŞ", "ORTA", "SERT")
         }
 
-        # 5) Composite winner
+        # V7 model_prob per horse (smart_coupon legs'inden)
+        v7_prob_by_no = {}
+        for h in leg:
+            no = (h.get("horse_no") or h.get("horse_number")
+                  or h.get("number"))
+            mp = h.get("model_prob")
+            if isinstance(mp, (int, float)) and mp > 0:
+                v7_prob_by_no[no] = float(mp)
+
+        # 5) Composite winner — V7+V8 HİBRİT
         composite = _composite_winner(v8_preds, mc, tempo_sims,
-                                       per_horse_pace)
+                                       per_horse_pace, v7_prob_by_no)
 
         # 6) 3 farklı TOP-5 listesi (Berkay direktif: top-5)
         name_by_no = {p.get("horse_no"): p.get("horse_name") for p in v8_preds}

@@ -67,7 +67,14 @@ def _load_v8_model():
 
 
 def _build_race_predictions():
-    """Outcomes_rich → her koşu için at başına (V8 p_top1..4, finish)."""
+    """Outcomes_rich → her koşu için at başına (V8 p_top1..4, V7 proxy, finish).
+
+    V7 prediction PROXY: career_top4_rate (atın geçmiş ilk-4 oranı).
+    Bu, AGF-bağımsız ve outcomes_rich'tan direkt çıkarılabilir bir
+    "tabela bilgisi" PROXY'sidir. Gerçek V7 ndcg@4 LambdaRank prod inference
+    için TJK programmes feature pipeline gerekir; proxy ile yaklaşık
+    karşılaştırma yapıyoruz.
+    """
     from model.v8.train_real import (
         _load_all_outcomes, _build_history_map, _build_features_for_horse,
     )
@@ -81,7 +88,6 @@ def _build_race_predictions():
     records = _load_all_outcomes()
     history_map = _build_history_map(records)
 
-    # group by (date, hippo, kosu_no)
     race_groups = defaultdict(list)
     for r in records:
         if not r.get("name") or r.get("finish") is None:
@@ -92,7 +98,6 @@ def _build_race_predictions():
     races = []
     skipped = 0
     for (date, hippo, kosu_no), runners in race_groups.items():
-        # her at için feature
         rows = []
         for r in runners:
             feat = _build_features_for_horse(
@@ -107,17 +112,21 @@ def _build_race_predictions():
         X = np.array([[row[1].get(c, 0) or 0 for c in feature_cols]
                        for row in rows])
         dtest = xgb.DMatrix(X)
-        # 4 head predict
         p_top1 = heads["top1"].predict(dtest) if "top1" in heads else None
         p_top4 = heads["top4"].predict(dtest) if "top4" in heads else None
         race_horses = []
-        for i, (r, _) in enumerate(rows):
+        for i, (r, feat) in enumerate(rows):
+            # V7 PROXY: career_top4_rate (yıllık ilk-4 oranı). Gerçek V7
+            # ndcg@4 LambdaRank her at için tabela context kullanır;
+            # bu proxy AGF-FREE ortak baseline'dır.
+            v7_proxy = feat.get("career_top4_rate", 0) or 0
             race_horses.append({
                 "name": r["name"],
                 "at_no": r["at_no"],
                 "finish": r["finish"],
                 "p_top1": float(p_top1[i]) if p_top1 is not None else 0,
                 "p_top4": float(p_top4[i]) if p_top4 is not None else 0,
+                "v7_prob": float(v7_proxy),
             })
         races.append({
             "date": date, "hippo": hippo, "kosu_no": kosu_no,
@@ -133,34 +142,34 @@ def _composite_score(p_top1, p_top4, tempo_robust,
     return alpha * mc_p1_norm + beta * p4_norm + gamma * tempo_robust
 
 
-def _evaluate_weights(races, alpha, beta, gamma):
-    """Bu ağırlıklarla composite skor sıralamasının doğruluğu."""
+def _evaluate_weights(races, alpha, beta, gamma, delta=0.0):
+    """Composite skor sıralaması doğruluğu (4-değişken hibrit dahil).
+
+    score = α·MC_p1 + β·V8_p4 + γ·tempo + δ·V7_proxy
+    """
     top1_hit = 0
-    top4_hit_avg = 0  # ortalama top-4'te kaç tanesini yakaladık
+    top4_hit_avg = 0
     total_top4_possible = 0
     n_races = 0
     for race in races:
         horses = race["horses"]
         if len(horses) < 4:
             continue
-        # normalize MC_p1 (proxy: p_top1 — MC için gerçek 10K sim çok pahalı)
         max_p1 = max(h["p_top1"] for h in horses) or 1.0
         max_p4 = max(h["p_top4"] for h in horses) or 1.0
-        # tempo_robust proxy → bu data'da hesaplamak için tempo sim gerek
-        # basitleştir: her at için tempo_robust = 1.0 (sabit) → grid search
-        # sadece α (mc) + β (v8) üzerinde anlamlı
+        max_v7 = max(h.get("v7_prob", 0) for h in horses) or 1.0
         for h in horses:
             mc_p1_norm = h["p_top1"] / max_p1
             p4_norm = h["p_top4"] / max_p4
-            tempo_robust = 0.5  # neutral proxy
+            tempo_robust = 0.5
+            v7_norm = (h.get("v7_prob", 0) / max_v7) if max_v7 else 0
             h["_composite"] = (alpha * mc_p1_norm
                                 + beta * p4_norm
-                                + gamma * tempo_robust)
+                                + gamma * tempo_robust
+                                + delta * v7_norm)
         ranked = sorted(horses, key=lambda h: -h["_composite"])
-        # Top-1 hit?
         if ranked[0]["finish"] == 1:
             top1_hit += 1
-        # Top-4 hit avg (composite top-4 içinde gerçek top-4 olanların sayısı)
         composite_top4 = {h["name"] for h in ranked[:4]}
         actual_top4 = {h["name"] for h in horses if h["finish"] <= 4}
         overlap = len(composite_top4 & actual_top4)
@@ -177,73 +186,95 @@ def _evaluate_weights(races, alpha, beta, gamma):
 
 
 def grid_search():
-    """α, β, γ ∈ {0.1..0.8 step 0.1}, α+β+γ=1."""
+    """α/β/γ/δ ∈ [0..0.8], α+β+γ+δ=1, γ≥0.05.
+
+    İki paralel grid:
+      • Saf V8 (δ=0)        — eski hesap
+      • Hibrit V7+V8 (δ>0)  — V7 model_prob proxy dahil
+    """
     races = _build_race_predictions()
     if not races:
         log.error("races boş")
         return None
 
     log.info(f"grid search üzerinde {len(races)} koşu")
-    grid = []
-    # alpha, beta, gamma — toplamı 1
     step = 0.05
-    weights = []
-    for a in [round(x * step, 2) for x in range(2, 17)]:  # 0.10..0.80
+    weights_pure = []  # δ=0
+    weights_hybrid = []  # δ>0
+    for a in [round(x * step, 2) for x in range(2, 17)]:
         for b in [round(x * step, 2) for x in range(2, 17)]:
+            # δ=0 (sade V8)
             g = round(1.0 - a - b, 2)
             if 0.05 <= g <= 0.50:
-                weights.append((a, b, g))
-    log.info(f"toplam kombinasyon: {len(weights)}")
+                weights_pure.append((a, b, g, 0.0))
+            # δ>0 (V7 dahil)
+            for d in [round(x * step, 2) for x in range(2, 13)]:
+                g = round(1.0 - a - b - d, 2)
+                if 0.05 <= g <= 0.50:
+                    weights_hybrid.append((a, b, g, d))
+    log.info(f"saf (δ=0) kombinasyon: {len(weights_pure)} · "
+             f"hibrit (δ>0): {len(weights_hybrid)}")
 
-    best = None
-    results = []
-    for a, b, g in weights:
-        m = _evaluate_weights(races, a, b, g)
-        m["alpha"] = a
-        m["beta"] = b
-        m["gamma"] = g
-        results.append(m)
-        # En iyi: top1 hit + top4 recall ağırlıklı
-        m["score"] = 0.6 * m["top1_hit_rate"] + 0.4 * m["top4_recall"]
-        if best is None or m["score"] > best["score"]:
-            best = m
+    def _run(weights, tag):
+        best = None
+        results = []
+        for a, b, g, d in weights:
+            m = _evaluate_weights(races, a, b, g, d)
+            m["alpha"] = a; m["beta"] = b; m["gamma"] = g; m["delta"] = d
+            results.append(m)
+            m["score"] = 0.6 * m["top1_hit_rate"] + 0.4 * m["top4_recall"]
+            if best is None or m["score"] > best["score"]:
+                best = m
+        results.sort(key=lambda x: -x["score"])
+        log.info(f"\n=== [{tag}] EN İYİ ===")
+        log.info(f"  α={best['alpha']} β={best['beta']} "
+                 f"γ={best['gamma']} δ={best['delta']}")
+        log.info(f"  Top-1 hit:    %{best['top1_hit_rate'] * 100:.2f}")
+        log.info(f"  Top-4 recall: %{best['top4_recall'] * 100:.2f}")
+        log.info(f"  Skor:         {best['score']:.4f}")
+        log.info(f"  İlk 3:")
+        for r in results[:3]:
+            log.info(f"    α={r['alpha']} β={r['beta']} γ={r['gamma']} "
+                     f"δ={r['delta']}  top1={r['top1_hit_rate']*100:.1f}%  "
+                     f"top4_recall={r['top4_recall']*100:.1f}%")
+        return best, results
 
-    results.sort(key=lambda x: -x["score"])
-    log.info(f"\nEN İYİ AĞIRLIKLAR:")
-    log.info(f"  α (MC 1.olma)    = {best['alpha']}")
-    log.info(f"  β (V8 p_top4)    = {best['beta']}")
-    log.info(f"  γ (tempo robust) = {best['gamma']}")
-    log.info(f"  → Top-1 hit:     %{best['top1_hit_rate'] * 100:.2f}")
-    log.info(f"  → Top-4 overlap: {best['top4_avg_overlap']:.2f}/4")
-    log.info(f"  → Top-4 recall:  %{best['top4_recall'] * 100:.2f}")
+    best_pure, results_pure = _run(weights_pure, "SAF V8 (δ=0)")
+    best_hybrid, results_hybrid = _run(weights_hybrid, "HİBRİT V7+V8 (δ>0)")
 
-    # En iyi 5
-    log.info(f"\nİlk 5 sonuç (ağırlıklı skor):")
-    for r in results[:5]:
-        log.info(f"  α={r['alpha']} β={r['beta']} γ={r['gamma']}  "
-                 f"top1={r['top1_hit_rate'] * 100:.1f}%  "
-                 f"top4_recall={r['top4_recall'] * 100:.1f}%  "
-                 f"score={r['score']:.4f}")
+    # Hangi daha iyi?
+    delta_top1 = (best_hybrid["top1_hit_rate"]
+                  - best_pure["top1_hit_rate"]) * 100
+    delta_top4 = (best_hybrid["top4_recall"]
+                  - best_pure["top4_recall"]) * 100
+    log.info(f"\n=== HİBRİT vs SAF V8 ===")
+    log.info(f"  Top-1 hit:    saf %{best_pure['top1_hit_rate']*100:.2f} → "
+             f"hibrit %{best_hybrid['top1_hit_rate']*100:.2f}  "
+             f"({'+' if delta_top1>=0 else ''}{delta_top1:.2f}pp)")
+    log.info(f"  Top-4 recall: saf %{best_pure['top4_recall']*100:.2f} → "
+             f"hibrit %{best_hybrid['top4_recall']*100:.2f}  "
+             f"({'+' if delta_top4>=0 else ''}{delta_top4:.2f}pp)")
 
-    # En kötü (referans)
-    log.info(f"\nEn kötü 3:")
-    for r in results[-3:]:
-        log.info(f"  α={r['alpha']} β={r['beta']} γ={r['gamma']}  "
-                 f"top1={r['top1_hit_rate'] * 100:.1f}%  "
-                 f"top4_recall={r['top4_recall'] * 100:.1f}%")
+    # final winner = ağırlıklı skor daha yüksek olan
+    final_best = (best_hybrid if best_hybrid["score"] > best_pure["score"]
+                  else best_pure)
 
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(OUT_PATH, "w") as f:
         json.dump({
-            "best": best,
-            "all_results": results,
+            "best": final_best,
+            "best_pure": best_pure,
+            "best_hybrid": best_hybrid,
+            "delta_top1_pp": delta_top1,
+            "delta_top4_pp": delta_top4,
             "n_races": len(races),
-            "note": ("Grid search outcomes_rich üzerinde. α/β/γ ∈ "
-                     "[0.10, 0.80], α+β+γ=1, γ ≥ 0.05. Hedef: top-1 "
-                     "hit + top-4 recall ağırlıklı."),
+            "note": ("4-değişken grid: α (MC) + β (V8_p_top4) + γ (tempo) "
+                     "+ δ (V7_proxy=career_top4_rate). Saf vs Hibrit "
+                     "karşılaştırması; hangisi yüksek skor verirse "
+                     "production'a o yazılır."),
         }, f, indent=2, ensure_ascii=False)
     log.info(f"\nsaved {OUT_PATH}")
-    return best
+    return final_best
 
 
 if __name__ == "__main__":
