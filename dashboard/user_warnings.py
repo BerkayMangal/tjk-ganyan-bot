@@ -24,7 +24,9 @@ def get_banner() -> str:
     veya bu modülü kaldır. Asla raise etmez.
     """
     try:
-        if os.getenv("TJK_PHASE_5_2_WARNING", "1") == "1":
+        # Berkay (2026-06-29): Telegram eleme → banner default OFF.
+        # Aç tekrar etmek istersen TJK_PHASE_5_2_WARNING=1.
+        if os.getenv("TJK_PHASE_5_2_WARNING", "0") == "1":
             return WARNING_BANNER + "\n\n"
     except Exception:
         pass

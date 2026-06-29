@@ -490,15 +490,23 @@ def _maybe_send_v8_pre_race(pools_unused, now, logger):
                 lines.append("")
                 lines.append("⚠ Karar destek — bahis garantisi yok.")
                 text = "\n".join(lines)
-                if os.environ.get('TJK_V8_PRE_RACE_TELEGRAM', '0') == '1':
+                # GÜVEN FİLTRESİ — Berkay direktif: SADECE ÇOK YÜKSEK
+                # (overlap = 4/4). Diğerleri sadece forward_log'a yazılır.
+                min_overlap = int(os.environ.get(
+                    'TJK_V8_PRE_RACE_MIN_OVERLAP', '4'))
+                if (os.environ.get('TJK_V8_PRE_RACE_TELEGRAM', '0') == '1'
+                        and overlap >= min_overlap):
                     try:
                         _svc().send_telegram(text)
                         sent_now += 1
                         _log(logger, f"[v8-prerace] sent {hippo} R{race_no} "
-                                      f"(T-{int(mins_to_race)}dk)")
+                                      f"(T-{int(mins_to_race)}dk, overlap={overlap})")
                     except Exception as _e_tg:
                         _log(logger, f"[v8-prerace] send fail: "
                                       f"{repr(_e_tg)[:160]}")
+                elif overlap < min_overlap:
+                    _log(logger, f"[v8-prerace] {hippo} R{race_no} "
+                                  f"FILTERED (overlap={overlap}<{min_overlap})")
                 # Forward proof logger (her zaman, telegram off bile olsa)
                 try:
                     from forecast.forward_logger import log_t5_prediction
@@ -729,14 +737,18 @@ def _tick_locked(logger):
             p['sent_fresh'] = True
             p['sent_fp'] = p['sel_fp']
             continue
+        # T-45 AGF refresh — Berkay (2026-06-29) Telegram eleme: KAPALI default.
+        # Açmak için TJK_T45_REFRESH=1 (gürültü tercih ediliyorsa).
         if (rebuilt_now and p['sent_fresh'] and not p['refresh_done']
                 and p['agf_flat_legs'] == 0 and _in_refresh_window(p, now)):
             p['refresh_done'] = True
-            if p['sel_fp'] and p['sent_fp'] and p['sel_fp'] != p['sent_fp']:
+            if (os.environ.get('TJK_T45_REFRESH', '0') == '1'
+                    and p['sel_fp'] and p['sent_fp']
+                    and p['sel_fp'] != p['sent_fp']):
                 _send(p, "🔄 <b>GÜNCEL</b> — son AGF ile kupon değişti", logger)
                 p['sent_fp'] = p['sel_fp']
             else:
-                _log(logger, f"[coupon_sched] {p['hippo']} T-45 kontrol: değişiklik yok")
+                _log(logger, f"[coupon_sched] {p['hippo']} T-45 silent (Berkay eleme)")
             continue
         if not p['sent_fresh'] and not p['sent_stale']:
             dl, _rd = _pool_deadline(p, now)
@@ -746,9 +758,14 @@ def _tick_locked(logger):
                          f"istatistikle (ilk ayak {ft})", logger)
                 p['sent_stale'] = True
     _maybe_send_anomalies(st, now, logger)
-    _maybe_send_sib_top4(st, now, logger)
-    # BERKAY BİLİMSEL DENEME TOP4 — refresh path: try once per gun-sonu
-    if not st.get('berkay_top4_sent_today'):
+    # Berkay (2026-06-29) Telegram eleme:
+    # • SİB BUNU OYNA refresh KAPALI (sabah yeter, tick'te tekrar yok)
+    # • BERKAY BİLİMSEL DENEME TOP4 refresh KAPALI
+    # Açmak için TJK_SIB_TOP4_TICK_REFRESH=1 veya TJK_BERKAY_TOP4_REFRESH=1
+    if os.environ.get('TJK_SIB_TOP4_TICK_REFRESH', '0') == '1':
+        _maybe_send_sib_top4(st, now, logger)
+    if (os.environ.get('TJK_BERKAY_TOP4_REFRESH', '0') == '1'
+            and not st.get('berkay_top4_sent_today')):
         try:
             _maybe_send_berkay_top4_shadow(st, now, logger)
             st['berkay_top4_sent_today'] = True
