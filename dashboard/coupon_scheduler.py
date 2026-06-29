@@ -382,6 +382,133 @@ def _maybe_send_v8_daily(now, logger):
         _log(logger, f"[v8-daily] skip: {repr(e)[:200]}")
 
 
+def _maybe_send_v8_pre_race(pools_unused, now, logger):
+    """T-5 pre-race tek bildirim — yarıştan 5dk önce SADECE 1 mesaj.
+
+    Berkay (2026-06-29): 'yarisa 5dk kala sadece 1 tane bildiri atacak'.
+
+    Mantık:
+      • Tüm pool'lardaki yarışları topla, start_time ile zaman penceresi
+      • Bu tick'te T-5 penceresinde (5dk önce ± 3dk) olan yarışlar:
+        - state'te 'pre_race_sent_<hippo>_<race>' flag YOK ise
+        - V8 + V7 hibrit analiz çalıştır
+        - TEK KOMPAKT Telegram mesajı: kazanan + top-5 + güven
+        - State'e flag yaz (deduplication)
+
+    Env: TJK_V8_PRE_RACE=1 (build+log), TJK_V8_PRE_RACE_TELEGRAM=1 (gönder).
+    """
+    if os.environ.get('TJK_V8_PRE_RACE', '0') != '1':
+        return
+    try:
+        # Fresh pool fetch (race_legs ile birlikte — pool entry'de yok)
+        try:
+            pools = _build_pools(now)
+        except Exception as _e_bp:
+            _log(logger, f"[v8-prerace] build_pools fail: "
+                          f"{repr(_e_bp)[:160]}")
+            return
+        from forecast.race_analyzer import (
+            analyze_race, confidence_tag, PACE_TR,
+        )
+        try:
+            from dashboard.forecast_api import _fetch_history
+        except Exception:
+            _fetch_history = None
+        try:
+            from forecast.glicko import GlickoLedger
+            import json as _json
+            from pathlib import Path as _Path
+            _p = (_Path(__file__).resolve().parent.parent
+                  / "model" / "v8" / "glicko_ledger.json")
+            if _p.exists():
+                with open(_p) as _f:
+                    ledger = GlickoLedger.from_json(_json.load(_f))
+            else:
+                ledger = GlickoLedger()
+        except Exception:
+            ledger = None
+
+        day = now.date().isoformat()
+        ref_date = day
+        st = _load_state(day) or {}
+        sent_keys = set(st.get('pre_race_sent', []) or [])
+        sent_now = 0
+        for pool in (pools or []):
+            if pool.get('status') != 'ok':
+                continue
+            hippo = pool.get('hippo') or '?'
+            for leg in (pool.get('race_legs') or []):
+                if not leg:
+                    continue
+                race_no = leg[0].get('race_number') or 0
+                rt = (leg[0].get('race_time') or '').strip()[:5]
+                if not rt or ':' not in rt:
+                    continue
+                race_dt = _race_dt(now, rt)
+                mins_to_race = (race_dt - now).total_seconds() / 60.0
+                # T-5 penceresi (5dk önce, ± 3dk pencere genişliği)
+                if not (2 <= mins_to_race <= 8):
+                    continue
+                key = f"{hippo}_{race_no}"
+                if key in sent_keys:
+                    continue
+                try:
+                    analysis = analyze_race(
+                        leg=leg, ref_date=ref_date, ledger=ledger,
+                        history_lookup=_fetch_history,
+                        n_mc=5000, n_tempo=3000,
+                    )
+                except Exception as _e_an:
+                    _log(logger, f"[v8-prerace] analyze {hippo} R{race_no} "
+                                  f"fail: {repr(_e_an)[:160]}")
+                    continue
+                if not analysis or not analysis.get('winner'):
+                    continue
+                w = analysis['winner']
+                overlap = analysis.get('top4_overlap', 0)
+                tag = confidence_tag(overlap)
+                tempo = analysis.get('race_tempo_verdict', '—')
+                # Kompakt TEK MESAJ
+                lines = [
+                    f"🚦 <b>T-5: {hippo} {race_no}. KOŞU</b>  "
+                    f"({rt})",
+                    f"━━━━━━━━━━━━━━━",
+                    f"🏆 <b>#{w['no']} {w['name']}</b>",
+                    f"   yarış çizgisi: {PACE_TR.get(w.get('pace','mid'), '—')}",
+                    f"   MC %{(w.get('mc_p1') or 0):.1f} · "
+                    f"ilk-4 %{(w.get('v8_p4') or 0):.1f}",
+                    f"   tempo: {tempo} · güven: <b>{tag}</b>",
+                    f"━━━━━━━━━━━━━━━",
+                ]
+                top5 = analysis.get('composite_top5') or []
+                if top5:
+                    lines.append("<b>TOP-5:</b>")
+                    for i, x in enumerate(top5, 1):
+                        lines.append(
+                            f"  {i}. #{x['no']} {x['name']}  "
+                            f"(skor {x.get('score', 0):.3f})")
+                lines.append("")
+                lines.append("⚠ Karar destek — bahis garantisi yok.")
+                text = "\n".join(lines)
+                if os.environ.get('TJK_V8_PRE_RACE_TELEGRAM', '0') == '1':
+                    try:
+                        _svc().send_telegram(text)
+                        sent_now += 1
+                        _log(logger, f"[v8-prerace] sent {hippo} R{race_no} "
+                                      f"(T-{int(mins_to_race)}dk)")
+                    except Exception as _e_tg:
+                        _log(logger, f"[v8-prerace] send fail: "
+                                      f"{repr(_e_tg)[:160]}")
+                sent_keys.add(key)
+        if sent_keys != set(st.get('pre_race_sent', []) or []):
+            st['pre_race_sent'] = sorted(sent_keys)
+            _save_state(day, st)
+        if sent_now > 0:
+            _log(logger, f"[v8-prerace] toplam {sent_now} T-5 bildirim")
+    except Exception as e:
+        _log(logger, f"[v8-prerace] skip: {repr(e)[:200]}")
+
+
 def _maybe_send_v8_altili(pools, now, logger):
     """V8 dinamik altılı kupon — env-gated.
 
@@ -617,6 +744,12 @@ def _tick_locked(logger):
             st['berkay_top4_sent_today'] = True
         except Exception:
             pass
+    # V8 T-5 pre-race tek bildirim (env-gated)
+    try:
+        _maybe_send_v8_pre_race(None, now, logger)
+    except Exception as _e_pr:
+        _log(logger, f"[coupon_sched] v8-prerace tick fail: "
+                      f"{repr(_e_pr)[:160]}")
     _save_state(day, st)
 
 

@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 REAL_MODEL_PATH = Path(__file__).resolve().parent / "trained" / "v8_real.json"
 V8_5_MODEL_PATH = Path(__file__).resolve().parent / "trained" / "v8_5_real.json"
+V8_6_MODEL_PATH = Path(__file__).resolve().parent / "trained" / "v8_6_real.json"
 
 # Singleton cache
 _XGB_CACHE: Optional[dict] = None
@@ -47,8 +48,13 @@ def load_xgb_model(force: bool = False) -> Optional[dict]:
         return _XGB_CACHE
     if _force_bootstrap():
         return None
-    # Öncelik 1: V8.5
-    path = V8_5_MODEL_PATH if V8_5_MODEL_PATH.exists() else REAL_MODEL_PATH
+    # Öncelik chain: V8.6 → V8.5 → V8
+    if V8_6_MODEL_PATH.exists():
+        path = V8_6_MODEL_PATH
+    elif V8_5_MODEL_PATH.exists():
+        path = V8_5_MODEL_PATH
+    else:
+        path = REAL_MODEL_PATH
     if not path.exists():
         return None
     with _XGB_LOCK:
@@ -70,6 +76,7 @@ def load_xgb_model(force: bool = False) -> Optional[dict]:
                 "horse_embedding": d.get("horse_embedding") or {},
                 "jockey_embedding": d.get("jockey_embedding") or {},
                 "sire_embedding": d.get("sire_embedding") or {},
+                "agf_history_compact": d.get("agf_history_compact") or {},
                 "_model_path": str(path),
             }
             logger.info(f"V8 XGBoost loaded ({d.get('version')}): "
@@ -99,11 +106,12 @@ def _build_xgb_features(horse: Mapping, history: list, ref_date: str,
 
 
 def _enrich_v8_5(horse_feat: dict, horse: Mapping, history: list,
-                  field_meta: dict, bundle: dict) -> dict:
-    """V8.5 ek features (Faz1 FE): META + INTERACTION + SEQUENCE +
-    CLASS_DROP + EMBEDDINGS.
+                  field_meta: dict, bundle: dict,
+                  ref_date: Optional[str] = None) -> dict:
+    """V8.5/V8.6 ek features: META + INTERACTION + SEQUENCE + CLASS_DROP
+    + EMBEDDINGS (+ AGF HISTORY V8.6 için).
 
-    Bundle: load_xgb_model() çıktısı (embedding dict'leri içerir).
+    Bundle: load_xgb_model() çıktısı (embedding + agf_history_compact).
     """
     try:
         from forecast.feature_meta import add_relative_features
@@ -112,17 +120,12 @@ def _enrich_v8_5(horse_feat: dict, horse: Mapping, history: list,
             add_class_drop_features,
         )
         from forecast.embeddings import embedding_features
-        # RELATIVE
         add_relative_features(horse_feat, field_meta)
-        # INTERACTION
         add_interaction_features(horse_feat, field_meta)
-        # SEQUENCE
         seq = add_sequence_features(history or [])
         horse_feat.update(seq)
-        # CLASS DROP (today class proxy: empty → sequence-internal only)
         cd = add_class_drop_features("", history or [])
         horse_feat.update(cd)
-        # EMBEDDINGS
         nm = horse.get("horse_name") or horse.get("name") or ""
         jockey = horse.get("jockey_name") or horse.get("jockey") or ""
         sire = horse.get("sire") or horse.get("sire_name") or ""
@@ -132,8 +135,18 @@ def _enrich_v8_5(horse_feat: dict, horse: Mapping, history: list,
             jockey, bundle.get("jockey_embedding", {}), prefix="je", dim=8))
         horse_feat.update(embedding_features(
             sire, bundle.get("sire_embedding", {}), prefix="se", dim=8))
+        # V8.6: AGF HISTORY
+        is_v8_6 = "v8_6" in (bundle.get("version") or "")
+        if is_v8_6 and bundle.get("agf_history_compact"):
+            try:
+                from forecast.agf_history import agf_features
+                horse_feat.update(agf_features(
+                    nm, ref_date or "9999-12-31",
+                    bundle["agf_history_compact"], top_n=6))
+            except Exception as exc:
+                logger.debug(f"agf history feat fail: {exc}")
     except Exception as exc:
-        logger.debug(f"v8.5 enrich fail: {exc}")
+        logger.debug(f"v8.5/6 enrich fail: {exc}")
     return horse_feat
 
 
@@ -159,6 +172,8 @@ def predict_race_xgb(
     feature_cols = bundle["feature_cols"]
     heads = bundle["heads"]
     is_v8_5 = "v8_5" in (bundle.get("version") or "")
+    is_v8_6 = "v8_6" in (bundle.get("version") or "")
+    is_enriched = is_v8_5 or is_v8_6
 
     # her at için BASE feature vector
     rows = []
@@ -173,8 +188,8 @@ def predict_race_xgb(
         feat = _build_xgb_features(h, hist, ref_date, len(horses))
         rows.append((h, feat, hist))
 
-    # V8.5: Field meta + per-horse enrichment
-    if is_v8_5 and any(f for _, f, _ in rows):
+    # V8.5/V8.6: Field meta + per-horse enrichment
+    if is_enriched and any(f for _, f, _ in rows):
         from forecast.feature_meta import (
             compute_field_meta, mark_top_k_glicko,
         )
@@ -184,7 +199,8 @@ def predict_race_xgb(
         for h, feat, hist in rows:
             if feat is None:
                 continue
-            _enrich_v8_5(feat, h, hist, field_meta, bundle)
+            _enrich_v8_5(feat, h, hist, field_meta, bundle,
+                          ref_date=ref_date)
 
     # Yetersiz feature olanlara default 0
     X = np.array([
