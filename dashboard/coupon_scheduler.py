@@ -382,6 +382,105 @@ def _maybe_send_v8_daily(now, logger):
         _log(logger, f"[v8-daily] skip: {repr(e)[:200]}")
 
 
+def _maybe_send_v9_t5_altili(pools_unused, now, logger):
+    """T-5 ALTILI tek bildirim — ilk ayaktan 5dk önce 1 KOMPAKT mesaj.
+
+    Berkay (2026-06-29): 'sadece altidan 5dk once 1 altili kuponu atilacak'.
+
+    Mantık:
+      • Her hipodromun ilk ayağının start_time'ı (race_no=1 ya da
+        en erken)
+      • now+3 ≤ first_time ≤ now+7 penceresinde tetikle
+      • forecast/altili_builder.build_altili — V9 dinamik allocation
+        (güven-bazlı at sayısı: 4/4=2 at, 3/4=3, ..., 0/4=PAS)
+      • 1 mesaj per hipodrom (6 ayak özet + combos + kost)
+      • Dedup: state['t5_altili_sent']
+
+    Env: TJK_ULTRA_LEAN=1 → bu mod aktif (eski sabah hibritleri kapanır)
+    """
+    if os.environ.get('TJK_ULTRA_LEAN', '0') != '1':
+        return
+    try:
+        try:
+            pools = _build_pools(now)
+        except Exception as _e_bp:
+            _log(logger, f"[t5-altili] build fail: {repr(_e_bp)[:160]}")
+            return
+        try:
+            from forecast.altili_builder import build_altili
+            from dashboard.forecast_api import _fetch_history
+        except Exception as _e_imp:
+            _log(logger, f"[t5-altili] import: {repr(_e_imp)[:160]}")
+            return
+        try:
+            from forecast.glicko import GlickoLedger
+            import json as _json
+            from pathlib import Path as _Path
+            _p = (_Path(__file__).resolve().parent.parent
+                  / "model" / "v8" / "glicko_ledger.json")
+            ledger = (GlickoLedger.from_json(_json.load(open(_p)))
+                       if _p.exists() else GlickoLedger())
+        except Exception:
+            ledger = None
+
+        day = now.date().isoformat()
+        ref_date = day
+        st = _load_state(day) or {}
+        sent_keys = set(st.get('t5_altili_sent', []) or [])
+
+        for pool in (pools or []):
+            if pool.get('status') != 'ok':
+                continue
+            hippo = pool.get('hippo') or '?'
+            if hippo in sent_keys:
+                continue
+            legs = pool.get('race_legs') or []
+            if len(legs) < 6:
+                continue
+            # İlk ayağın start_time
+            first_rt = None
+            for leg in legs:
+                if leg and leg[0].get('race_time'):
+                    first_rt = (leg[0]['race_time'] or '').strip()[:5]
+                    break
+            if not first_rt or ':' not in first_rt:
+                continue
+            race_dt = _race_dt(now, first_rt)
+            mins_to_first = (race_dt - now).total_seconds() / 60.0
+            # T-5 pencere (3-7 dk önce)
+            if not (3 <= mins_to_first <= 7):
+                continue
+            # ALTILI BUILD (dinamik allocation)
+            try:
+                result = build_altili(
+                    legs=legs[:6], ref_date=ref_date, ledger=ledger,
+                    history_lookup=_fetch_history,
+                    altili_no=1, hippo_name=hippo,
+                )
+            except Exception as _e_bld:
+                _log(logger, f"[t5-altili] {hippo} build fail: "
+                              f"{repr(_e_bld)[:160]}")
+                continue
+            text = result.get('summary_text') or ''
+            if not text:
+                continue
+            try:
+                _svc().send_telegram(text)
+                sent_keys.add(hippo)
+                _log(logger, f"[t5-altili] sent {hippo} "
+                              f"(T-{int(mins_to_first)}dk, "
+                              f"combos={result.get('combos')})")
+            except Exception as _e_tg:
+                _log(logger, f"[t5-altili] {hippo} send fail: "
+                              f"{repr(_e_tg)[:160]}")
+
+        if sent_keys != set(st.get('t5_altili_sent', []) or []):
+            st['t5_altili_sent'] = sorted(sent_keys)
+            _save_state(day, st)
+    except Exception as e:
+        _log(logger, f"[t5-altili] skip: {repr(e)[:200]}")
+
+
 def _maybe_send_v8_pre_race(pools_unused, now, logger):
     """T-5 pre-race tek bildirim — yarıştan 5dk önce SADECE 1 mesaj.
 
@@ -446,8 +545,13 @@ def _maybe_send_v8_pre_race(pools_unused, now, logger):
                     continue
                 race_dt = _race_dt(now, rt)
                 mins_to_race = (race_dt - now).total_seconds() / 60.0
-                # T-5 penceresi (5dk önce, ± 3dk pencere genişliği)
-                if not (2 <= mins_to_race <= 8):
+                # T-3 penceresi (Berkay 2026-06-29: 'yaristan 3dk once')
+                # ULTRA_LEAN modda 1-5dk pencere
+                if os.environ.get('TJK_ULTRA_LEAN', '0') == '1':
+                    window_ok = (1 <= mins_to_race <= 5)
+                else:
+                    window_ok = (2 <= mins_to_race <= 8)
+                if not window_ok:
                     continue
                 key = f"{hippo}_{race_no}"
                 if key in sent_keys:
@@ -469,8 +573,10 @@ def _maybe_send_v8_pre_race(pools_unused, now, logger):
                 tag = confidence_tag(overlap)
                 tempo = analysis.get('race_tempo_verdict', '—')
                 # Kompakt TEK MESAJ
+                tag_t = ("T-3" if os.environ.get('TJK_ULTRA_LEAN', '0')
+                         == '1' else "T-5")
                 lines = [
-                    f"🚦 <b>T-5: {hippo} {race_no}. KOŞU</b>  "
+                    f"🚦 <b>{tag_t}: {hippo} {race_no}. KOŞU</b>  "
                     f"({rt})",
                     f"━━━━━━━━━━━━━━━",
                     f"🏆 <b>#{w['no']} {w['name']}</b>",
@@ -490,12 +596,18 @@ def _maybe_send_v8_pre_race(pools_unused, now, logger):
                 lines.append("")
                 lines.append("⚠ Karar destek — bahis garantisi yok.")
                 text = "\n".join(lines)
-                # GÜVEN FİLTRESİ — Berkay direktif: SADECE ÇOK YÜKSEK
-                # (overlap = 4/4). Diğerleri sadece forward_log'a yazılır.
-                min_overlap = int(os.environ.get(
-                    'TJK_V8_PRE_RACE_MIN_OVERLAP', '4'))
-                if (os.environ.get('TJK_V8_PRE_RACE_TELEGRAM', '0') == '1'
-                        and overlap >= min_overlap):
+                # GÜVEN FİLTRESİ:
+                # • ULTRA_LEAN: filtre YOK (Berkay her yarış için istedi)
+                # • Eski mod: SADECE ÇOK YÜKSEK (overlap=4/4)
+                if os.environ.get('TJK_ULTRA_LEAN', '0') == '1':
+                    min_overlap = 0
+                    enabled = True
+                else:
+                    min_overlap = int(os.environ.get(
+                        'TJK_V8_PRE_RACE_MIN_OVERLAP', '4'))
+                    enabled = (os.environ.get(
+                        'TJK_V8_PRE_RACE_TELEGRAM', '0') == '1')
+                if (enabled and overlap >= min_overlap):
                     try:
                         _svc().send_telegram(text)
                         sent_now += 1
@@ -638,6 +750,14 @@ def _morning_locked(logger, bootstrap=False):
         _record_snapshots(st, fresh_pools, now)
     fresh = [p for p in st['pools'].values() if p['agf_flat_legs'] == 0]
     stale = [p for p in st['pools'].values() if p['agf_flat_legs'] > 0]
+    # ULTRA_LEAN: sabah hibrit kuponları + SİB + Berkay shadow + V8 daily
+    # + V8 altılı HEPSİ KAPALI. Sadece state save + watcher tick'lerde
+    # T-5 altılı / T-3 top-4 atılır.
+    if os.environ.get('TJK_ULTRA_LEAN', '0') == '1':
+        _log(logger, "[coupon_sched] ULTRA_LEAN aktif — sabah Telegram yok")
+        st['agf_live'] = bool(fresh)
+        _save_state(day, st)
+        return
     if fresh:
         st['agf_live'] = True
         to_send = [p for p in fresh if not p['sent_fresh'] and not _too_late(p, now)]
@@ -714,7 +834,19 @@ def _tick_locked(logger):
                    if p['sent_fresh'] and not p['refresh_done'] and not p['missed']
                    and _in_refresh_window(p, now)]
     if not waiting and not refreshable:
-        _maybe_send_anomalies(st, now, logger)
+        if os.environ.get('TJK_ULTRA_LEAN', '0') != '1':
+            _maybe_send_anomalies(st, now, logger)
+        # ULTRA_LEAN: T-5 altılı + T-3 top-4 burada da çağrılır
+        try:
+            _maybe_send_v9_t5_altili(None, now, logger)
+        except Exception as _e_al:
+            _log(logger, f"[coupon_sched] t5-altili (early) fail: "
+                          f"{repr(_e_al)[:160]}")
+        try:
+            _maybe_send_v8_pre_race(None, now, logger)
+        except Exception as _e_pr:
+            _log(logger, f"[coupon_sched] v8-prerace (early) fail: "
+                          f"{repr(_e_pr)[:160]}")
         _save_state(day, st)
         return
 
@@ -771,11 +903,17 @@ def _tick_locked(logger):
             st['berkay_top4_sent_today'] = True
         except Exception:
             pass
-    # V8 T-5 pre-race tek bildirim (env-gated)
+    # ULTRA_LEAN modda T-5 altılı + T-3 top-4 hook'ları
+    # (eski mod sadece T-3 top-4 env-gated)
+    try:
+        _maybe_send_v9_t5_altili(None, now, logger)
+    except Exception as _e_al:
+        _log(logger, f"[coupon_sched] t5-altili fail: "
+                      f"{repr(_e_al)[:160]}")
     try:
         _maybe_send_v8_pre_race(None, now, logger)
     except Exception as _e_pr:
-        _log(logger, f"[coupon_sched] v8-prerace tick fail: "
+        _log(logger, f"[coupon_sched] v8-prerace fail: "
                       f"{repr(_e_pr)[:160]}")
     _save_state(day, st)
 
