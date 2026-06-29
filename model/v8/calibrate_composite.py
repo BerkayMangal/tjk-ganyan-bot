@@ -45,25 +45,48 @@ OUT_PATH = ROOT / "simulation" / "calibrators" / "composite_weights.json"
 
 
 def _load_v8_model():
-    """V8 real model load (json from train_real.py)."""
+    """En güncel modeli yükle: V9 → V8.6 → V8.5 → V8.
+
+    NOT: V9 ensemble durumunda XGB head'i ensemble proxy olarak kullanılır
+    (composite calibrate basit predict gerek; gerçek ensemble production
+    inference_v9.py'da).
+    """
     import xgboost as xgb
-    p = ROOT / "model" / "v8" / "trained" / "v8_real.json"
-    if not p.exists():
-        log.error(f"v8_real.json yok: {p} — önce train_real.py çalıştır")
-        return None, None
-    with open(p) as f:
-        d = json.load(f)
-    feature_cols = d["feature_cols"]
-    heads = {}
-    for head, hex_str in d["heads"].items():
-        booster = xgb.Booster()
-        try:
-            booster.load_model(bytearray.fromhex(hex_str))
-        except Exception as exc:
-            log.warning(f"head {head} load fail: {exc}")
+    candidates = [
+        ROOT / "model" / "v9" / "trained" / "v9_ensemble.json",
+        ROOT / "model" / "v8" / "trained" / "v8_6_real.json",
+        ROOT / "model" / "v8" / "trained" / "v8_5_real.json",
+        ROOT / "model" / "v8" / "trained" / "v8_real.json",
+    ]
+    for p in candidates:
+        if not p.exists():
             continue
-        heads[head] = booster
-    return heads, feature_cols
+        with open(p) as f:
+            d = json.load(f)
+        feature_cols = d["feature_cols"]
+        heads = {}
+        # V9 format: heads[head] = {xgb_hex, lgbm_txt, cat_b64, ...}
+        # V8.x format: heads[head] = hex string
+        for head, head_data in d.get("heads", {}).items():
+            booster = xgb.Booster()
+            try:
+                if isinstance(head_data, str):
+                    booster.load_model(bytearray.fromhex(head_data))
+                elif isinstance(head_data, dict) and "xgb_hex" in head_data:
+                    booster.load_model(bytearray.fromhex(
+                        head_data["xgb_hex"]))
+                else:
+                    continue
+                heads[head] = booster
+            except Exception as exc:
+                log.warning(f"head {head} load fail: {exc}")
+        if heads:
+            log.info(f"composite_calibrate using model: {p.name} "
+                     f"(n_features={len(feature_cols)}, "
+                     f"heads={list(heads.keys())})")
+            return heads, feature_cols
+    log.error("hiçbir model yüklenemedi")
+    return None, None
 
 
 def _build_race_predictions():

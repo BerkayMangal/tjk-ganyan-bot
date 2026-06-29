@@ -76,7 +76,19 @@ def predict_race(
     Returns: list of {horse_no, horse_name, p_top1..4, model_loaded}.
     """
     horses = list(horses)
-    # 1) XGBoost real model dene
+    # Öncelik chain: V9 ensemble → V8.6/8.5 XGB → V8 bootstrap
+    # 1) V9 ENSEMBLE (XGB + LGBM + CatBoost)
+    try:
+        from model.v9.inference_v9 import predict_race_v9
+        v9_out = predict_race_v9(
+            horses=horses, history_lookup=history_lookup,
+            ref_date=ref_date,
+        )
+        if v9_out is not None and len(v9_out) == len(horses):
+            return v9_out
+    except Exception as exc:
+        logger.debug(f"V9 ensemble skip: {exc}")
+    # 2) V8.6/8.5 XGBoost real
     try:
         from model.v8.inference_xgb import predict_race_xgb
         xgb_out = predict_race_xgb(

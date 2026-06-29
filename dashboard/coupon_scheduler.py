@@ -499,6 +499,16 @@ def _maybe_send_v8_pre_race(pools_unused, now, logger):
                     except Exception as _e_tg:
                         _log(logger, f"[v8-prerace] send fail: "
                                       f"{repr(_e_tg)[:160]}")
+                # Forward proof logger (her zaman, telegram off bile olsa)
+                try:
+                    from forecast.forward_logger import log_t5_prediction
+                    log_t5_prediction(
+                        date=ref_date, hippo=hippo, race_no=race_no,
+                        analysis=analysis, race_time=rt,
+                    )
+                except Exception as _e_fl:
+                    _log(logger, f"[v8-prerace] forward_log fail: "
+                                  f"{repr(_e_fl)[:160]}")
                 sent_keys.add(key)
         if sent_keys != set(st.get('pre_race_sent', []) or []):
             st['pre_race_sent'] = sorted(sent_keys)
