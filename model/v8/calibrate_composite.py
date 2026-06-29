@@ -186,18 +186,30 @@ def _evaluate_weights(races, alpha, beta, gamma, delta=0.0):
 
 
 def grid_search():
-    """α/β/γ/δ ∈ [0..0.8], α+β+γ+δ=1, γ≥0.05.
+    """α/β/γ/δ grid search — WALK-FORWARD (point-in-time, kronolojik split).
 
     İki paralel grid:
       • Saf V8 (δ=0)        — eski hesap
       • Hibrit V7+V8 (δ>0)  — V7 model_prob proxy dahil
+
+    HONEST TEST: ilk %70 koşu train (grid search), son %30 koşu test
+    (out-of-sample raporlama). In-sample optimization overfit riski
+    yarattığı için bu zorunlu (Berkay 2026-06-29: 'point-in-time mi?').
     """
     races = _build_race_predictions()
     if not races:
         log.error("races boş")
         return None
 
-    log.info(f"grid search üzerinde {len(races)} koşu")
+    # Kronolojik sıralama + train/test split (point-in-time)
+    races.sort(key=lambda r: r["date"])
+    split_idx = int(len(races) * 0.70)
+    train_races = races[:split_idx]
+    test_races = races[split_idx:]
+    log.info(f"grid search WALK-FORWARD: train={len(train_races)} koşu "
+             f"({train_races[0]['date']} → {train_races[-1]['date']}), "
+             f"test={len(test_races)} koşu "
+             f"({test_races[0]['date']} → {test_races[-1]['date']})")
     step = 0.05
     weights_pure = []  # δ=0
     weights_hybrid = []  # δ>0
@@ -216,64 +228,90 @@ def grid_search():
              f"hibrit (δ>0): {len(weights_hybrid)}")
 
     def _run(weights, tag):
-        best = None
-        results = []
+        """Train üzerinde grid search → best; test üzerinde out-of-sample eval."""
+        best_train = None
+        train_results = []
         for a, b, g, d in weights:
-            m = _evaluate_weights(races, a, b, g, d)
+            m = _evaluate_weights(train_races, a, b, g, d)
             m["alpha"] = a; m["beta"] = b; m["gamma"] = g; m["delta"] = d
-            results.append(m)
+            train_results.append(m)
             m["score"] = 0.6 * m["top1_hit_rate"] + 0.4 * m["top4_recall"]
-            if best is None or m["score"] > best["score"]:
-                best = m
-        results.sort(key=lambda x: -x["score"])
-        log.info(f"\n=== [{tag}] EN İYİ ===")
-        log.info(f"  α={best['alpha']} β={best['beta']} "
-                 f"γ={best['gamma']} δ={best['delta']}")
-        log.info(f"  Top-1 hit:    %{best['top1_hit_rate'] * 100:.2f}")
-        log.info(f"  Top-4 recall: %{best['top4_recall'] * 100:.2f}")
-        log.info(f"  Skor:         {best['score']:.4f}")
-        log.info(f"  İlk 3:")
-        for r in results[:3]:
-            log.info(f"    α={r['alpha']} β={r['beta']} γ={r['gamma']} "
-                     f"δ={r['delta']}  top1={r['top1_hit_rate']*100:.1f}%  "
-                     f"top4_recall={r['top4_recall']*100:.1f}%")
-        return best, results
+            if best_train is None or m["score"] > best_train["score"]:
+                best_train = m
+        # En iyi train ağırlığıyla TEST üzerinde değerlendir (out-of-sample)
+        test_m = _evaluate_weights(
+            test_races, best_train["alpha"], best_train["beta"],
+            best_train["gamma"], best_train["delta"])
+        test_m["alpha"] = best_train["alpha"]
+        test_m["beta"] = best_train["beta"]
+        test_m["gamma"] = best_train["gamma"]
+        test_m["delta"] = best_train["delta"]
+        test_m["score"] = (0.6 * test_m["top1_hit_rate"]
+                            + 0.4 * test_m["top4_recall"])
 
-    best_pure, results_pure = _run(weights_pure, "SAF V8 (δ=0)")
-    best_hybrid, results_hybrid = _run(weights_hybrid, "HİBRİT V7+V8 (δ>0)")
+        train_results.sort(key=lambda x: -x["score"])
+        log.info(f"\n=== [{tag}] BEST (train→test) ===")
+        log.info(f"  Ağırlık: α={best_train['alpha']} β={best_train['beta']} "
+                 f"γ={best_train['gamma']} δ={best_train['delta']}")
+        log.info(f"  TRAIN top-1 hit:    %{best_train['top1_hit_rate']*100:.2f}")
+        log.info(f"  TRAIN top-4 recall: %{best_train['top4_recall']*100:.2f}")
+        log.info(f"  TEST  top-1 hit:    %{test_m['top1_hit_rate']*100:.2f} "
+                 f"(out-of-sample)")
+        log.info(f"  TEST  top-4 recall: %{test_m['top4_recall']*100:.2f} "
+                 f"(out-of-sample)")
+        gap_t1 = (best_train["top1_hit_rate"] - test_m["top1_hit_rate"]) * 100
+        if gap_t1 > 5:
+            log.warning(f"  ⚠ train→test gap top-1 {gap_t1:.1f}pp — overfit?")
+        return best_train, test_m, train_results
 
-    # Hangi daha iyi?
-    delta_top1 = (best_hybrid["top1_hit_rate"]
-                  - best_pure["top1_hit_rate"]) * 100
-    delta_top4 = (best_hybrid["top4_recall"]
-                  - best_pure["top4_recall"]) * 100
-    log.info(f"\n=== HİBRİT vs SAF V8 ===")
-    log.info(f"  Top-1 hit:    saf %{best_pure['top1_hit_rate']*100:.2f} → "
-             f"hibrit %{best_hybrid['top1_hit_rate']*100:.2f}  "
+    best_train_pure, test_pure, _ = _run(weights_pure, "SAF V8 (δ=0)")
+    best_train_hyb, test_hyb, _ = _run(weights_hybrid, "HİBRİT V7+V8 (δ>0)")
+
+    # Test (out-of-sample) karşılaştırma
+    delta_top1 = (test_hyb["top1_hit_rate"]
+                  - test_pure["top1_hit_rate"]) * 100
+    delta_top4 = (test_hyb["top4_recall"]
+                  - test_pure["top4_recall"]) * 100
+    log.info(f"\n=== TEST (OUT-OF-SAMPLE): HİBRİT vs SAF V8 ===")
+    log.info(f"  Top-1 hit:    saf %{test_pure['top1_hit_rate']*100:.2f} → "
+             f"hibrit %{test_hyb['top1_hit_rate']*100:.2f}  "
              f"({'+' if delta_top1>=0 else ''}{delta_top1:.2f}pp)")
-    log.info(f"  Top-4 recall: saf %{best_pure['top4_recall']*100:.2f} → "
-             f"hibrit %{best_hybrid['top4_recall']*100:.2f}  "
+    log.info(f"  Top-4 recall: saf %{test_pure['top4_recall']*100:.2f} → "
+             f"hibrit %{test_hyb['top4_recall']*100:.2f}  "
              f"({'+' if delta_top4>=0 else ''}{delta_top4:.2f}pp)")
 
-    # final winner = ağırlıklı skor daha yüksek olan
-    final_best = (best_hybrid if best_hybrid["score"] > best_pure["score"]
-                  else best_pure)
+    # Production'a kazananı yaz (test skoru üzerinden)
+    final_best = (test_hyb if test_hyb["score"] > test_pure["score"]
+                  else test_pure)
 
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(OUT_PATH, "w") as f:
         json.dump({
             "best": final_best,
-            "best_pure": best_pure,
-            "best_hybrid": best_hybrid,
+            "best_train_pure": best_train_pure,
+            "best_train_hybrid": best_train_hyb,
+            "test_pure": test_pure,
+            "test_hybrid": test_hyb,
             "delta_top1_pp": delta_top1,
             "delta_top4_pp": delta_top4,
-            "n_races": len(races),
-            "note": ("4-değişken grid: α (MC) + β (V8_p_top4) + γ (tempo) "
-                     "+ δ (V7_proxy=career_top4_rate). Saf vs Hibrit "
-                     "karşılaştırması; hangisi yüksek skor verirse "
-                     "production'a o yazılır."),
+            "n_races_total": len(races),
+            "n_races_train": len(train_races),
+            "n_races_test": len(test_races),
+            "split": {
+                "train_dates": [train_races[0]["date"],
+                                 train_races[-1]["date"]],
+                "test_dates": [test_races[0]["date"],
+                                test_races[-1]["date"]],
+            },
+            "note": ("WALK-FORWARD point-in-time grid search. Train %70 / "
+                     "Test %30 kronolojik. 4-değişken: α (MC) + β (V8_p_top4) "
+                     "+ γ (tempo) + δ (V7_proxy=career_top4_rate). "
+                     "Production'a TEST (out-of-sample) en iyi yazılır."),
         }, f, indent=2, ensure_ascii=False)
     log.info(f"\nsaved {OUT_PATH}")
+    log.info(f"PRODUCTION ağırlık: α={final_best['alpha']} "
+             f"β={final_best['beta']} γ={final_best['gamma']} "
+             f"δ={final_best['delta']}")
     return final_best
 
 

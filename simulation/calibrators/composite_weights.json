@@ -1,39 +1,73 @@
 {
   "best": {
-    "n_races": 748,
-    "top1_hit_rate": 0.32620320855614976,
-    "top4_avg_overlap": 2.197860962566845,
-    "top4_recall": 0.6394399066511085,
+    "n_races": 225,
+    "top1_hit_rate": 0.17333333333333334,
+    "top4_avg_overlap": 2.128888888888889,
+    "top4_recall": 0.5582750582750583,
     "alpha": 0.6,
     "beta": 0.25,
     "gamma": 0.15,
     "delta": 0.0,
-    "score": 0.45149788779413325
+    "score": 0.32731002331002335
   },
-  "best_pure": {
-    "n_races": 748,
-    "top1_hit_rate": 0.32620320855614976,
-    "top4_avg_overlap": 2.197860962566845,
-    "top4_recall": 0.6394399066511085,
+  "best_train_pure": {
+    "n_races": 523,
+    "top1_hit_rate": 0.3919694072657744,
+    "top4_avg_overlap": 2.2275334608030595,
+    "top4_recall": 0.6800934033858728,
     "alpha": 0.6,
     "beta": 0.25,
     "gamma": 0.15,
     "delta": 0.0,
-    "score": 0.45149788779413325
+    "score": 0.5072190057138137
   },
-  "best_hybrid": {
-    "n_races": 748,
-    "top1_hit_rate": 0.3195187165775401,
-    "top4_avg_overlap": 2.1844919786096257,
-    "top4_recall": 0.6355503695060288,
+  "best_train_hybrid": {
+    "n_races": 523,
+    "top1_hit_rate": 0.3862332695984704,
+    "top4_avg_overlap": 2.1892925430210326,
+    "top4_recall": 0.6684179801517806,
     "alpha": 0.7,
     "beta": 0.15,
     "gamma": 0.05,
     "delta": 0.1,
-    "score": 0.4459313777489356
+    "score": 0.4991071538197944
   },
-  "delta_top1_pp": -0.6684491978609652,
-  "delta_top4_pp": -0.3889537145079669,
-  "n_races": 748,
-  "note": "4-değişken grid: α (MC) + β (V8_p_top4) + γ (tempo) + δ (V7_proxy=career_top4_rate). Saf vs Hibrit karşılaştırması; hangisi yüksek skor verirse production'a o yazılır."
+  "test_pure": {
+    "n_races": 225,
+    "top1_hit_rate": 0.17333333333333334,
+    "top4_avg_overlap": 2.128888888888889,
+    "top4_recall": 0.5582750582750583,
+    "alpha": 0.6,
+    "beta": 0.25,
+    "gamma": 0.15,
+    "delta": 0.0,
+    "score": 0.32731002331002335
+  },
+  "test_hybrid": {
+    "n_races": 225,
+    "top1_hit_rate": 0.16444444444444445,
+    "top4_avg_overlap": 2.1733333333333333,
+    "top4_recall": 0.5699300699300699,
+    "alpha": 0.7,
+    "beta": 0.15,
+    "gamma": 0.05,
+    "delta": 0.1,
+    "score": 0.32663869463869466
+  },
+  "delta_top1_pp": -0.8888888888888891,
+  "delta_top4_pp": 1.1655011655011593,
+  "n_races_total": 748,
+  "n_races_train": 523,
+  "n_races_test": 225,
+  "split": {
+    "train_dates": [
+      "2026-04-04",
+      "2026-05-15"
+    ],
+    "test_dates": [
+      "2026-05-15",
+      "2026-06-08"
+    ]
+  },
+  "note": "WALK-FORWARD point-in-time grid search. Train %70 / Test %30 kronolojik. 4-değişken: α (MC) + β (V8_p_top4) + γ (tempo) + δ (V7_proxy=career_top4_rate). Production'a TEST (out-of-sample) en iyi yazılır."
 }
