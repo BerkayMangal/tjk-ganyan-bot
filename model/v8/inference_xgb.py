@@ -22,6 +22,7 @@ from typing import Callable, Iterable, Mapping, Optional
 logger = logging.getLogger(__name__)
 
 REAL_MODEL_PATH = Path(__file__).resolve().parent / "trained" / "v8_real.json"
+V8_5_MODEL_PATH = Path(__file__).resolve().parent / "trained" / "v8_5_real.json"
 
 # Singleton cache
 _XGB_CACHE: Optional[dict] = None
@@ -33,21 +34,27 @@ def _force_bootstrap() -> bool:
 
 
 def load_xgb_model(force: bool = False) -> Optional[dict]:
-    """v8_real.json → {feature_cols, heads (xgb.Booster), metrics}.
+    """V8.5 (öncelik) → V8 real → None.
 
     NEVER raises. Bootstrap istenirse None döndürür.
+    Öncelik chain:
+      1. v8_5_real.json (Faz1 FE — META + EMBEDDING + INTERACTION +
+         SEQUENCE + CLASS_DROP, 73 feature)
+      2. v8_real.json (V8 base, 23 feature)
     """
     global _XGB_CACHE
     if not force and _XGB_CACHE is not None:
         return _XGB_CACHE
     if _force_bootstrap():
         return None
-    if not REAL_MODEL_PATH.exists():
+    # Öncelik 1: V8.5
+    path = V8_5_MODEL_PATH if V8_5_MODEL_PATH.exists() else REAL_MODEL_PATH
+    if not path.exists():
         return None
     with _XGB_LOCK:
         try:
             import xgboost as xgb
-            with open(REAL_MODEL_PATH) as f:
+            with open(path) as f:
                 d = json.load(f)
             heads = {}
             for head, hex_str in (d.get("heads") or {}).items():
@@ -60,10 +67,14 @@ def load_xgb_model(force: bool = False) -> Optional[dict]:
                 "metrics": d.get("metrics") or {},
                 "feature_importance_pct": d.get("feature_importance_pct") or {},
                 "version": d.get("version"),
+                "horse_embedding": d.get("horse_embedding") or {},
+                "jockey_embedding": d.get("jockey_embedding") or {},
+                "sire_embedding": d.get("sire_embedding") or {},
+                "_model_path": str(path),
             }
-            logger.info(f"V8 XGBoost loaded: n_features="
-                        f"{len(_XGB_CACHE['feature_cols'])}, "
-                        f"heads={list(heads.keys())}")
+            logger.info(f"V8 XGBoost loaded ({d.get('version')}): "
+                        f"n_features={len(_XGB_CACHE['feature_cols'])}, "
+                        f"heads={list(heads.keys())}, path={path.name}")
             return _XGB_CACHE
         except Exception as exc:
             logger.warning(f"V8 XGBoost load fail: {exc}")
@@ -72,10 +83,9 @@ def load_xgb_model(force: bool = False) -> Optional[dict]:
 
 def _build_xgb_features(horse: Mapping, history: list, ref_date: str,
                         n_horses_in_race: int) -> Optional[dict]:
-    """train_real._build_features_for_horse'un canlı versiyonu."""
+    """V8 base features (23) — train_real._build_features_for_horse."""
     try:
         from model.v8.train_real import _build_features_for_horse
-        # train_real history_map yapısını bekliyor: {name: [hist...]}
         nm = horse.get("horse_name") or horse.get("name") or ""
         history_map = {nm: history or []}
         return _build_features_for_horse(
@@ -86,6 +96,45 @@ def _build_xgb_features(horse: Mapping, history: list, ref_date: str,
     except Exception as exc:
         logger.debug(f"xgb feat build fail: {exc}")
         return None
+
+
+def _enrich_v8_5(horse_feat: dict, horse: Mapping, history: list,
+                  field_meta: dict, bundle: dict) -> dict:
+    """V8.5 ek features (Faz1 FE): META + INTERACTION + SEQUENCE +
+    CLASS_DROP + EMBEDDINGS.
+
+    Bundle: load_xgb_model() çıktısı (embedding dict'leri içerir).
+    """
+    try:
+        from forecast.feature_meta import add_relative_features
+        from model.v8.feature_engineering import (
+            add_interaction_features, add_sequence_features,
+            add_class_drop_features,
+        )
+        from forecast.embeddings import embedding_features
+        # RELATIVE
+        add_relative_features(horse_feat, field_meta)
+        # INTERACTION
+        add_interaction_features(horse_feat, field_meta)
+        # SEQUENCE
+        seq = add_sequence_features(history or [])
+        horse_feat.update(seq)
+        # CLASS DROP (today class proxy: empty → sequence-internal only)
+        cd = add_class_drop_features("", history or [])
+        horse_feat.update(cd)
+        # EMBEDDINGS
+        nm = horse.get("horse_name") or horse.get("name") or ""
+        jockey = horse.get("jockey_name") or horse.get("jockey") or ""
+        sire = horse.get("sire") or horse.get("sire_name") or ""
+        horse_feat.update(embedding_features(
+            nm, bundle.get("horse_embedding", {}), prefix="he", dim=8))
+        horse_feat.update(embedding_features(
+            jockey, bundle.get("jockey_embedding", {}), prefix="je", dim=8))
+        horse_feat.update(embedding_features(
+            sire, bundle.get("sire_embedding", {}), prefix="se", dim=8))
+    except Exception as exc:
+        logger.debug(f"v8.5 enrich fail: {exc}")
+    return horse_feat
 
 
 def predict_race_xgb(
@@ -109,8 +158,9 @@ def predict_race_xgb(
 
     feature_cols = bundle["feature_cols"]
     heads = bundle["heads"]
+    is_v8_5 = "v8_5" in (bundle.get("version") or "")
 
-    # her at için feature vector
+    # her at için BASE feature vector
     rows = []
     for h in horses:
         nm = h.get("horse_name") or h.get("name") or ""
@@ -121,7 +171,20 @@ def predict_race_xgb(
             except Exception:
                 hist = []
         feat = _build_xgb_features(h, hist, ref_date, len(horses))
-        rows.append((h, feat))
+        rows.append((h, feat, hist))
+
+    # V8.5: Field meta + per-horse enrichment
+    if is_v8_5 and any(f for _, f, _ in rows):
+        from forecast.feature_meta import (
+            compute_field_meta, mark_top_k_glicko,
+        )
+        valid_feats = [f for _, f, _ in rows if f]
+        field_meta = compute_field_meta(valid_feats)
+        mark_top_k_glicko(valid_feats, k=3)
+        for h, feat, hist in rows:
+            if feat is None:
+                continue
+            _enrich_v8_5(feat, h, hist, field_meta, bundle)
 
     # Yetersiz feature olanlara default 0
     X = np.array([
@@ -131,7 +194,7 @@ def predict_race_xgb(
     dtest = xgb.DMatrix(X)
 
     out = []
-    for i, (h, _feat) in enumerate(rows):
+    for i, (h, _feat, _hist) in enumerate(rows):
         preds_raw = {}
         for head_name in ("top1", "top2", "top3", "top4"):
             if head_name in heads:
