@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 V9_PATH = (Path(__file__).resolve().parent
            / "trained" / "v9_ensemble.json")
+V9_5_PATH = (Path(__file__).resolve().parent
+             / "trained" / "v9_5_ensemble.json")
 _V9_CACHE: Optional[dict] = None
 _V9_LOCK = threading.Lock()
 
@@ -28,19 +30,30 @@ def _force_v9_skip():
     return os.environ.get("TJK_V9_FORCE_SKIP", "0") == "1"
 
 
+def _force_v95_skip():
+    return os.environ.get("TJK_V95_SKIP", "0") == "1"
+
+
 def load_v9_ensemble(force: bool = False) -> Optional[dict]:
     """V9 ensemble bundle yükle."""
     global _V9_CACHE
     if not force and _V9_CACHE is not None:
         return _V9_CACHE
-    if _force_v9_skip() or not V9_PATH.exists():
+    if _force_v9_skip():
+        return None
+    # Öncelik chain: V9.5 → V9
+    if not _force_v95_skip() and V9_5_PATH.exists():
+        path = V9_5_PATH
+    elif V9_PATH.exists():
+        path = V9_PATH
+    else:
         return None
     with _V9_LOCK:
         try:
             import xgboost as xgb
             import lightgbm as lgb
             import catboost as cb
-            with open(V9_PATH) as f:
+            with open(path) as f:
                 d = json.load(f)
             heads = {}
             for head, hd in (d.get("heads") or {}).items():
