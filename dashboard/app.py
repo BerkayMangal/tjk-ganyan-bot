@@ -364,8 +364,10 @@ try:
     def _scheduled_v7_recap():
         """PATCH_V7_AUTOSCHED_v1. V7 daily recap — Bugün ne dedik / ne çıktı?
         Runs at 22:00 İstanbul (after last race). Auto-sends to Telegram.
-        If results aren't published yet, will say 'Sonuçlar alınamadı' — that's fine.
-        Idempotent — running twice on same day produces same recap."""
+        ULTRA_LEAN modda (Berkay 2026-06-30) skip — sadece T-5 altılı + T-3 top4."""
+        if os.environ.get("TJK_ULTRA_LEAN", "0") == "1":
+            app.logger.info("⏰ V7 recap SKIP (TJK_ULTRA_LEAN=1)")
+            return
         app.logger.info("⏰ V7 recap başlatılıyor...")
         try:
             from yerli_engine import run_daily_recap
