@@ -177,19 +177,22 @@ try:
                 # backward-compatible, but new writes should be type-stable.
                 _yerli_cache['ts'] = _now_utc()
 
-            # Telegram send
+            # Telegram send (ULTRA_LEAN'de SKIP — Berkay 2026-06-30)
             telegram_ok = False
-            try:
-                send_telegram_simple(result)
-                telegram_ok = True
-                app.logger.info("⏰ V7 kupon Telegram'a gönderildi ✓")
-            except Exception as _e_tg:
-                app.logger.error(f"⏰ V7 Telegram send failed: {_e_tg}")
-                _send_scheduler_alert_to_telegram(
-                    "Kupon üretildi ama Telegram gönderimi başarısız.",
-                    repr(_e_tg),
-                )
-                telegram_alert_sent = True
+            if os.environ.get("TJK_ULTRA_LEAN", "0") == "1":
+                app.logger.info("⏰ Pipeline Telegram SKIP (ULTRA_LEAN=1)")
+            else:
+                try:
+                    send_telegram_simple(result)
+                    telegram_ok = True
+                    app.logger.info("⏰ V7 kupon Telegram'a gönderildi ✓")
+                except Exception as _e_tg:
+                    app.logger.error(f"⏰ V7 Telegram send failed: {_e_tg}")
+                    _send_scheduler_alert_to_telegram(
+                        "Kupon üretildi ama Telegram gönderimi başarısız.",
+                        repr(_e_tg),
+                    )
+                    telegram_alert_sent = True
 
             # PATCH_M2_FOUNDATION_v1: persist kuponlar (best-effort).
             try:

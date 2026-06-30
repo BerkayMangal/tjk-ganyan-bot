@@ -193,6 +193,9 @@ def _record_snapshots(st, pools_new, now):
 
 
 def _maybe_send_anomalies(st, now, logger):
+    # ULTRA_LEAN modunda anomaly alerts KAPALI (Berkay direktif)
+    if os.environ.get('TJK_ULTRA_LEAN', '0') == '1':
+        return
     """TJK_AGF_ANOMALY (default 1): pool'ları tara, hareketli atları bildir."""
     if _agf_anom is None:
         return
@@ -894,6 +897,10 @@ def _tick_locked(logger):
         if not p['sent_fresh'] and not p['sent_stale']:
             dl, _rd = _pool_deadline(p, now)
             if dl and now >= dl:
+                # ULTRA_LEAN: T-20 SON ÇAĞRI da KAPALI
+                if os.environ.get('TJK_ULTRA_LEAN', '0') == '1':
+                    p['sent_stale'] = True
+                    continue
                 ft = p.get('first_time') or '?'
                 _send(p, "⏰ <b>SON ÇAĞRI</b> — AGF hâlâ yayınlanmadı; kart tarihsel "
                          f"istatistikle (ilk ayak {ft})", logger)
