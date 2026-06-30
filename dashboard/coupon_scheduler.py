@@ -602,9 +602,19 @@ def _maybe_send_v8_pre_race(pools_unused, now, logger):
                 if top5:
                     lines.append("<b>TOP-5:</b>")
                     for i, x in enumerate(top5, 1):
+                        extra = ""
+                        # foreign form etiketi composite_ranking'den çek
+                        for r in (analysis.get('composite_ranking') or []):
+                            if r.get('no') == x.get('no') and r.get('foreign_tag'):
+                                cv = r.get('cross_value', 0)
+                                if cv >= 0.3:
+                                    extra = f"  ⚡{r['foreign_tag']}"
+                                elif r.get('foreign_form'):
+                                    extra = f"  🌍 UK {r['foreign_form']}"
+                                break
                         lines.append(
                             f"  {i}. #{x['no']} {x['name']}  "
-                            f"(skor {x.get('score', 0):.3f})")
+                            f"(skor {x.get('score', 0):.3f}){extra}")
                 lines.append("")
                 lines.append("⚠ Karar destek — bahis garantisi yok.")
                 text = "\n".join(lines)

@@ -122,27 +122,27 @@ COMPOSITE_WEIGHTS = _load_calibrated_weights()
 
 def _composite_winner(v8_preds: list, mc: dict, tempo_sims: dict,
                       pace_by_no: dict, v7_prob_by_no: dict = None,
-                      agf_delta_by_no: dict = None) -> dict:
-    """Composite skor — V9.5 + V7 hibrit + AGF intraday Δ bonus.
+                      agf_delta_by_no: dict = None,
+                      foreign_form_by_no: dict = None) -> dict:
+    """Composite skor — V9.5 + V7 hibrit + AGF Δ + foreign form bonus.
 
-    score = α × MC(1.olma) + β × V9.5(p_top4) + γ × tempo_robust
-            + δ × V7(model_prob) + ε × AGF_delta_signal
+    score = α·MC + β·V9.5(p_top4) + γ·tempo + δ·V7 + ε·AGF_Δ
+            + ζ·foreign_form_cross_value
 
-    Default ağırlıklar (60g grid search):
-        α=0.35, β=0.40, γ=0.05, δ=0.20
-    AGF Δ bonus (Berkay 2026-06-30 hipotez, forward-only):
-        ε = TJK_AGF_DELTA_WEIGHT (default 0.05)
-        steam (Δ ≥ +5pp) → +1.0 sinyal
-        drift (Δ ≤ -5pp) → -1.0 sinyal
-        nötr           → 0
+    ζ (zeta) = TJK_FOREIGN_FORM_WEIGHT (default 0.08)
+      cross_value = foreign_form_score × (1 - agf/20)
+      UK form güçlü + TJK AGF düşük → underrated bonus
     """
     import os
     alpha, beta, gamma, delta = COMPOSITE_WEIGHTS
     eps = float(os.environ.get("TJK_AGF_DELTA_WEIGHT", "0.05"))
+    zeta = float(os.environ.get("TJK_FOREIGN_FORM_WEIGHT", "0.08"))
     if v7_prob_by_no is None:
         v7_prob_by_no = {}
     if agf_delta_by_no is None:
         agf_delta_by_no = {}
+    if foreign_form_by_no is None:
+        foreign_form_by_no = {}
 
     robust: Counter = Counter()
     for t in ("YAVAŞ", "ORTA", "SERT"):
@@ -176,10 +176,14 @@ def _composite_winner(v8_preds: list, mc: dict, tempo_sims: dict,
         else:
             agf_signal = 0.0
             agf_tag = ""
+        # Foreign form cross-value (zeta term)
+        ff = foreign_form_by_no.get(no, {}) if foreign_form_by_no else {}
+        cross_val = ff.get("cross_value", 0) if ff else 0
         scores.append({
             "no": no, "name": p.get("horse_name"),
             "score": (alpha * mc1n + beta * p4n + gamma * rb
-                      + delta * v7n + eps * agf_signal),
+                      + delta * v7n + eps * agf_signal
+                      + zeta * cross_val),
             "mc_p1": mc_p1.get(no, 0),
             "v8_p4": (p.get("p_top4") or 0) * 100,
             "v8_p1": (p.get("p_top1") or 0) * 100,
@@ -188,6 +192,9 @@ def _composite_winner(v8_preds: list, mc: dict, tempo_sims: dict,
             "pace": pace_by_no.get(no, "mid"),
             "agf_delta_pp": agf_delta_pp,
             "agf_tag": agf_tag,
+            "foreign_form": ff.get("form_string", ""),
+            "foreign_tag": ff.get("tag", ""),
+            "cross_value": cross_val,
         })
     scores.sort(key=lambda x: -x["score"])
     return {"ranking": scores, "winner": scores[0] if scores else None}
@@ -296,10 +303,38 @@ def analyze_race(
         except Exception:
             pass
 
-        # 5) Composite winner — V7+V8 HİBRİT + AGF Δ
+        # Foreign form bridge (cross-market UK reference)
+        foreign_form_by_no = {}
+        if os.environ.get("TJK_FOREIGN_FORM", "1") == "1":
+            try:
+                from forecast.foreign_form_bridge import (
+                    bridge_lookup, score_cross_market_value,
+                )
+                for h in leg:
+                    no = (h.get("horse_no") or h.get("horse_number"))
+                    nm = h.get("horse_name") or h.get("name") or ""
+                    agf = h.get("agf_value") or 0
+                    if not nm:
+                        continue
+                    fb = bridge_lookup(nm, ref_date)
+                    if fb.get("has_foreign_form"):
+                        cv = score_cross_market_value(
+                            agf, fb.get("form_score", 0))
+                        foreign_form_by_no[no] = {
+                            "form_score": fb.get("form_score", 0),
+                            "tag": fb.get("tag", ""),
+                            "cross_value": cv,
+                            "form_string": fb.get("form_string", ""),
+                        }
+            except Exception as exc:
+                import os as _os  # avoid lint
+                logger.debug(f"foreign form bridge fail: {exc}")
+
+        # 5) Composite winner — V7+V8 HİBRİT + AGF Δ + foreign form
         composite = _composite_winner(v8_preds, mc, tempo_sims,
                                        per_horse_pace, v7_prob_by_no,
-                                       agf_delta_by_no)
+                                       agf_delta_by_no,
+                                       foreign_form_by_no)
 
         # 6) 3 farklı TOP-5 listesi (Berkay direktif: top-5)
         name_by_no = {p.get("horse_no"): p.get("horse_name") for p in v8_preds}
