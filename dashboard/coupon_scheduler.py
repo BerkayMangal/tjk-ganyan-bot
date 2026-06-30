@@ -443,8 +443,11 @@ def _maybe_send_v9_t5_altili(pools_unused, now, logger):
             # İlk ayağın start_time
             first_rt = None
             for leg in legs:
-                if leg and leg[0].get('race_time'):
-                    first_rt = (leg[0]['race_time'] or '').strip()[:5]
+                if leg and (leg[0].get('start_time')
+                            or leg[0].get('race_time')):
+                    first_rt = (leg[0].get('start_time')
+                                or leg[0].get('race_time')
+                                or '').strip()[:5]
                     break
             if not first_rt or ':' not in first_rt:
                 continue
@@ -543,7 +546,8 @@ def _maybe_send_v8_pre_race(pools_unused, now, logger):
                 if not leg:
                     continue
                 race_no = leg[0].get('race_number') or 0
-                rt = (leg[0].get('race_time') or '').strip()[:5]
+                rt = (leg[0].get('start_time')
+                      or leg[0].get('race_time') or '').strip()[:5]
                 if not rt or ':' not in rt:
                     continue
                 race_dt = _race_dt(now, rt)
