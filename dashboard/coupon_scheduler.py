@@ -918,6 +918,12 @@ def _tick_locked(logger):
     except Exception as _e_ag:
         _log(logger, f"[coupon_sched] agf-snapshot fail: "
                       f"{repr(_e_ag)[:160]}")
+    # Racing API value bet alerts (env-gated, saatte 1)
+    try:
+        _maybe_send_racing_api_value(now, logger)
+    except Exception as _e_ra:
+        _log(logger, f"[coupon_sched] racing-api fail: "
+                      f"{repr(_e_ra)[:160]}")
     # ULTRA_LEAN modda T-5 altılı + T-3 top-4 hook'ları
     try:
         _maybe_send_v9_t5_altili(None, now, logger)
@@ -930,6 +936,78 @@ def _tick_locked(logger):
         _log(logger, f"[coupon_sched] v8-prerace fail: "
                       f"{repr(_e_pr)[:160]}")
     _save_state(day, st)
+
+
+def _maybe_send_racing_api_value(now, logger):
+    """RacingAPI value bet alarmları — saatte 1 kez tarama.
+
+    Berkay (2026-06-30): 'racing api ile para yapacak yapı'.
+
+    Strateji: model-free bookmaker consensus.
+      • Multi-bookmaker odds çek (UK/IRE/FR)
+      • Best odds vs consensus prob karşılaştır
+      • +EV ≥ %5 atlar → Telegram alert
+
+    Env:
+      TJK_RACING_API_USER, TJK_RACING_API_PASS — credentials
+      TJK_RACING_API_ALERTS=1 — etkin
+      TJK_RACING_API_MIN_EV=5.0 — eşik (%)
+      TJK_RACING_API_REGIONS=gb,ire,fr — taranacak bölgeler
+    """
+    if os.environ.get('TJK_RACING_API_ALERTS', '0') != '1':
+        return
+    # Saatte 1 (dakika 5-15 arası)
+    if not (5 <= now.minute <= 15):
+        return
+    day = now.date().isoformat()
+    st = _load_state(day) or {}
+    snaps = set(st.get('racing_api_alerts_sent', []) or [])
+    snap_key = f"H{now.hour}"
+    if snap_key in snaps:
+        return
+    try:
+        from forecast.racing_api_value import (
+            fetch_today_value_alerts, format_value_bet_telegram,
+        )
+        min_ev = float(os.environ.get('TJK_RACING_API_MIN_EV', '5.0'))
+        regions_str = os.environ.get('TJK_RACING_API_REGIONS', 'gb,ire,fr')
+        regions = tuple(r.strip().lower() for r in regions_str.split(',')
+                        if r.strip())
+        alerts = fetch_today_value_alerts(
+            min_ev_pct=min_ev, regions=regions)
+        if not alerts:
+            _log(logger, f"[racing-api] {snap_key}: 0 value bet "
+                         f"({len(regions)} region taradı)")
+            snaps.add(snap_key)
+            st['racing_api_alerts_sent'] = sorted(snaps)
+            _save_state(day, st)
+            return
+        sent_keys = set(st.get('racing_api_race_sent', []) or [])
+        sent_now = 0
+        for alert in alerts:
+            race_key = f"{alert['race_id']}"
+            if race_key in sent_keys:
+                continue
+            # Yarışa 1 saatten az kaldıysa öne çıkar
+            text = format_value_bet_telegram(alert)
+            try:
+                _svc().send_telegram(text)
+                sent_keys.add(race_key)
+                sent_now += 1
+                _log(logger, f"[racing-api] sent {alert['region']} "
+                             f"{alert['course']} "
+                             f"({len(alert['value_bets'])} bet)")
+            except Exception as _e_tg:
+                _log(logger, f"[racing-api] send fail: "
+                             f"{repr(_e_tg)[:160]}")
+        snaps.add(snap_key)
+        st['racing_api_alerts_sent'] = sorted(snaps)
+        st['racing_api_race_sent'] = sorted(sent_keys)
+        _save_state(day, st)
+        _log(logger, f"[racing-api] tarama {snap_key}: "
+                     f"{len(alerts)} yarış, {sent_now} yeni alert")
+    except Exception as exc:
+        _log(logger, f"[racing-api] skip: {repr(exc)[:200]}")
 
 
 def _maybe_capture_agf_snapshot(now, logger):
