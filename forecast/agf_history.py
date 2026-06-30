@@ -152,11 +152,21 @@ def agf_features(name: str, ref_date: str,
                   agf_history_map: dict, top_n: int = 6) -> dict:
     """Bir at için AGF tarihsel features (point-in-time).
 
-    Returns dict (10 feature, AGF-FREE FALSE — bu AGF'yi KULLANIYOR
-    ama "halk vs gerçek" sapma sinyali olarak):
-      agf_recent_avg, agf_recent_max, agf_recent_min, agf_recent_std,
-      agf_trend, agf_underdog_top4_rate, agf_overbet_miss_rate,
-      agf_heavy_count, agf_longshot_count, agf_n_history
+    18 feature (V9.6 extended):
+      Klasik (10):
+        agf_recent_avg/max/min/std, agf_trend,
+        agf_underdog_top4_rate, agf_overbet_miss_rate,
+        agf_heavy_count, agf_longshot_count, agf_n_history
+      YENİ extended (8):
+        agf_volatility_pp     — son N AGF'nin std (mutlak pp, not normalized)
+        agf_extreme_swing_n   — ardışık iki AGF arasında ±10pp fark sayısı
+        agf_consistency_score — 1/(1+std), tutarlılık (yüksek=istikrarlı)
+        agf_career_corr       — AGF vs finish korelasyon (negatif=AGF iyi
+                                  prediktif; pozitif=AGF terstir = insider proxy)
+        agf_last_band         — son yarış AGF bandı (0=longshot, 3=heavy)
+        agf_band_volatility   — AGF bandının değişiklik sayısı
+        agf_avg_finish_when_fav — favori (≥20) iken ortalama finish
+        agf_avg_finish_when_lng — longshot (<10) iken ortalama finish
     """
     out = {
         "agf_recent_avg": 0.0, "agf_recent_max": 0.0,
@@ -165,6 +175,11 @@ def agf_features(name: str, ref_date: str,
         "agf_overbet_miss_rate": 0.0,
         "agf_heavy_count": 0, "agf_longshot_count": 0,
         "agf_n_history": 0,
+        # YENİ extended
+        "agf_volatility_pp": 0.0, "agf_extreme_swing_n": 0,
+        "agf_consistency_score": 1.0, "agf_career_corr": 0.0,
+        "agf_last_band": 1, "agf_band_volatility": 0,
+        "agf_avg_finish_when_fav": 5.0, "agf_avg_finish_when_lng": 5.0,
     }
     if not name or not agf_history_map:
         return out
@@ -183,8 +198,10 @@ def agf_features(name: str, ref_date: str,
     out["agf_recent_min"] = min(pcts)
     if len(pcts) > 1:
         m = sum(pcts) / len(pcts)
-        out["agf_recent_std"] = math.sqrt(
-            sum((p - m) ** 2 for p in pcts) / len(pcts))
+        std = math.sqrt(sum((p - m) ** 2 for p in pcts) / len(pcts))
+        out["agf_recent_std"] = std
+        out["agf_volatility_pp"] = std
+        out["agf_consistency_score"] = 1.0 / (1.0 + std)
         out["agf_trend"] = _slope(pcts)
     # Underdog top4 rate: AGF < %10 iken top4'e girme sıklığı
     underdog_n = sum(1 for h in past
@@ -203,4 +220,64 @@ def agf_features(name: str, ref_date: str,
                                      if heavy_n else 0.0)
     out["agf_heavy_count"] = sum(1 for h in past if h["agf_pct"] >= 30)
     out["agf_longshot_count"] = sum(1 for h in past if h["agf_pct"] < 5)
+
+    # YENİ extended features
+    # 1) Extreme swing — ardışık AGF arasında ±10pp fark sayısı
+    swings = 0
+    for i in range(1, len(pcts)):
+        if abs(pcts[i] - pcts[i - 1]) >= 10:
+            swings += 1
+    out["agf_extreme_swing_n"] = swings
+
+    # 2) Career correlation — AGF vs finish (negative korelasyon = AGF iyi
+    #    prediktif; positive korelasyon = AGF tersleniyor = potansiyel insider)
+    finishes_with_agf = [(h["agf_pct"], h["finish"])
+                         for h in past
+                         if isinstance(h.get("finish"), int)]
+    if len(finishes_with_agf) >= 3:
+        xs = [x[0] for x in finishes_with_agf]
+        ys = [x[1] for x in finishes_with_agf]
+        mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+        num = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+        den_x = math.sqrt(sum((x - mx) ** 2 for x in xs))
+        den_y = math.sqrt(sum((y - my) ** 2 for y in ys))
+        if den_x > 0 and den_y > 0:
+            out["agf_career_corr"] = num / (den_x * den_y)
+
+    # 3) Last band — son AGF'nin bandı
+    if pcts:
+        last_agf = pcts[0]  # en taze
+        if last_agf >= 30:
+            out["agf_last_band"] = 3
+        elif last_agf >= 15:
+            out["agf_last_band"] = 2
+        elif last_agf >= 5:
+            out["agf_last_band"] = 1
+        else:
+            out["agf_last_band"] = 0
+
+    # 4) Band volatility — banda değişiklik sayısı
+    bands = []
+    for p in pcts:
+        if p >= 30:
+            bands.append(3)
+        elif p >= 15:
+            bands.append(2)
+        elif p >= 5:
+            bands.append(1)
+        else:
+            bands.append(0)
+    band_changes = sum(1 for i in range(1, len(bands))
+                       if bands[i] != bands[i - 1])
+    out["agf_band_volatility"] = band_changes
+
+    # 5) Avg finish when favorite (≥20)
+    fav_finishes = [f for p, f in finishes_with_agf if p >= 20]
+    if fav_finishes:
+        out["agf_avg_finish_when_fav"] = sum(fav_finishes) / len(fav_finishes)
+    # 6) Avg finish when longshot (<10)
+    lng_finishes = [f for p, f in finishes_with_agf if p < 10]
+    if lng_finishes:
+        out["agf_avg_finish_when_lng"] = sum(lng_finishes) / len(lng_finishes)
+
     return out
