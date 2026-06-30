@@ -602,16 +602,37 @@ def _maybe_send_v8_pre_race(pools_unused, now, logger):
                 if top5:
                     lines.append("<b>TOP-5:</b>")
                     for i, x in enumerate(top5, 1):
-                        extra = ""
-                        # foreign form etiketi composite_ranking'den çek
+                        extras = []
+                        # ALFA etiketler composite_ranking'den çek
                         for r in (analysis.get('composite_ranking') or []):
-                            if r.get('no') == x.get('no') and r.get('foreign_tag'):
+                            if r.get('no') != x.get('no'):
+                                continue
+                            # ALFA 3 — UK Steam (en güçlü)
+                            if r.get('uk_steam_tag'):
+                                extras.append(r['uk_steam_tag'])
+                            # ALFA 2 — UK Champion
+                            for tag in (r.get('uk_champion_tags') or []):
+                                extras.append(tag)
+                            # ALFA 1 — Big Sire
+                            if r.get('big_sire_tag'):
+                                extras.append(r['big_sire_tag'])
+                            # Foreign form
+                            if r.get('foreign_tag'):
                                 cv = r.get('cross_value', 0)
                                 if cv >= 0.3:
-                                    extra = f"  ⚡{r['foreign_tag']}"
+                                    extras.append(f"⚡{r['foreign_tag']}")
                                 elif r.get('foreign_form'):
-                                    extra = f"  🌍 UK {r['foreign_form']}"
-                                break
+                                    extras.append(
+                                        f"🌍 UK {r['foreign_form']}")
+                            # AGF Δ steam
+                            if r.get('agf_tag') in ("STEAM", "DRIFT"):
+                                dp = r.get('agf_delta_pp', 0)
+                                emoji = "⚡" if dp > 0 else "📉"
+                                extras.append(
+                                    f"{emoji}AGF{dp:+.1f}pp")
+                            break
+                        extra = (("  " + " · ".join(extras))
+                                 if extras else "")
                         lines.append(
                             f"  {i}. #{x['no']} {x['name']}  "
                             f"(skor {x.get('score', 0):.3f}){extra}")
@@ -935,6 +956,12 @@ def _tick_locked(logger):
     except Exception as _e_ag:
         _log(logger, f"[coupon_sched] agf-snapshot fail: "
                       f"{repr(_e_ag)[:160]}")
+    # UK Live Odds snapshot (ALFA 3 — yabancı at steam tracking)
+    try:
+        _maybe_capture_uk_live_odds(now, logger)
+    except Exception as _e_uk:
+        _log(logger, f"[coupon_sched] uk-steam fail: "
+                      f"{repr(_e_uk)[:160]}")
     # Racing API value bet alerts (env-gated, saatte 1)
     try:
         _maybe_send_racing_api_value(now, logger)
@@ -953,6 +980,53 @@ def _tick_locked(logger):
         _log(logger, f"[coupon_sched] v8-prerace fail: "
                       f"{repr(_e_pr)[:160]}")
     _save_state(day, st)
+
+
+def _maybe_capture_uk_live_odds(now, logger):
+    """UK Live Odds snapshot — yabancı atların UK bookmaker odds takibi.
+
+    Berkay (2026-06-30) ALFA 3: TJK yarış kartındaki yabancı atların
+    UK odds'unu sabah, T-30, T-15, T-5 anlarında çek. Steam in detect.
+
+    Env: TJK_UK_STEAM=1 (default 1)
+    """
+    if os.environ.get('TJK_UK_STEAM', '1') != '1':
+        return
+    # Saatte 1 + her T-5 yakın yarış için
+    if now.minute > 10 and now.minute < 50:
+        return  # sadece dakika 0-10 ve 50-60 arası tetikle (sparse)
+    day = now.date().isoformat()
+    st = _load_state(day) or {}
+    snaps = set(st.get('uk_steam_snaps_taken', []) or [])
+    snap_key = f"H{now.hour}M{now.minute//10*10}"
+    if snap_key in snaps:
+        return
+    try:
+        # TJK race card'ından at adlarını topla
+        try:
+            pools = _build_pools(now)
+        except Exception:
+            return
+        horse_names = set()
+        for pool in (pools or []):
+            if pool.get('status') != 'ok':
+                continue
+            for leg in (pool.get('race_legs') or []):
+                for h in (leg or []):
+                    nm = h.get('horse_name') or h.get('name')
+                    if nm:
+                        horse_names.add(nm)
+        if not horse_names:
+            return
+        from forecast.uk_live_odds import snapshot_uk_odds
+        r = snapshot_uk_odds(list(horse_names)[:100], now)  # cap 100 for rate
+        snaps.add(snap_key)
+        st['uk_steam_snaps_taken'] = sorted(snaps)
+        _save_state(day, st)
+        _log(logger, f"[uk-steam] snapshot {snap_key}: {len(r)} at"
+                     f" odds capture")
+    except Exception as exc:
+        _log(logger, f"[uk-steam] skip: {repr(exc)[:200]}")
 
 
 def _maybe_send_racing_api_value(now, logger):

@@ -123,7 +123,10 @@ COMPOSITE_WEIGHTS = _load_calibrated_weights()
 def _composite_winner(v8_preds: list, mc: dict, tempo_sims: dict,
                       pace_by_no: dict, v7_prob_by_no: dict = None,
                       agf_delta_by_no: dict = None,
-                      foreign_form_by_no: dict = None) -> dict:
+                      foreign_form_by_no: dict = None,
+                      big_sire_by_no: dict = None,
+                      uk_champion_by_no: dict = None,
+                      uk_steam_by_no: dict = None) -> dict:
     """Composite skor — V9.5 + V7 hibrit + AGF Δ + foreign form bonus.
 
     score = α·MC + β·V9.5(p_top4) + γ·tempo + δ·V7 + ε·AGF_Δ
@@ -137,12 +140,21 @@ def _composite_winner(v8_preds: list, mc: dict, tempo_sims: dict,
     alpha, beta, gamma, delta = COMPOSITE_WEIGHTS
     eps = float(os.environ.get("TJK_AGF_DELTA_WEIGHT", "0.05"))
     zeta = float(os.environ.get("TJK_FOREIGN_FORM_WEIGHT", "0.08"))
+    eta = float(os.environ.get("TJK_BIG_SIRE_WEIGHT", "0.05"))   # ALFA 1
+    theta = float(os.environ.get("TJK_UK_CHAMPION_WEIGHT", "0.04"))  # ALFA 2
+    iota = float(os.environ.get("TJK_UK_STEAM_WEIGHT", "0.10"))  # ALFA 3 — en güçlü
     if v7_prob_by_no is None:
         v7_prob_by_no = {}
     if agf_delta_by_no is None:
         agf_delta_by_no = {}
     if foreign_form_by_no is None:
         foreign_form_by_no = {}
+    if big_sire_by_no is None:
+        big_sire_by_no = {}
+    if uk_champion_by_no is None:
+        uk_champion_by_no = {}
+    if uk_steam_by_no is None:
+        uk_steam_by_no = {}
 
     robust: Counter = Counter()
     for t in ("YAVAŞ", "ORTA", "SERT"):
@@ -179,11 +191,21 @@ def _composite_winner(v8_preds: list, mc: dict, tempo_sims: dict,
         # Foreign form cross-value (zeta term)
         ff = foreign_form_by_no.get(no, {}) if foreign_form_by_no else {}
         cross_val = ff.get("cross_value", 0) if ff else 0
+        # ALFA 1 — Big Sire (eta)
+        bs = big_sire_by_no.get(no, {}) or {}
+        bs_score = bs.get("score", 0)
+        # ALFA 2 — UK Champion (theta)
+        uc = uk_champion_by_no.get(no, {}) or {}
+        uc_score = uc.get("score", 0) / 2.0  # max 2 → normalize 0-1
+        # ALFA 3 — UK Steam (iota)
+        us = uk_steam_by_no.get(no, {}) or {}
+        us_score = us.get("score", 0)
         scores.append({
             "no": no, "name": p.get("horse_name"),
             "score": (alpha * mc1n + beta * p4n + gamma * rb
                       + delta * v7n + eps * agf_signal
-                      + zeta * cross_val),
+                      + zeta * cross_val + eta * bs_score
+                      + theta * uc_score + iota * us_score),
             "mc_p1": mc_p1.get(no, 0),
             "v8_p4": (p.get("p_top4") or 0) * 100,
             "v8_p1": (p.get("p_top1") or 0) * 100,
@@ -195,6 +217,12 @@ def _composite_winner(v8_preds: list, mc: dict, tempo_sims: dict,
             "foreign_form": ff.get("form_string", ""),
             "foreign_tag": ff.get("tag", ""),
             "cross_value": cross_val,
+            # ALFA tags
+            "big_sire_tag": bs.get("tag", ""),
+            "big_sire_score": bs_score,
+            "uk_champion_tags": uc.get("tags", []),
+            "uk_steam_tag": us.get("tag", ""),
+            "uk_steam_pct": us.get("delta_pct", 0),
         })
     scores.sort(key=lambda x: -x["score"])
     return {"ranking": scores, "winner": scores[0] if scores else None}
@@ -327,14 +355,66 @@ def analyze_race(
                             "form_string": fb.get("form_string", ""),
                         }
             except Exception as exc:
-                import os as _os  # avoid lint
                 logger.debug(f"foreign form bridge fail: {exc}")
 
-        # 5) Composite winner — V7+V8 HİBRİT + AGF Δ + foreign form
+        # ALFA 1 — Big Sire Detection
+        big_sire_by_no = {}
+        if os.environ.get("TJK_BIG_SIRE", "1") == "1":
+            try:
+                from forecast.pedigree_intel import check_big_sire
+                distance = (leg[0].get("distance") if leg else None)
+                track_type = (leg[0].get("track_type") if leg else "")
+                for h in leg:
+                    no = (h.get("horse_no") or h.get("horse_number"))
+                    sire = (h.get("sire") or h.get("sire_name")
+                            or h.get("orijin", "").split("/")[0].strip())
+                    result = check_big_sire(sire, distance, track_type)
+                    if result.get("is_big_sire"):
+                        big_sire_by_no[no] = result
+            except Exception as exc:
+                logger.debug(f"big sire fail: {exc}")
+
+        # ALFA 2 — UK Champion Trainer/Jockey
+        uk_champion_by_no = {}
+        if os.environ.get("TJK_UK_CHAMPION", "1") == "1":
+            try:
+                from forecast.uk_champions import check_uk_champion
+                for h in leg:
+                    no = (h.get("horse_no") or h.get("horse_number"))
+                    jockey = (h.get("jockey_name") or h.get("jockey")
+                              or "")
+                    trainer = (h.get("trainer_name") or h.get("trainer")
+                               or "")
+                    result = check_uk_champion(jockey, trainer)
+                    if result.get("score", 0) > 0:
+                        uk_champion_by_no[no] = result
+            except Exception as exc:
+                logger.debug(f"uk champion fail: {exc}")
+
+        # ALFA 3 — UK Live Odds Steam
+        uk_steam_by_no = {}
+        if os.environ.get("TJK_UK_STEAM", "1") == "1":
+            try:
+                from forecast.uk_live_odds import get_uk_steam_signal
+                for h in leg:
+                    no = (h.get("horse_no") or h.get("horse_number"))
+                    nm = h.get("horse_name") or h.get("name") or ""
+                    if not nm or not ref_date:
+                        continue
+                    result = get_uk_steam_signal(nm, ref_date)
+                    if result.get("has_steam"):
+                        uk_steam_by_no[no] = result
+            except Exception as exc:
+                logger.debug(f"uk steam fail: {exc}")
+
+        # 5) Composite winner — tüm alfa katmanlarıyla
         composite = _composite_winner(v8_preds, mc, tempo_sims,
                                        per_horse_pace, v7_prob_by_no,
                                        agf_delta_by_no,
-                                       foreign_form_by_no)
+                                       foreign_form_by_no,
+                                       big_sire_by_no=big_sire_by_no,
+                                       uk_champion_by_no=uk_champion_by_no,
+                                       uk_steam_by_no=uk_steam_by_no)
 
         # 6) 3 farklı TOP-5 listesi (Berkay direktif: top-5)
         name_by_no = {p.get("horse_no"): p.get("horse_name") for p in v8_preds}
