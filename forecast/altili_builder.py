@@ -127,6 +127,8 @@ def build_altili(
                 "v8_p4": round(r["v8_p4"], 1),
                 "pace": r["pace"],
                 "pace_tr": PACE_TR.get(r["pace"], "—"),
+                "agf_tag": r.get("agf_tag", ""),
+                "agf_delta_pp": r.get("agf_delta_pp", 0),
             })
         # Neden açıklaması
         if overlap == 4:
@@ -194,8 +196,14 @@ def _summary_text(ayaklar, combos, cost_tl, pas_count, altili_no, hippo):
             lines.append(f"  <b>{rn}. KOŞU</b> · {a['guven']} → ⛔ PAS")
             sizes.append("⛔")
             continue
-        atlar_str = " · ".join(f"#{x['no']} {x['name']}"
-                                for x in a["atlar"])
+        def _at_str(x):
+            base = f"#{x['no']} {x['name']}"
+            if x.get("agf_tag") == "STEAM":
+                base += f" ⚡+{x['agf_delta_pp']:.0f}pp"
+            elif x.get("agf_tag") == "DRIFT":
+                base += f" 📉{x['agf_delta_pp']:+.0f}pp"
+            return base
+        atlar_str = " · ".join(_at_str(x) for x in a["atlar"])
         lines.append(f"  <b>{rn}. KOŞU</b> · güven: {a['guven']} "
                      f"({a['n_at']} at)")
         lines.append(f"     {atlar_str}")

@@ -575,9 +575,18 @@ def _maybe_send_v8_pre_race(pools_unused, now, logger):
                 # Kompakt TEK MESAJ
                 tag_t = ("T-3" if os.environ.get('TJK_ULTRA_LEAN', '0')
                          == '1' else "T-5")
+                # AGF Δ etiketi (winner'da steam varsa öne çıkar)
+                agf_tag_w = (analysis.get('composite_ranking') or [{}])[0]
+                agf_emoji = ""
+                if agf_tag_w.get('agf_tag') == "STEAM":
+                    agf_emoji = (f"  ⚡ AGF +"
+                                  f"{agf_tag_w.get('agf_delta_pp', 0):.1f}pp")
+                elif agf_tag_w.get('agf_tag') == "DRIFT":
+                    agf_emoji = (f"  📉 AGF "
+                                  f"{agf_tag_w.get('agf_delta_pp', 0):+.1f}pp")
                 lines = [
                     f"🚦 <b>{tag_t}: {hippo} {race_no}. KOŞU</b>  "
-                    f"({rt})",
+                    f"({rt}){agf_emoji}",
                     f"━━━━━━━━━━━━━━━",
                     f"🏆 <b>#{w['no']} {w['name']}</b>",
                     f"   yarış çizgisi: {PACE_TR.get(w.get('pace','mid'), '—')}",
@@ -903,8 +912,13 @@ def _tick_locked(logger):
             st['berkay_top4_sent_today'] = True
         except Exception:
             pass
+    # Intraday AGF snapshot capture (her tick, sabit) — steam move için
+    try:
+        _maybe_capture_agf_snapshot(now, logger)
+    except Exception as _e_ag:
+        _log(logger, f"[coupon_sched] agf-snapshot fail: "
+                      f"{repr(_e_ag)[:160]}")
     # ULTRA_LEAN modda T-5 altılı + T-3 top-4 hook'ları
-    # (eski mod sadece T-3 top-4 env-gated)
     try:
         _maybe_send_v9_t5_altili(None, now, logger)
     except Exception as _e_al:
@@ -916,6 +930,36 @@ def _tick_locked(logger):
         _log(logger, f"[coupon_sched] v8-prerace fail: "
                       f"{repr(_e_pr)[:160]}")
     _save_state(day, st)
+
+
+def _maybe_capture_agf_snapshot(now, logger):
+    """Intraday AGF snapshot — saatte 1 kere (12, 14, 16, 18, 20).
+
+    Env: TJK_AGF_INTRADAY=1 (default OFF). Forward-only insider signal.
+    """
+    if os.environ.get('TJK_AGF_INTRADAY', '0') != '1':
+        return
+    # Saatte 1: dakika [0-10] arasındaysa, ilgili saat henüz alınmadıysa
+    if now.minute > 10:
+        return
+    day = now.date().isoformat()
+    st = _load_state(day) or {}
+    snaps = set(st.get('agf_snaps_taken', []) or [])
+    snap_key = now.strftime("%H")
+    if snap_key in snaps:
+        return
+    if int(snap_key) < 9 or int(snap_key) > 22:
+        return  # yarış saatleri penceresi
+    try:
+        from forecast.agf_intraday import snapshot_agf
+        r = snapshot_agf(now)
+        snaps.add(snap_key)
+        st['agf_snaps_taken'] = sorted(snaps)
+        _save_state(day, st)
+        _log(logger, f"[agf-intraday] snapshot {snap_key}h: "
+                     f"{r.get('n_hippos')} hippo, {r.get('n_horses')} at")
+    except Exception as exc:
+        _log(logger, f"[agf-intraday] capture fail: {repr(exc)[:160]}")
 
 
 def _rebuild_into(st, logger):

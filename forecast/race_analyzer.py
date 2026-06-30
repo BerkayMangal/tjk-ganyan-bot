@@ -121,18 +121,28 @@ COMPOSITE_WEIGHTS = _load_calibrated_weights()
 
 
 def _composite_winner(v8_preds: list, mc: dict, tempo_sims: dict,
-                      pace_by_no: dict, v7_prob_by_no: dict = None) -> dict:
-    """Composite skor — V7+V8 HİBRİT (kalibre ağırlık).
+                      pace_by_no: dict, v7_prob_by_no: dict = None,
+                      agf_delta_by_no: dict = None) -> dict:
+    """Composite skor — V9.5 + V7 hibrit + AGF intraday Δ bonus.
 
-    score = α × MC(1.olma) + β × V8(p_top4) + γ × tempo_robust
-            + δ × V7(model_prob)
+    score = α × MC(1.olma) + β × V9.5(p_top4) + γ × tempo_robust
+            + δ × V7(model_prob) + ε × AGF_delta_signal
 
-    Default kalibrasyon (60g grid search):
-        α=0.60, β=0.25, γ=0.15, δ=0.00 (delta>0 → recalibrate)
+    Default ağırlıklar (60g grid search):
+        α=0.35, β=0.40, γ=0.05, δ=0.20
+    AGF Δ bonus (Berkay 2026-06-30 hipotez, forward-only):
+        ε = TJK_AGF_DELTA_WEIGHT (default 0.05)
+        steam (Δ ≥ +5pp) → +1.0 sinyal
+        drift (Δ ≤ -5pp) → -1.0 sinyal
+        nötr           → 0
     """
+    import os
     alpha, beta, gamma, delta = COMPOSITE_WEIGHTS
+    eps = float(os.environ.get("TJK_AGF_DELTA_WEIGHT", "0.05"))
     if v7_prob_by_no is None:
         v7_prob_by_no = {}
+    if agf_delta_by_no is None:
+        agf_delta_by_no = {}
 
     robust: Counter = Counter()
     for t in ("YAVAŞ", "ORTA", "SERT"):
@@ -145,7 +155,7 @@ def _composite_winner(v8_preds: list, mc: dict, tempo_sims: dict,
     max_p4 = max((p.get("p_top4") or 0) for p in v8_preds) or 1.0
     mc_p1 = {no: pct.get(1, 0) for no, pct in mc.get("rank_pct", {}).items()}
     max_mc1 = max(mc_p1.values()) if mc_p1 else 1.0
-    max_v7 = max((v or 0) for v in v7_prob_by_no.values()) or 1.0
+    max_v7 = max([(v or 0) for v in v7_prob_by_no.values()] or [0]) or 1.0
 
     scores = []
     for p in v8_preds:
@@ -155,16 +165,29 @@ def _composite_winner(v8_preds: list, mc: dict, tempo_sims: dict,
         rb = robust.get(no, 0) / 3.0
         v7_raw = v7_prob_by_no.get(no, 0) or 0
         v7n = (v7_raw / max_v7) if max_v7 else 0
+        # AGF intraday Δ sinyali (steam=+1, drift=-1, nötr=0)
+        agf_delta_pp = agf_delta_by_no.get(no, 0)
+        if agf_delta_pp >= 5.0:
+            agf_signal = 1.0
+            agf_tag = "STEAM"
+        elif agf_delta_pp <= -5.0:
+            agf_signal = -1.0
+            agf_tag = "DRIFT"
+        else:
+            agf_signal = 0.0
+            agf_tag = ""
         scores.append({
             "no": no, "name": p.get("horse_name"),
             "score": (alpha * mc1n + beta * p4n + gamma * rb
-                      + delta * v7n),
+                      + delta * v7n + eps * agf_signal),
             "mc_p1": mc_p1.get(no, 0),
             "v8_p4": (p.get("p_top4") or 0) * 100,
             "v8_p1": (p.get("p_top1") or 0) * 100,
             "v7_prob": v7_raw * 100,
             "tempo_top3_count": robust.get(no, 0),
             "pace": pace_by_no.get(no, "mid"),
+            "agf_delta_pp": agf_delta_pp,
+            "agf_tag": agf_tag,
         })
     scores.sort(key=lambda x: -x["score"])
     return {"ranking": scores, "winner": scores[0] if scores else None}
@@ -258,9 +281,25 @@ def analyze_race(
             if isinstance(mp, (int, float)) and mp > 0:
                 v7_prob_by_no[no] = float(mp)
 
-        # 5) Composite winner — V7+V8 HİBRİT
+        # AGF intraday Δ per horse (insider/steam signal)
+        agf_delta_by_no = {}
+        try:
+            from forecast.agf_intraday import detect_steam_moves
+            hippo_name = ""
+            if leg and isinstance(leg[0], dict):
+                hippo_name = (leg[0].get("hippo")
+                              or leg[0].get("hippodrome") or "")
+            if ref_date and hippo_name:
+                steam_result = detect_steam_moves(ref_date, hippo_name)
+                for c in steam_result.get("comparisons", []):
+                    agf_delta_by_no[c["at_no"]] = c["delta_pp"]
+        except Exception:
+            pass
+
+        # 5) Composite winner — V7+V8 HİBRİT + AGF Δ
         composite = _composite_winner(v8_preds, mc, tempo_sims,
-                                       per_horse_pace, v7_prob_by_no)
+                                       per_horse_pace, v7_prob_by_no,
+                                       agf_delta_by_no)
 
         # 6) 3 farklı TOP-5 listesi (Berkay direktif: top-5)
         name_by_no = {p.get("horse_no"): p.get("horse_name") for p in v8_preds}
