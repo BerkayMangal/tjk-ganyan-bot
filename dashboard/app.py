@@ -844,6 +844,121 @@ def send_yerli_telegram():
         return jsonify({"error": str(e)})
 
 
+@app.route("/canli")
+def canli_dashboard():
+    """V9.5 + ALFA katmanlar canlı dashboard (TJK + Yabancı, 2 tab)."""
+    from flask import render_template
+    return render_template("canli.html")
+
+
+@app.route("/api/canli/tjk")
+def api_canli_tjk():
+    """Bugünkü TJK race analyses (race_analyzer çıktısı)."""
+    from datetime import date as _date
+    from flask import request, jsonify
+    target_str = request.args.get("date") or _date.today().isoformat()
+    try:
+        target = _date.fromisoformat(target_str)
+    except Exception:
+        return jsonify({"error": "invalid date"}), 400
+
+    try:
+        from dashboard.smart_coupon_service import build_all_hippos
+    except ImportError:
+        from smart_coupon_service import build_all_hippos
+    try:
+        from forecast.race_analyzer import analyze_race
+    except Exception as exc:
+        return jsonify({"error": f"race_analyzer: {exc}"}), 500
+
+    # Glicko ledger
+    try:
+        from forecast.glicko import GlickoLedger
+        import json as _json
+        import os as _os
+        _p = _os.path.join(os.path.dirname(__file__), "..", "model",
+                            "v8", "glicko_ledger.json")
+        if _os.path.exists(_p):
+            ledger = GlickoLedger.from_json(_json.load(open(_p)))
+        else:
+            ledger = GlickoLedger()
+    except Exception:
+        ledger = None
+
+    try:
+        from dashboard.forecast_api import _fetch_history
+    except Exception:
+        _fetch_history = None
+
+    pools_raw = build_all_hippos(target) or []
+    out_pools = []
+    for pool in pools_raw:
+        if pool.get("status") != "ok":
+            continue
+        hippo = pool.get("hippo", "?")
+        legs = pool.get("race_legs") or []
+        races = []
+        for leg in legs:
+            if not leg:
+                continue
+            race_no = leg[0].get("race_number") or 0
+            race_time = leg[0].get("race_time") or ""
+            try:
+                analysis = analyze_race(
+                    leg=leg, ref_date=target_str, ledger=ledger,
+                    history_lookup=_fetch_history,
+                    n_mc=3000, n_tempo=2000,  # dashboard hızlı render
+                )
+            except Exception:
+                continue
+            if not analysis or not analysis.get("winner"):
+                continue
+            races.append({
+                "race_no": race_no,
+                "race_time": race_time[:5] if race_time else "",
+                "winner": analysis.get("winner"),
+                "race_tempo_verdict": analysis.get("race_tempo_verdict"),
+                "top4_overlap": analysis.get("top4_overlap"),
+                "composite_top5": analysis.get("composite_top5"),
+                "composite_ranking": analysis.get("composite_ranking", [])[:10],
+            })
+        if races:
+            out_pools.append({
+                "hippo": hippo, "region": "TR",
+                "n_races": len(races), "races": races,
+            })
+    return jsonify({"date": target_str, "pools": out_pools})
+
+
+@app.route("/api/canli/uk")
+def api_canli_uk():
+    """Bugünkü UK value bet alerts (RacingAPI)."""
+    from datetime import date as _date
+    from flask import request, jsonify
+    target_str = request.args.get("date") or _date.today().isoformat()
+    try:
+        from forecast.racing_api_value import fetch_today_value_alerts
+    except Exception as exc:
+        return jsonify({"error": f"racing_api_value: {exc}"}), 500
+    min_ev = float(os.environ.get("TJK_RACING_API_MIN_EV", "5.0"))
+    regions_str = os.environ.get("TJK_RACING_API_REGIONS", "gb,ire,fr")
+    regions = tuple(r.strip().lower() for r in regions_str.split(",")
+                    if r.strip())
+    my_bm_str = os.environ.get("TJK_MY_BOOKMAKERS", "")
+    my_bookmakers = [b.strip() for b in my_bm_str.split(",")
+                     if b.strip()] or None
+    try:
+        alerts = fetch_today_value_alerts(
+            min_ev_pct=min_ev, regions=regions,
+            my_bookmakers=my_bookmakers)
+    except Exception as exc:
+        return jsonify({"error": str(exc)[:200]}), 500
+    return jsonify({"date": target_str, "alerts": alerts,
+                    "min_ev_pct": min_ev,
+                    "regions": list(regions),
+                    "my_bookmakers": my_bookmakers or []})
+
+
 @app.route("/berkay-deneme")
 def berkay_deneme_page():
     """HTML dashboard for BERKAY DENEME — shadow + SiB picks + retro.

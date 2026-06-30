@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🏇 CANLI · TJK + Yabancı</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 sans-serif;
+    background: linear-gradient(180deg, #0a0e1a 0%, #0d1117 100%);
+    color: #e6edf3; margin: 0; min-height: 100vh;
+    padding: 12px; line-height: 1.45;
+  }
+  main { max-width: 980px; margin: 0 auto; }
+
+  header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 12px; flex-wrap: wrap; gap: 10px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid #21262d;
+  }
+  h1 {
+    font-size: 1.3em; margin: 0;
+    background: linear-gradient(90deg, #58a6ff, #f0c674, #ff6b6b);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    font-weight: 700;
+  }
+  .meta { font-size: 0.78em; color: #8b949e; }
+
+  /* TAB SWITCHER */
+  .tabs {
+    display: flex; gap: 4px; margin-bottom: 16px;
+    background: #161b22; padding: 4px; border-radius: 10px;
+    border: 1px solid #21262d;
+  }
+  .tab {
+    flex: 1; padding: 10px 14px; text-align: center;
+    background: transparent; color: #8b949e; border: none;
+    border-radius: 7px; font-size: 0.95em; cursor: pointer;
+    transition: all 0.2s; font-weight: 600;
+  }
+  .tab.active {
+    background: linear-gradient(135deg, #1f6feb, #2670cd);
+    color: #fff; box-shadow: 0 2px 8px rgba(31,111,235,0.4);
+  }
+  .tab.uk.active {
+    background: linear-gradient(135deg, #ffd700, #c69214);
+    color: #1a1f2c;
+  }
+  .tab:not(.active):hover { background: #21262d; color: #e6edf3; }
+
+  /* TAB CONTENT */
+  .tab-content { display: none; }
+  .tab-content.active { display: block; animation: fadeIn 0.3s; }
+  @keyframes fadeIn { from {opacity:0;transform:translateY(4px);} to {opacity:1;transform:translateY(0);} }
+
+  /* HIPODROM CARD */
+  .hippo-card {
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 12px; margin-bottom: 14px; overflow: hidden;
+  }
+  .hippo-header {
+    padding: 14px 16px; background: linear-gradient(90deg, #1c2128, #161b22);
+    display: flex; justify-content: space-between; align-items: center;
+    cursor: pointer; user-select: none;
+    border-bottom: 1px solid #21262d;
+  }
+  .hippo-title {
+    font-size: 1.05em; font-weight: 700;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .hippo-badge {
+    font-size: 0.75em; padding: 3px 8px;
+    background: #1f6feb; color: white; border-radius: 4px;
+    font-weight: 600;
+  }
+  .hippo-stats { font-size: 0.78em; color: #8b949e; }
+  .hippo-toggle { color: #58a6ff; font-size: 1.1em; }
+  .hippo-body { padding: 0; }
+
+  /* RACE CARD */
+  .race-card {
+    padding: 14px 16px; border-bottom: 1px solid #21262d;
+  }
+  .race-card:last-child { border-bottom: none; }
+  .race-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 10px;
+  }
+  .race-no {
+    font-weight: 700; font-size: 0.95em; color: #58a6ff;
+  }
+  .race-time {
+    font-size: 0.85em; color: #8b949e; font-variant-numeric: tabular-nums;
+  }
+  .race-tempo {
+    font-size: 0.72em; padding: 2px 7px; border-radius: 4px;
+    background: #30363d; color: #e6edf3;
+  }
+  .race-tempo.SERT { background: #cf222e; color: white; }
+  .race-tempo.HIZLI { background: #d29922; color: #1a1f2c; }
+  .race-tempo.KONTROLLU { background: #1f6feb; color: white; }
+  .race-tempo.YAVAS { background: #6e7681; color: white; }
+
+  .winner-row {
+    background: linear-gradient(90deg, rgba(31,111,235,0.18), rgba(31,111,235,0.05));
+    padding: 10px 12px; border-radius: 8px;
+    border-left: 3px solid #1f6feb;
+    margin-bottom: 8px;
+  }
+  .winner-label {
+    font-size: 0.7em; color: #58a6ff; font-weight: 700;
+    letter-spacing: 0.5px; margin-bottom: 4px;
+  }
+  .winner-name {
+    font-size: 1.05em; font-weight: 700; color: #fff;
+  }
+  .winner-meta {
+    font-size: 0.78em; color: #c9d1d9; margin-top: 4px;
+    display: flex; gap: 12px; flex-wrap: wrap;
+  }
+
+  .top5-list { margin-top: 6px; }
+  .top5-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 0; font-size: 0.85em;
+    border-top: 1px solid #21262d;
+  }
+  .top5-rank {
+    width: 22px; height: 22px; display: inline-flex;
+    align-items: center; justify-content: center;
+    background: #30363d; color: #e6edf3;
+    border-radius: 50%; font-weight: 700; font-size: 0.78em;
+  }
+  .top5-rank.r1 { background: #ffd700; color: #1a1f2c; }
+  .top5-rank.r2 { background: #c0c0c0; color: #1a1f2c; }
+  .top5-rank.r3 { background: #cd7f32; color: white; }
+  .top5-no { color: #58a6ff; font-weight: 600; min-width: 30px; }
+  .top5-name { flex: 1; font-weight: 500; }
+  .top5-score { font-size: 0.76em; color: #8b949e; font-variant-numeric: tabular-nums; }
+
+  /* ALFA TAGS */
+  .alpha-tags {
+    display: flex; flex-wrap: wrap; gap: 4px;
+    margin-top: 4px;
+  }
+  .alpha-tag {
+    font-size: 0.7em; padding: 2px 6px;
+    border-radius: 4px; font-weight: 600;
+  }
+  .tag-steam { background: rgba(255,107,107,0.2); color: #ff8a8a; }
+  .tag-jockey { background: rgba(240,198,116,0.18); color: #f0c674; }
+  .tag-sire { background: rgba(165,255,165,0.15); color: #a5e3a5; }
+  .tag-foreign { background: rgba(88,166,255,0.18); color: #79b8ff; }
+  .tag-agf-steam { background: rgba(255,200,0,0.22); color: #ffd966; }
+  .tag-agf-drift { background: rgba(255,107,107,0.18); color: #ff8a8a; }
+  .tag-underrated { background: linear-gradient(90deg, #ffd700, #f0c674); color: #1a1f2c; font-weight: 700; }
+
+  /* UK Value Bet Card */
+  .vb-card {
+    background: linear-gradient(135deg, #1a2438, #161b22);
+    border: 1px solid #30363d;
+    border-radius: 12px; padding: 14px 16px; margin-bottom: 12px;
+    border-left: 4px solid #ffd700;
+  }
+  .vb-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 10px;
+  }
+  .vb-course {
+    font-size: 1em; font-weight: 700;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .vb-region {
+    font-size: 0.7em; padding: 2px 7px; background: #ffd700;
+    color: #1a1f2c; border-radius: 4px; font-weight: 700;
+  }
+  .vb-off { font-size: 0.82em; color: #8b949e; }
+  .vb-bet {
+    background: #0d1117; padding: 10px 12px; border-radius: 8px;
+    margin-bottom: 6px;
+    border-left: 2px solid #ffd700;
+  }
+  .vb-bet:last-child { margin-bottom: 0; }
+  .vb-name {
+    font-weight: 700; font-size: 0.95em; color: #fff;
+    margin-bottom: 4px;
+  }
+  .vb-detail {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+    font-size: 0.78em; color: #c9d1d9;
+  }
+  .vb-detail .lbl { color: #8b949e; }
+  .vb-ev {
+    font-weight: 700; color: #ffd700; font-size: 1.1em;
+  }
+  .vb-bm {
+    background: #1f6feb; color: white; padding: 2px 7px;
+    border-radius: 4px; font-size: 0.72em; font-weight: 600;
+  }
+
+  /* STATUS */
+  .status-line {
+    text-align: center; padding: 14px; color: #8b949e;
+    font-size: 0.85em;
+  }
+  .loading { color: #58a6ff; }
+  .empty {
+    text-align: center; padding: 36px 20px;
+    color: #8b949e;
+  }
+  .empty-icon {
+    font-size: 2.2em; opacity: 0.4; margin-bottom: 10px;
+  }
+
+  /* REFRESH BUTTON */
+  .refresh-btn {
+    background: #21262d; color: #e6edf3; border: 1px solid #30363d;
+    padding: 6px 12px; border-radius: 6px; font-size: 0.82em;
+    cursor: pointer;
+  }
+  .refresh-btn:hover { background: #30363d; }
+  .last-update {
+    font-size: 0.72em; color: #6e7681; margin-left: 6px;
+  }
+
+  /* MOBILE */
+  @media (max-width: 600px) {
+    body { padding: 8px; }
+    h1 { font-size: 1.1em; }
+    .hippo-header { padding: 12px; }
+    .race-card { padding: 12px; }
+    .vb-detail { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>🏇 CANLI · V9.5 + ALFA KATMANLAR</h1>
+      <div class="meta">
+        TJK ULTRA_LEAN + RacingAPI value betting
+        <span class="last-update" id="lastUpdate"></span>
+      </div>
+    </div>
+    <button class="refresh-btn" onclick="refreshAll()">⟳ Yenile</button>
+  </header>
+
+  <div class="tabs">
+    <button class="tab active" id="tab-tjk" onclick="showTab('tjk')">
+      🇹🇷 TJK Canlı
+    </button>
+    <button class="tab uk" id="tab-uk" onclick="showTab('uk')">
+      🌍 Yabancı Value
+    </button>
+  </div>
+
+  <!-- TJK TAB -->
+  <div class="tab-content active" id="content-tjk">
+    <div class="status-line loading" id="tjk-status">⟳ TJK yarış kartı yükleniyor...</div>
+    <div id="tjk-pools"></div>
+  </div>
+
+  <!-- UK TAB -->
+  <div class="tab-content" id="content-uk">
+    <div class="status-line loading" id="uk-status">⟳ UK value bet'ler taranıyor...</div>
+    <div id="uk-alerts"></div>
+  </div>
+</main>
+
+<script>
+const TODAY = new Date().toISOString().split('T')[0];
+
+function showTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  document.getElementById('content-' + name).classList.add('active');
+}
+
+function fmt_pct(x) {
+  if (x === null || x === undefined) return '—';
+  return (x).toFixed(1) + '%';
+}
+
+function fmt_score(s) {
+  if (!s) return '0.000';
+  return s.toFixed(3);
+}
+
+function pace_tr(p) {
+  return ({
+    'front':'öne çıkan', 'stalker':'takipçi',
+    'mid':'orta tempolu', 'closer':'finiş hücumcusu',
+  })[p] || '—';
+}
+
+function tempo_class(v) {
+  return ({
+    'SERT':'SERT','HIZLI':'HIZLI',
+    'KONTROLLÜ':'KONTROLLU','YAVAŞ':'YAVAS',
+  })[v] || 'YAVAS';
+}
+
+function alpha_tags(horse_data) {
+  const tags = [];
+  if (horse_data.uk_steam_tag) {
+    tags.push(`<span class="alpha-tag tag-steam">${horse_data.uk_steam_tag}</span>`);
+  }
+  for (const t of (horse_data.uk_champion_tags || [])) {
+    tags.push(`<span class="alpha-tag tag-jockey">${t}</span>`);
+  }
+  if (horse_data.big_sire_tag) {
+    tags.push(`<span class="alpha-tag tag-sire">${horse_data.big_sire_tag}</span>`);
+  }
+  if (horse_data.foreign_tag) {
+    const cv = horse_data.cross_value || 0;
+    if (cv >= 0.3) {
+      tags.push(`<span class="alpha-tag tag-underrated">⚡ ${horse_data.foreign_tag} → UNDERRATED</span>`);
+    } else if (horse_data.foreign_form) {
+      tags.push(`<span class="alpha-tag tag-foreign">🌍 UK ${horse_data.foreign_form}</span>`);
+    }
+  }
+  if (horse_data.agf_tag === 'STEAM') {
+    tags.push(`<span class="alpha-tag tag-agf-steam">⚡AGF +${horse_data.agf_delta_pp.toFixed(1)}pp</span>`);
+  } else if (horse_data.agf_tag === 'DRIFT') {
+    tags.push(`<span class="alpha-tag tag-agf-drift">📉AGF ${horse_data.agf_delta_pp.toFixed(1)}pp</span>`);
+  }
+  return tags.length ? `<div class="alpha-tags">${tags.join('')}</div>` : '';
+}
+
+async function loadTJK() {
+  const status = document.getElementById('tjk-status');
+  const pools = document.getElementById('tjk-pools');
+  try {
+    const res = await fetch(`/api/canli/tjk?date=${TODAY}`);
+    const data = await res.json();
+    if (!data.pools || !data.pools.length) {
+      status.style.display = 'none';
+      pools.innerHTML = `<div class="empty"><div class="empty-icon">🐎</div>
+        Bugün için TJK yarış bulunamadı.<br>
+        <small>İlk yarış başlangıcına 5dk kala T-5 altılı, her yarışa 3dk kala T-3 top-4 gelir.</small></div>`;
+      return;
+    }
+    status.style.display = 'none';
+    pools.innerHTML = data.pools.map(pool => `
+      <div class="hippo-card">
+        <div class="hippo-header" onclick="this.parentElement.querySelector('.hippo-body').style.display = this.parentElement.querySelector('.hippo-body').style.display === 'none' ? 'block' : 'none'; this.querySelector('.hippo-toggle').textContent = this.parentElement.querySelector('.hippo-body').style.display === 'none' ? '▼' : '▲';">
+          <div class="hippo-title">
+            <span class="hippo-badge">${pool.region || 'TR'}</span>
+            ${pool.hippo}
+          </div>
+          <div>
+            <span class="hippo-stats">${pool.n_races} koşu</span>
+            <span class="hippo-toggle">▲</span>
+          </div>
+        </div>
+        <div class="hippo-body">
+          ${pool.races.map(race => render_race(race)).join('')}
+        </div>
+      </div>
+    `).join('');
+    document.getElementById('lastUpdate').textContent = '· ' + new Date().toLocaleTimeString('tr-TR');
+  } catch (e) {
+    status.innerHTML = '⚠ Hata: ' + e.message;
+  }
+}
+
+function render_race(race) {
+  const w = race.winner || {};
+  const wMeta = `
+    <div class="winner-meta">
+      <span>MC %${fmt_pct(w.mc_p1).replace('%','')}</span>
+      <span>İlk-4 %${fmt_pct(w.v8_p4).replace('%','')}</span>
+      <span>${pace_tr(w.pace)}</span>
+      <span>Güven: ${race.top4_overlap}/4</span>
+    </div>`;
+  const wAlphas = alpha_tags(race.composite_ranking ? (race.composite_ranking[0] || {}) : {});
+  const top5 = (race.composite_top5 || []).slice(0, 5);
+  const top5HTML = top5.map((h, i) => {
+    const horse_full = (race.composite_ranking || []).find(r => r.no === h.no) || {};
+    return `
+      <div class="top5-row">
+        <div class="top5-rank r${i+1}">${i+1}</div>
+        <div class="top5-no">#${h.no}</div>
+        <div class="top5-name">
+          ${h.name}
+          ${alpha_tags(horse_full)}
+        </div>
+        <div class="top5-score">${fmt_score(h.score)}</div>
+      </div>
+    `;
+  }).join('');
+  return `
+    <div class="race-card">
+      <div class="race-header">
+        <div>
+          <span class="race-no">${race.race_no}. KOŞU</span>
+          <span class="race-time">${race.race_time || ''}</span>
+        </div>
+        <span class="race-tempo ${tempo_class(race.race_tempo_verdict)}">${race.race_tempo_verdict || ''}</span>
+      </div>
+      <div class="winner-row">
+        <div class="winner-label">🏆 KAZANAN ADAYI</div>
+        <div class="winner-name">#${w.no} ${w.name || '—'}</div>
+        ${wMeta}
+        ${wAlphas}
+      </div>
+      <div class="top5-list">${top5HTML}</div>
+    </div>
+  `;
+}
+
+async function loadUK() {
+  const status = document.getElementById('uk-status');
+  const alerts = document.getElementById('uk-alerts');
+  try {
+    const res = await fetch(`/api/canli/uk?date=${TODAY}`);
+    const data = await res.json();
+    if (!data.alerts || !data.alerts.length) {
+      status.style.display = 'none';
+      alerts.innerHTML = `<div class="empty"><div class="empty-icon">🌍</div>
+        Bugün UK/IRE/FR'de value bet tespit edilmedi.<br>
+        <small>Coral/Ladbrokes outlier verdiğinde bu sekmede görünür. Saatte 1 tarama.</small></div>`;
+      return;
+    }
+    status.style.display = 'none';
+    alerts.innerHTML = data.alerts.map(a => `
+      <div class="vb-card">
+        <div class="vb-header">
+          <div class="vb-course">
+            <span class="vb-region">${a.region}</span>
+            ${a.course}
+          </div>
+          <div class="vb-off">${a.off_time || ''}</div>
+        </div>
+        ${a.value_bets.slice(0, 3).map(vb => `
+          <div class="vb-bet">
+            <div class="vb-name">${vb.horse_name}</div>
+            <div class="vb-detail">
+              <div><span class="lbl">Odds:</span> <b>${vb.best_odds}</b> <span class="vb-bm">${vb.best_bookmaker}</span></div>
+              <div><span class="lbl">EV:</span> <span class="vb-ev">+${vb.ev_pct}%</span></div>
+              <div><span class="lbl">Consensus:</span> ${vb.consensus_prob_pct}%</div>
+              <div><span class="lbl">Kelly:</span> ${vb.kelly_pct.toFixed(1)}%</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `).join('');
+    document.getElementById('lastUpdate').textContent = '· ' + new Date().toLocaleTimeString('tr-TR');
+  } catch (e) {
+    status.innerHTML = '⚠ Hata: ' + e.message;
+  }
+}
+
+function refreshAll() {
+  loadTJK();
+  loadUK();
+}
+
+// Initial load
+loadTJK();
+loadUK();
+// Auto-refresh 60sn
+setInterval(refreshAll, 60000);
+</script>
+</body>
+</html>
