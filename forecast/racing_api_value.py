@@ -110,7 +110,13 @@ def extract_runner_odds(runner: dict) -> dict[str, float]:
 def find_value_bets(racecard: dict, min_ev_pct: float = 5.0,
                     min_bookmakers: int = 4,
                     min_odds: float = 1.5,
-                    max_odds: float = 20.0) -> list[dict]:
+                    max_odds: float = 20.0,
+                    my_bookmakers: Optional[set[str]] = None) -> list[dict]:
+    """
+    my_bookmakers: ['coral', 'ladbrokes'] → SADECE bu bookmaker'lar outlier
+                   verdiğinde value bet listele (kullanıcı bahis yapabilir)
+                   None → tüm bookmaker'lar
+    """
     """Bir yarış için value bet listesi (consensus-based, model-free).
 
     Args:
@@ -130,8 +136,17 @@ def find_value_bets(racecard: dict, min_ev_pct: float = 5.0,
         odds_dict = extract_runner_odds(runner)
         if len(odds_dict) < min_bookmakers:
             continue
-        # Best odd (en yüksek decimal = en avantajlı)
-        best_bm, best_odds = max(odds_dict.items(), key=lambda x: x[1])
+        # Eğer kullanıcı kendi bookmaker'ını belirttiyse: sadece bunlar
+        # outlier (best) ise alert gönder
+        if my_bookmakers:
+            my_odds = {bm: o for bm, o in odds_dict.items()
+                       if any(my_name.lower() in bm.lower()
+                              for my_name in my_bookmakers)}
+            if not my_odds:
+                continue
+            best_bm, best_odds = max(my_odds.items(), key=lambda x: x[1])
+        else:
+            best_bm, best_odds = max(odds_dict.items(), key=lambda x: x[1])
         if not (min_odds <= best_odds <= max_odds):
             continue
         # Consensus (best hariç tutalım — outlier kontaminasyonu önle)
@@ -165,7 +180,8 @@ def find_value_bets(racecard: dict, min_ev_pct: float = 5.0,
 
 def fetch_today_value_alerts(min_ev_pct: float = 5.0,
                               regions: tuple = ("gb", "ire", "fr"),
-                              hours_ahead: int = 2) -> list[dict]:
+                              hours_ahead: int = 2,
+                              my_bookmakers: Optional[list[str]] = None) -> list[dict]:
     """RacingAPI'den bugünkü yarışları çek, value bet alarmları üret.
 
     Returns: [{race_meta, value_bets, off_time, course}, ...]
@@ -191,7 +207,10 @@ def fetch_today_value_alerts(min_ev_pct: float = 5.0,
             races = card.get("races") or [card]  # bazı format'larda flat
             for race in races:
                 # Skip past races (off_time geçmiş)
-                bets = find_value_bets(race, min_ev_pct=min_ev_pct)
+                bets = find_value_bets(
+                    race, min_ev_pct=min_ev_pct,
+                    my_bookmakers=(set(my_bookmakers)
+                                    if my_bookmakers else None))
                 if not bets:
                     continue
                 alerts.append({

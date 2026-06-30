@@ -973,8 +973,14 @@ def _maybe_send_racing_api_value(now, logger):
         regions_str = os.environ.get('TJK_RACING_API_REGIONS', 'gb,ire,fr')
         regions = tuple(r.strip().lower() for r in regions_str.split(',')
                         if r.strip())
+        # Berkay'ın bookmaker hesapları — sadece bu BM'lerde outlier
+        # value veren atlar alert atılır (kullanıcı bahis yapabilir)
+        my_bm_str = os.environ.get('TJK_MY_BOOKMAKERS', 'coral,ladbrokes')
+        my_bookmakers = [b.strip() for b in my_bm_str.split(',')
+                         if b.strip()]
         alerts = fetch_today_value_alerts(
-            min_ev_pct=min_ev, regions=regions)
+            min_ev_pct=min_ev, regions=regions,
+            my_bookmakers=my_bookmakers)
         if not alerts:
             _log(logger, f"[racing-api] {snap_key}: 0 value bet "
                          f"({len(regions)} region taradı)")
