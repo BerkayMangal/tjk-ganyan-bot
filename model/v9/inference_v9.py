@@ -22,6 +22,8 @@ V9_PATH = (Path(__file__).resolve().parent
            / "trained" / "v9_ensemble.json")
 V9_5_PATH = (Path(__file__).resolve().parent
              / "trained" / "v9_5_ensemble.json")
+V10_PATH = (Path(__file__).resolve().parent.parent
+            / "v10" / "trained" / "v10_ensemble.json")
 _V9_CACHE: Optional[dict] = None
 _V9_LOCK = threading.Lock()
 
@@ -41,8 +43,11 @@ def load_v9_ensemble(force: bool = False) -> Optional[dict]:
         return _V9_CACHE
     if _force_v9_skip():
         return None
-    # Öncelik chain: V9.5 → V9
-    if not _force_v95_skip() and V9_5_PATH.exists():
+    # Öncelik chain: V10 → V9.5 → V9
+    force_v10_skip = os.environ.get("TJK_V10_SKIP", "0") == "1"
+    if not force_v10_skip and V10_PATH.exists():
+        path = V10_PATH
+    elif not _force_v95_skip() and V9_5_PATH.exists():
         path = V9_5_PATH
     elif V9_PATH.exists():
         path = V9_PATH
@@ -86,6 +91,11 @@ def load_v9_ensemble(force: bool = False) -> Optional[dict]:
                 "jockey_embedding": d.get("jockey_embedding") or {},
                 "sire_embedding": d.get("sire_embedding") or {},
                 "agf_history_compact": d.get("agf_history_compact") or {},
+                # V10 stats (inference için)
+                "v10_jockey_stats": d.get("v10_jockey_stats") or {},
+                "v10_sire_stats": d.get("v10_sire_stats") or {},
+                "v10_sire_lookup": d.get("v10_sire_lookup") or {},
+                "v10_horse_weight_avg": d.get("v10_horse_weight_avg") or {},
                 "heads": heads,
             }
             logger.info(f"V9 ensemble loaded ({d.get('version')}): "
@@ -160,6 +170,38 @@ def predict_race_v9(
             if feat is None:
                 continue
             _enrich_v8_5(feat, h, hist, field_meta, bundle, ref_date)
+
+        # V10 için 13 ek feature (jockey_dist, sire_dist, at_no, age...)
+        is_v10 = "v10" in (bundle.get("version") or "")
+        if is_v10:
+            try:
+                from forecast.features_v10 import build_v10_features
+                for h, feat, hist in rows:
+                    if feat is None:
+                        continue
+                    nm = h.get("horse_name") or h.get("name") or ""
+                    horse_meta = {
+                        "age": h.get("age"), "weight": h.get("weight"),
+                        "at_no": h.get("horse_no") or h.get("horse_number"),
+                        "jockey": h.get("jockey_name") or h.get("jockey"),
+                        "sire": h.get("sire"),
+                        "n_horses": len(rows),
+                    }
+                    race_context = {
+                        "distance": h.get("distance") or 1600,
+                        "track_type": h.get("track_type") or "Çim",
+                    }
+                    v10_extra = build_v10_features(
+                        nm, ref_date, horse_meta, race_context,
+                        hist or [],
+                        bundle.get("v10_jockey_stats") or {},
+                        bundle.get("v10_sire_stats") or {},
+                        bundle.get("v10_horse_weight_avg") or {},
+                        bundle.get("v10_sire_lookup") or {},
+                    )
+                    feat.update(v10_extra)
+            except Exception as exc:
+                logger.debug(f"V10 enrichment fail: {exc}")
 
     X = np.array([
         [float(r[1].get(c, 0) or 0) if r[1] else 0.0
