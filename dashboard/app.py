@@ -1331,6 +1331,43 @@ def api_canli_v11():
     })
 
 
+@app.route("/api/v11-hybrid/dry")
+def api_v11_hybrid_dry():
+    """Diagnostic — publisher SENKRON çalıştır + hata dönsün.
+
+    ?token=tjk-acil-2026 (veya X-Token header).
+    Response: {status, n_messages, counts, hippos, sample, error, traceback}.
+    30-40 saniye bekler (yerli pipeline).
+    """
+    tok = request.args.get("token", "") or request.headers.get("X-Token", "")
+    if tok != os.getenv("MANUAL_TRIGGER_TOKEN", "tjk-acil-2026"):
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        try:
+            from v11_hybrid_publisher import build_hybrid_report
+        except ImportError:
+            from dashboard.v11_hybrid_publisher import build_hybrid_report
+        target = request.args.get("date") or date.today().isoformat()
+        from datetime import date as _dt
+        r = build_hybrid_report(_dt.fromisoformat(target))
+        msgs = r.get("messages") or []
+        return jsonify({
+            "status": r.get("status"),
+            "date": r.get("date"),
+            "n_messages": r.get("n_messages"),
+            "counts": r.get("counts"),
+            "hippos": [m.get("hippo") for m in msgs],
+            "sample_first_400": msgs[0].get("text", "")[:400] if msgs else "",
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e)[:400],
+            "type": type(e).__name__,
+            "traceback": traceback.format_exc()[:3000],
+        }), 500
+
+
 @app.route("/api/v11-hybrid/send", methods=["POST", "GET"])
 def api_v11_hybrid_send():
     """V11+AGF hibrit tahminler → Telegram (hipodrom bazlı, 3 mesaj).
