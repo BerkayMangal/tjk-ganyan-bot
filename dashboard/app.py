@@ -1331,6 +1331,27 @@ def api_canli_v11():
     })
 
 
+@app.route("/api/v11-hybrid/envcheck")
+def api_v11_env_check():
+    """Env vars mask'li kontrol — TELEGRAM_BOT_TOKEN/CHAT_ID var mı?"""
+    tok = request.args.get("token", "") or request.headers.get("X-Token", "")
+    if tok != os.getenv("MANUAL_TRIGGER_TOKEN", "tjk-acil-2026"):
+        return jsonify({"error": "unauthorized"}), 401
+    def _mask(v):
+        if not v:
+            return {"set": False, "len": 0}
+        return {"set": True, "len": len(v),
+                 "head4": v[:4], "tail4": v[-4:] if len(v) > 8 else "..."}
+    keys = [
+        "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
+        "MANUAL_TRIGGER_TOKEN", "TJK_ULTRA_LEAN",
+        "TJK_V11_HYBRID_TELEGRAM", "TJK_AGF_INTRADAY",
+        "TJK_KUPON_MODE", "TJK_DAILY_COUPON",
+        "TJK_MEASURE_DB_URL", "RACING_API_KEY",
+    ]
+    return jsonify({k: _mask(os.environ.get(k, "")) for k in keys})
+
+
 @app.route("/api/v11-hybrid/ping")
 def api_v11_hybrid_ping():
     """PING — Telegram'a hızlı V11 test mesajı (2sn), pipeline ÇAĞIRMAZ.
