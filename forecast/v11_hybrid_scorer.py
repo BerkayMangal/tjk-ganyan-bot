@@ -182,6 +182,115 @@ def format_race_top4(race_meta: dict, horses_scored: list,
     return "\n".join(lines)
 
 
+def _pick_leg(scored: list) -> tuple:
+    """Koşu tipi + at seçimi (adaptive).
+
+    top-1 hybrid gap + V11 seviyesine göre:
+      🔒 TEK      : top-1 gap ≥ 0.10 · V11 ≥ 0.30 · 1 at
+      ✅ SAĞLAM  : gap ≥ 0.05 · V11 ≥ 0.25 · 2 at
+      ◆ ORTA    : V11 ≥ 0.20 · 3 at
+      ◆ ORTA    : V11 ≥ 0.15 · 4 at
+      🌐 SÜRPRİZ : diğer · 5 at
+    """
+    if not scored:
+        return [], "•", "boş"
+    if len(scored) == 1:
+        return scored[:1], "🔒 TEK", "1 at"
+    top = scored[0]
+    gap = top["hybrid_score"] - scored[1]["hybrid_score"]
+    v11 = top["v11_p_top4"]
+    # Model + AGF uyumlu ise gap büyür → sağlam
+    if gap >= 0.10 and v11 >= 0.30:
+        return scored[:1], "🔒 TEK", "sağlam favori"
+    if gap >= 0.05 and v11 >= 0.25:
+        return scored[:2], "✅ SAĞLAM", "az at yeter"
+    if v11 >= 0.20:
+        return scored[:3], "◆ ORTA", "3 at güvenli"
+    if v11 >= 0.15:
+        return scored[:4], "◆ ORTA", "4 at ihtiyat"
+    return scored[:5], "🌐 SÜRPRİZ", "geniş tut"
+
+
+def format_altili_v11(hippo_name: str,
+                       races_scored: list,
+                       unit_price: float = 0.25) -> str:
+    """V11 hibrit altılı KUPON ÖNERİSİ — koşu tipine göre at seçimi.
+
+    Berkay (2026-07-01): 'sürpriz koşuya çok at, dar koşuya az at.'
+    """
+    n = len(races_scored)
+    lines = [
+        f"🎯 <b>V11 ALTILI</b> · MODEL:V11 · {hippo_name} · {n} koşu",
+        f"<i>V11 hibrit karar (model + AGF + steam)</i>",
+    ]
+    at_counts = []
+    combo = 1
+    for race in races_scored:
+        kosu = race.get("kosu_no") or "?"
+        dist = race.get("distance") or ""
+        start = race.get("start_time") or ""
+        scored = race.get("scored") or []
+        selected, tipi, aciklama = _pick_leg(scored)
+        at_counts.append(len(selected))
+        combo *= max(1, len(selected))
+
+        head = f"\n<b>K{kosu}</b>"
+        if start:
+            head += f" · {start}"
+        if dist:
+            head += f" · {dist}m"
+        head += f"  {tipi} ({len(selected)} at · {aciklama})"
+        lines.append(head)
+
+        for i, h in enumerate(selected, 1):
+            tags = []
+            if h.get("tier") == "⭐ ELMAS":
+                tags.append("⭐")
+            if h.get("tier") == "💎 STEAM VALUE":
+                tags.append("💎")
+            if h.get("tier") == "🔥 FIRSAT":
+                tags.append("🔥")
+            if h.get("is_drift"):
+                tags.append("⚠")
+            if h.get("jockey_tag"):
+                tags.append("🏇")
+            tag_str = (" " + "".join(tags)) if tags else ""
+            delta = h.get("agf_delta_pp") or 0
+            delta_str = (f" Δ{delta:+.0f}" if abs(delta) >= 3 else "")
+            lines.append(
+                f"  <b>#{h['at_no']}</b> {h['name']}  "
+                f"<code>M{h['v11_p_top4']*100:.0f}·A{h['agf_pct']:.0f}"
+                f"{delta_str}</code>{tag_str}")
+
+    cost = combo * unit_price
+    lines.append("")
+    lines.append(
+        f"💰 <b>{' × '.join(str(x) for x in at_counts)} = "
+        f"{combo:,} kombi × {unit_price:.2f} TL = {cost:,.2f} TL</b>")
+
+    # Steam / drift özet
+    steam_all = []
+    drift_all = []
+    for race in races_scored:
+        for h in (race.get("scored") or []):
+            if h.get("is_steam"):
+                steam_all.append(
+                    f"K{race['kosu_no']}#{h['at_no']} +{h['agf_delta_pp']:.1f}pp")
+            if h.get("is_drift"):
+                drift_all.append(
+                    f"K{race['kosu_no']}#{h['at_no']} {h['agf_delta_pp']:+.1f}pp")
+    if steam_all:
+        lines.append(f"⚡ AGF STEAM: {', '.join(steam_all[:6])}")
+    if drift_all:
+        lines.append(f"📉 AGF DRIFT: {', '.join(drift_all[:6])}")
+
+    lines.append("")
+    lines.append(
+        "<i>M=V11 model % · A=AGF public % · Δ=AGF değişimi · "
+        "🔒 tek at · ✅ sağlam · ◆ orta · 🌐 sürprize açık</i>")
+    return "\n".join(lines)
+
+
 def format_hippo_altili(hippo_name: str,
                          races_scored: list,
                          k: int = 4) -> str:

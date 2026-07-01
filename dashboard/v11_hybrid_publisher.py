@@ -74,21 +74,25 @@ def _write_forward_log(date_str: str, hippo: str,
 
 
 def _extract_v11_p4(horse: dict) -> float:
-    """V11 model prob 0..1. yerli_engine 'model_prob' % scale."""
-    for k in ("v11_p_top4", "p_top4", "raw_p_top4", "model_p_top4"):
-        v = horse.get(k)
-        if v is not None:
-            try:
-                return float(v)
-            except Exception:
-                pass
-    # yerli_engine model_prob = % (0..100)
+    """V11 model prob 0..1.
+
+    PROD ÖNCELİK: yerli_engine model_prob (at bazlı gerçek değer).
+    V11 direct predict prod'da history_map boş (backfill data yok) →
+    uniform değer veriyor. yerli_engine V6/V7 shadow model_prob gerçek.
+    """
     v = horse.get("model_prob")
     if v is not None:
         try:
             return float(v) / 100.0
         except Exception:
             pass
+    for k in ("v11_p_top4", "p_top4", "raw_p_top4", "model_p_top4"):
+        val = horse.get(k)
+        if val is not None:
+            try:
+                return float(val)
+            except Exception:
+                pass
     return 0.0
 
 
@@ -113,7 +117,8 @@ def build_hybrid_report(target_date, ensure_snapshot: bool = True) -> dict:
     except ImportError:
         from dashboard.yerli_engine import run_yerli_pipeline
     from forecast.v11_hybrid_scorer import (
-        score_race, format_race_top4, format_hippo_altili)
+        score_race, format_race_top4, format_hippo_altili,
+        format_altili_v11)
     from forecast.agf_intraday import (
         snapshot_agf, detect_steam_moves,
     )
@@ -187,30 +192,35 @@ def build_hybrid_report(target_date, ensure_snapshot: bool = True) -> dict:
             horses = leg.get("all_horses_with_mp") or []
             if not horses:
                 continue
-            # V11 direct predict — gerçek p_top4
+            # V11 direct predict — env flag ile aç (prod'da history_map boş
+            # olduğu için uniform değer veriyor; yerli_engine model_prob
+            # kullanılıyor default).
             v11_by_at = {}
-            try:
-                v11_input = []
-                for h in horses:
-                    v11_input.append({
-                        "horse_no": h.get("number") or h.get("at_no"),
-                        "horse_name": h.get("name") or h.get("horse_name"),
-                        "age": h.get("age"), "weight": h.get("weight"),
-                        "jockey_name": h.get("jockey_name")
-                                        or h.get("jockey"),
-                        "sire": h.get("sire"),
-                        "distance": distance, "track_type": "Çim",
-                        "hippodrome": hippo_name,
-                    })
-                preds = predict_race_v9(
-                    v11_input, history_lookup=_v11_lookup,
-                    ref_date=date_str)
-                if preds:
-                    for p in preds:
-                        v11_by_at[p.get("horse_no")] = p
-            except Exception as _e_v11:
-                log.debug(f"[v11-hybrid] v11 direct fail K{kosu_no}: "
-                           f"{_e_v11}")
+            if os.environ.get("TJK_V11_DIRECT_PREDICT", "0") == "1":
+                try:
+                    v11_input = []
+                    for h in horses:
+                        v11_input.append({
+                            "horse_no": h.get("number") or h.get("at_no"),
+                            "horse_name": (h.get("name")
+                                            or h.get("horse_name")),
+                            "age": h.get("age"),
+                            "weight": h.get("weight"),
+                            "jockey_name": (h.get("jockey_name")
+                                             or h.get("jockey")),
+                            "sire": h.get("sire"),
+                            "distance": distance, "track_type": "Çim",
+                            "hippodrome": hippo_name,
+                        })
+                    preds = predict_race_v9(
+                        v11_input, history_lookup=_v11_lookup,
+                        ref_date=date_str)
+                    if preds:
+                        for p in preds:
+                            v11_by_at[p.get("horse_no")] = p
+                except Exception as _e_v11:
+                    log.debug(f"[v11-hybrid] v11 direct fail K{kosu_no}: "
+                               f"{_e_v11}")
 
             scored_inputs = []
             for h in horses:
@@ -260,7 +270,13 @@ def build_hybrid_report(target_date, ensure_snapshot: bool = True) -> dict:
 
         # Bir hippodrome bittiğinde: TEK mesaj (6 koşu birleşik)
         if hippo_races_scored:
-            text = format_hippo_altili(hippo_name, hippo_races_scored, k=4)
+            # ALTILI format default (koşu tipine göre adaptive at seçimi
+            # + kombo hesap). Top-4 format env flag ile.
+            if os.environ.get("TJK_V11_FORMAT", "altili") == "top4":
+                text = format_hippo_altili(
+                    hippo_name, hippo_races_scored, k=4)
+            else:
+                text = format_altili_v11(hippo_name, hippo_races_scored)
             first_start = min(
                 (r.get("start_time") or "99:99"
                  for r in hippo_races_scored),
