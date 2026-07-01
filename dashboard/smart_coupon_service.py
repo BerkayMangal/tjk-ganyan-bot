@@ -358,6 +358,33 @@ def send_telegram(text, dry_run=False):
         return {'sent': False, 'reason': 'no_creds'}
     if dry_run:
         return {'sent': False, 'reason': 'dry_run', 'len': len(text)}
+    # BERKAY (2026-07-01): ULTRA_LEAN master gate — sadece izin verilen
+    # mesaj tipleri geçer. Text içeriğinde whitelist belirteç kontrolü.
+    if os.environ.get('TJK_ULTRA_LEAN', '0') == '1':
+        allowed_markers = [
+            '🚦 <b>T-3',        # T-3 top-4 (yeni format)
+            '🚦 <b>T-5',        # T-5 top-4 (eski format, dublicate güvenlik)
+            '🎯 <b>ALTILI',      # T-5 altılı kupon
+            '💰 <b>VALUE BET',  # UK value bet
+            '💰 <b>RACING API', # UK value bet summary
+            '🎯 <b>GB',          # UK race TOP-4 (MED)
+            '🎯 <b>IRE',
+            '🎯 <b>FR',
+            '🔥 <b>GB',          # UK race TOP-4 (HIGH)
+            '🔥 <b>IRE',
+            '🔥 <b>FR',
+            '🌍 <b>GB',          # UK race TOP-4 (LOW)
+            '🌍 <b>IRE',
+            '🌍 <b>FR',
+            '📊 <b>RETRO',       # Akşam retro
+        ]
+        text_lower = text[:200]  # sadece başı incele — perf
+        if not any(marker in text_lower for marker in allowed_markers):
+            # Sessizce drop — log'a fallback
+            import logging
+            logging.getLogger('smart_coupon').info(
+                f"[ULTRA_LEAN_DROP] {text[:80].replace(chr(10), ' | ')}")
+            return {'sent': False, 'reason': 'ultra_lean_drop'}
     try:
         import urllib.request, urllib.parse
         max_len = 3800
