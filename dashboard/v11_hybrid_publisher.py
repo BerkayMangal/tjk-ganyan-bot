@@ -16,6 +16,7 @@ Scheduler otomatik: coupon_scheduler _maybe_send_v11_hybrid_daily hook.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -26,6 +27,50 @@ log = logging.getLogger("v11_hybrid_publisher")
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+
+FORWARD_LOG_DIR = ROOT / "data" / "v11_forward_log"
+
+
+def _write_forward_log(date_str: str, hippo: str,
+                        hippo_races_scored: list) -> None:
+    """Her koşu için TOP-4 predictions → JSONL append.
+
+    File: data/v11_forward_log/{date}.jsonl (append idempotent)
+    Row schema:
+      date, hippo, kosu_no, distance, start_time,
+      rank (1..4), at_no, name, v11_p_top4, agf_pct,
+      agf_delta_pp, hybrid_score, tier, is_steam, is_drift,
+      value_edge, snapshot_ts
+    """
+    FORWARD_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    fp = FORWARD_LOG_DIR / f"{date_str}.jsonl"
+    ts = datetime.utcnow().isoformat()
+    rows = []
+    for race in hippo_races_scored:
+        kosu = race.get("kosu_no")
+        dist = race.get("distance")
+        start = race.get("start_time")
+        for rank, s in enumerate(race.get("scored", [])[:4], 1):
+            rows.append({
+                "date": date_str, "hippo": hippo,
+                "kosu_no": kosu, "distance": dist,
+                "start_time": start,
+                "rank": rank,
+                "at_no": s.get("at_no"),
+                "name": s.get("name"),
+                "v11_p_top4": s.get("v11_p_top4"),
+                "agf_pct": s.get("agf_pct"),
+                "agf_delta_pp": s.get("agf_delta_pp"),
+                "hybrid_score": s.get("hybrid_score"),
+                "value_edge": s.get("value_edge"),
+                "tier": s.get("tier"),
+                "is_steam": s.get("is_steam"),
+                "is_drift": s.get("is_drift"),
+                "snapshot_ts": ts,
+            })
+    with open(fp, "a", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
 def _extract_v11_p4(horse: dict) -> float:
@@ -166,6 +211,11 @@ def build_hybrid_report(target_date, ensure_snapshot: bool = True) -> dict:
                 "n_races": len(hippo_races_scored),
                 "races": hippo_races_scored,
             })
+            # Forward log — her koşu × top-4 at → JSONL
+            try:
+                _write_forward_log(date_str, hippo_name, hippo_races_scored)
+            except Exception as exc:
+                log.warning(f"[v11-hybrid] forward log fail: {exc}")
 
     return {
         "status": "ok",
