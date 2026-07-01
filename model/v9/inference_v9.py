@@ -24,6 +24,8 @@ V9_5_PATH = (Path(__file__).resolve().parent
              / "trained" / "v9_5_ensemble.json")
 V10_PATH = (Path(__file__).resolve().parent.parent
             / "v10" / "trained" / "v10_ensemble.json")
+V11_PATH = (Path(__file__).resolve().parent.parent
+            / "v11" / "trained" / "v11_ensemble.json")
 _V9_CACHE: Optional[dict] = None
 _V9_LOCK = threading.Lock()
 
@@ -43,9 +45,12 @@ def load_v9_ensemble(force: bool = False) -> Optional[dict]:
         return _V9_CACHE
     if _force_v9_skip():
         return None
-    # Öncelik chain: V10 → V9.5 → V9
+    # Öncelik chain: V11 → V10 → V9.5 → V9
+    force_v11_skip = os.environ.get("TJK_V11_SKIP", "0") == "1"
     force_v10_skip = os.environ.get("TJK_V10_SKIP", "0") == "1"
-    if not force_v10_skip and V10_PATH.exists():
+    if not force_v11_skip and V11_PATH.exists():
+        path = V11_PATH
+    elif not force_v10_skip and V10_PATH.exists():
         path = V10_PATH
     elif not _force_v95_skip() and V9_5_PATH.exists():
         path = V9_5_PATH
@@ -96,6 +101,12 @@ def load_v9_ensemble(force: bool = False) -> Optional[dict]:
                 "v10_sire_stats": d.get("v10_sire_stats") or {},
                 "v10_sire_lookup": d.get("v10_sire_lookup") or {},
                 "v10_horse_weight_avg": d.get("v10_horse_weight_avg") or {},
+                # V11 stats (point-in-time timelines)
+                "v11_elo_final": d.get("v11_elo_final") or {},
+                "v11_elo_timeline": d.get("v11_elo_timeline") or {},
+                "v11_h2h_dates": d.get("v11_h2h_dates") or {},
+                "v11_pace_timeline": d.get("v11_pace_timeline") or {},
+                "v11_track_timeline": d.get("v11_track_timeline") or {},
                 "heads": heads,
             }
             logger.info(f"V9 ensemble loaded ({d.get('version')}): "
@@ -172,7 +183,9 @@ def predict_race_v9(
             _enrich_v8_5(feat, h, hist, field_meta, bundle, ref_date)
 
         # V10 için 13 ek feature (jockey_dist, sire_dist, at_no, age...)
-        is_v10 = "v10" in (bundle.get("version") or "")
+        is_v10 = ("v10" in (bundle.get("version") or "")
+                  or "v11" in (bundle.get("version") or ""))
+        is_v11 = "v11" in (bundle.get("version") or "")
         if is_v10:
             try:
                 from forecast.features_v10 import build_v10_features
@@ -202,6 +215,48 @@ def predict_race_v9(
                     feat.update(v10_extra)
             except Exception as exc:
                 logger.debug(f"V10 enrichment fail: {exc}")
+
+        # V11 için 19 ek feature (H2H Elo + Pace + Track)
+        if is_v11:
+            try:
+                from forecast.features_v11_h2h import build_h2h_features
+                from forecast.features_v11_pace import build_pace_features
+                from forecast.features_v11_track import build_track_features
+                # Restore h2h_dates from string keys
+                v11_h2h_str = bundle.get("v11_h2h_dates") or {}
+                v11_h2h_dates = {}
+                for k, v in v11_h2h_str.items():
+                    if "||" in k:
+                        a, b = k.split("||", 1)
+                        v11_h2h_dates[(a, b)] = v
+                elo_data = {
+                    "final_elo": bundle.get("v11_elo_final") or {},
+                    "timeline": bundle.get("v11_elo_timeline") or {},
+                    "h2h_dates": v11_h2h_dates,
+                }
+                pace_timeline = bundle.get("v11_pace_timeline") or {}
+                track_timeline = bundle.get("v11_track_timeline") or {}
+                field_names = [(h.get("horse_name") or h.get("name") or "")
+                                for h, _, _ in rows]
+                hippo = (horses[0].get("hippodrome") or
+                          horses[0].get("hippo") or "")
+                distance = horses[0].get("distance") or 1600
+                race_ctx = {"hippo": hippo, "distance": distance}
+                rd = ref_date or "9999-12-31"
+                for h, feat, hist in rows:
+                    if feat is None:
+                        continue
+                    nm = h.get("horse_name") or h.get("name") or ""
+                    field = [n for n in field_names if n and n != nm]
+                    h2h = build_h2h_features(nm, rd, field, elo_data)
+                    pace = build_pace_features(nm, rd, field, pace_timeline)
+                    track = build_track_features(nm, rd, race_ctx,
+                                                   track_timeline)
+                    feat.update(h2h)
+                    feat.update(pace)
+                    feat.update(track)
+            except Exception as exc:
+                logger.debug(f"V11 enrichment fail: {exc}")
 
     X = np.array([
         [float(r[1].get(c, 0) or 0) if r[1] else 0.0
