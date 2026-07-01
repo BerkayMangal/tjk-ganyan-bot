@@ -932,28 +932,46 @@ def api_canli_tjk():
 
 @app.route("/api/canli/uk")
 def api_canli_uk():
-    """Bugünkü UK value bet alerts (RacingAPI)."""
+    """UK/IRE/FR: yarış TOP-4 + value bets + cross-market arbitraj."""
     from datetime import date as _date
     from flask import request, jsonify
     target_str = request.args.get("date") or _date.today().isoformat()
-    try:
-        from forecast.racing_api_value import fetch_today_value_alerts
-    except Exception as exc:
-        return jsonify({"error": f"racing_api_value: {exc}"}), 500
-    min_ev = float(os.environ.get("TJK_RACING_API_MIN_EV", "5.0"))
     regions_str = os.environ.get("TJK_RACING_API_REGIONS", "gb,ire,fr")
     regions = tuple(r.strip().lower() for r in regions_str.split(",")
                     if r.strip())
     my_bm_str = os.environ.get("TJK_MY_BOOKMAKERS", "")
     my_bookmakers = [b.strip() for b in my_bm_str.split(",")
                      if b.strip()] or None
+    min_ev = float(os.environ.get("TJK_RACING_API_MIN_EV", "5.0"))
+    # Value alerts (mevcut)
     try:
+        from forecast.racing_api_value import fetch_today_value_alerts
         alerts = fetch_today_value_alerts(
             min_ev_pct=min_ev, regions=regions,
             my_bookmakers=my_bookmakers)
     except Exception as exc:
-        return jsonify({"error": str(exc)[:200]}), 500
+        alerts = []
+    # UK race TOP-4 (yeni)
+    try:
+        from forecast.uk_race_analyzer import (
+            fetch_upcoming_uk_races, find_cross_market_arbitrage,
+        )
+        races = fetch_upcoming_uk_races(
+            hours_ahead=4.0, regions=regions,
+            my_bookmakers=my_bookmakers)
+        # Cross-market arbitraj (aynı at TJK'da)
+        try:
+            from dashboard.smart_coupon_service import build_all_hippos
+            tjk_pools = build_all_hippos(_date.fromisoformat(target_str))
+        except Exception:
+            tjk_pools = []
+        for race in races:
+            race["arbitrage_signals"] = find_cross_market_arbitrage(
+                race, tjk_pools)
+    except Exception as exc:
+        races = []
     return jsonify({"date": target_str, "alerts": alerts,
+                    "races": races,
                     "min_ev_pct": min_ev,
                     "regions": list(regions),
                     "my_bookmakers": my_bookmakers or []})

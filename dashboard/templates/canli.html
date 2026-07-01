@@ -422,36 +422,88 @@ async function loadUK() {
   try {
     const res = await fetch(`/api/canli/uk?date=${TODAY}`);
     const data = await res.json();
-    if (!data.alerts || !data.alerts.length) {
+    const has_races = data.races && data.races.length;
+    const has_alerts = data.alerts && data.alerts.length;
+    if (!has_races && !has_alerts) {
       status.style.display = 'none';
       alerts.innerHTML = `<div class="empty"><div class="empty-icon">🌍</div>
-        Bugün UK/IRE/FR'de value bet tespit edilmedi.<br>
-        <small>Coral/Ladbrokes outlier verdiğinde bu sekmede görünür. Saatte 1 tarama.</small></div>`;
+        UK/IRE/FR için veri yok.<br>
+        <small>Yarış saatine yaklaşınca top-4 + varsa value bet burada görünür.</small></div>`;
       return;
     }
     status.style.display = 'none';
-    alerts.innerHTML = data.alerts.map(a => `
-      <div class="vb-card">
-        <div class="vb-header">
-          <div class="vb-course">
-            <span class="vb-region">${a.region}</span>
-            ${a.course}
-          </div>
-          <div class="vb-off">${a.off_time || ''}</div>
-        </div>
-        ${a.value_bets.slice(0, 3).map(vb => `
-          <div class="vb-bet">
-            <div class="vb-name">${vb.horse_name}</div>
-            <div class="vb-detail">
-              <div><span class="lbl">Odds:</span> <b>${vb.best_odds}</b> <span class="vb-bm">${vb.best_bookmaker}</span></div>
-              <div><span class="lbl">EV:</span> <span class="vb-ev">+${vb.ev_pct}%</span></div>
-              <div><span class="lbl">Consensus:</span> ${vb.consensus_prob_pct}%</div>
-              <div><span class="lbl">Kelly:</span> ${vb.kelly_pct.toFixed(1)}%</div>
+    let html = '';
+
+    // TOP-4 yarış kartları
+    if (has_races) {
+      html += '<div style="margin-bottom:16px;font-size:0.85em;color:#8b949e;">🌍 <b>UK/IRE/FR YAKLAŞAN YARIŞLAR — TOP-4 tahmini</b></div>';
+      for (const r of data.races) {
+        const conf = r.confidence || 'LOW';
+        const icon = conf === 'HIGH' ? '🔥' : (conf === 'MED' ? '🎯' : '🌍');
+        html += `<div class="vb-card">
+          <div class="vb-header">
+            <div class="vb-course">
+              <span class="vb-region">${r.region}</span>
+              ${icon} ${r.course}
             </div>
-          </div>
-        `).join('')}
-      </div>
-    `).join('');
+            <div class="vb-off">${r.off_time || ''} · ${r.n_runners} at · ${conf}</div>
+          </div>`;
+        // Strong favorite (arbitraj adayı)
+        if (r.strong_favorite) {
+          const sf = r.strong_favorite;
+          html += `<div class="vb-bet" style="border-left-color:#ff6b6b;">
+            <div class="vb-name">🔥 FAVORİ: ${sf.horse_name}</div>
+            <div class="vb-detail">
+              <div><span class="lbl">Consensus:</span> <b>${sf.consensus_prob_pct}%</b></div>
+              <div><span class="lbl">Odds:</span> <b>${sf.best_odds}</b> <span class="vb-bm">${sf.best_bookmaker}</span></div>
+            </div>
+          </div>`;
+        }
+        // TOP-4 list
+        html += '<div style="padding:0 4px;">';
+        for (const [i, h] of (r.top4 || []).entries()) {
+          const star = h.is_my_bookmaker ? ' ⭐' : '';
+          html += `<div class="top5-row">
+            <div class="top5-rank r${i+1}">${i+1}</div>
+            <div class="top5-name"><b>${h.horse_name}</b> ${star}</div>
+            <div class="top5-score">${h.consensus_prob_pct}% · ${h.best_odds}</div>
+          </div>`;
+        }
+        html += '</div>';
+        // Value bets
+        if (r.value_bets && r.value_bets.length) {
+          html += '<div style="margin-top:10px;padding-top:10px;border-top:1px solid #21262d;">';
+          html += '<div style="font-size:0.75em;color:#ffd700;font-weight:700;margin-bottom:6px;">💰 VALUE BETS</div>';
+          for (const vb of r.value_bets.slice(0, 2)) {
+            html += `<div class="vb-bet">
+              <div class="vb-name">${vb.horse_name}</div>
+              <div class="vb-detail">
+                <div><span class="lbl">Odds:</span> <b>${vb.best_odds}</b> <span class="vb-bm">${vb.best_bookmaker}</span></div>
+                <div><span class="lbl">EV:</span> <span class="vb-ev">+${vb.ev_pct}%</span></div>
+                <div><span class="lbl">Kelly:</span> ${vb.kelly_pct.toFixed(1)}%</div>
+              </div>
+            </div>`;
+          }
+          html += '</div>';
+        }
+        // Arbitraj sinyalleri (aynı at TJK'da)
+        if (r.arbitrage_signals && r.arbitrage_signals.length) {
+          html += '<div style="margin-top:10px;padding:10px;background:rgba(255,215,0,0.08);border-left:3px solid #ffd700;border-radius:4px;">';
+          html += '<div style="font-size:0.75em;color:#ffd700;font-weight:700;margin-bottom:4px;">🔗 CROSS-MARKET ARBITRAJ</div>';
+          for (const a of r.arbitrage_signals) {
+            html += `<div style="font-size:0.82em;color:#e6edf3;">
+              <b>${a.hippo} R${a.race_no} · ${a.horse}</b><br>
+              <span style="font-size:0.85em;color:#8b949e;">${a.note}</span>
+            </div>`;
+          }
+          html += '</div>';
+        }
+        html += '</div>';
+      }
+    }
+
+    // Bağımsız value bet alerts (yarış bazlı gösterimi zaten var)
+    alerts.innerHTML = html || '';
     document.getElementById('lastUpdate').textContent = '· ' + new Date().toLocaleTimeString('tr-TR');
   } catch (e) {
     status.innerHTML = '⚠ Hata: ' + e.message;

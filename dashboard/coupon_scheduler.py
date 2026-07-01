@@ -972,6 +972,12 @@ def _tick_locked(logger):
     except Exception as _e_ra:
         _log(logger, f"[coupon_sched] racing-api fail: "
                       f"{repr(_e_ra)[:160]}")
+    # UK race TOP-4 + arbitraj (saatte 1, farklı dakika)
+    try:
+        _maybe_send_uk_race_top4(now, logger)
+    except Exception as _e_ut:
+        _log(logger, f"[coupon_sched] uk-top4 fail: "
+                      f"{repr(_e_ut)[:160]}")
     # ULTRA_LEAN modda T-5 altılı + T-3 top-4 hook'ları
     try:
         _maybe_send_v9_t5_altili(None, now, logger)
@@ -984,6 +990,94 @@ def _tick_locked(logger):
         _log(logger, f"[coupon_sched] v8-prerace fail: "
                       f"{repr(_e_pr)[:160]}")
     _save_state(day, st)
+
+
+def _maybe_send_uk_race_top4(now, logger):
+    """UK yarış TOP-4 tahmini + arbitraj — Telegram pre-race alert.
+
+    Berkay (2026-07-01): 'yurtdisi yarislari icin de gelmesi lazim top4'.
+
+    Mantık:
+      • Saatte 1 kez UK/IRE/FR yarış listesi çek
+      • Bookmaker consensus'tan top-4 üret
+      • Arbitraj: aynı at TJK'da varsa cross-market signal
+      • Value bet varsa öne çıkar
+      • Yarışa 30dk'dan yakın olanlara Telegram at
+
+    Env: TJK_UK_RACE_TOP4=1 (default 1 — kapamak için 0)
+    """
+    if os.environ.get('TJK_UK_RACE_TOP4', '1') != '1':
+        return
+    # Saatte 1 (dakika 15-25 arası, racing_api_value ile çakışmasın)
+    if not (15 <= now.minute <= 25):
+        return
+    day = now.date().isoformat()
+    st = _load_state(day) or {}
+    snap_key = f"H{now.hour}"
+    snaps = set(st.get('uk_race_top4_hours', []) or [])
+    if snap_key in snaps:
+        return
+    try:
+        from forecast.uk_race_analyzer import (
+            fetch_upcoming_uk_races, format_uk_race_telegram,
+            find_cross_market_arbitrage,
+        )
+    except Exception as _e_imp:
+        _log(logger, f"[uk-top4] import: {repr(_e_imp)[:160]}")
+        return
+    try:
+        my_bm_str = os.environ.get('TJK_MY_BOOKMAKERS', '')
+        my_bookmakers = [b.strip() for b in my_bm_str.split(',')
+                         if b.strip()] or None
+        regions_str = os.environ.get('TJK_RACING_API_REGIONS',
+                                       'gb,ire,fr')
+        regions = tuple(r.strip().lower() for r in regions_str.split(',')
+                        if r.strip())
+        analyses = fetch_upcoming_uk_races(
+            hours_ahead=2.0, regions=regions,
+            my_bookmakers=my_bookmakers)
+        if not analyses:
+            snaps.add(snap_key)
+            st['uk_race_top4_hours'] = sorted(snaps)
+            _save_state(day, st)
+            _log(logger, f"[uk-top4] {snap_key}: 0 yarış")
+            return
+        # TJK pools (arbitraj için)
+        try:
+            tjk_pools = _build_pools(now)
+        except Exception:
+            tjk_pools = []
+
+        sent_races = set(st.get('uk_race_top4_sent', []) or [])
+        sent_now = 0
+        for analysis in analyses:
+            race_id = str(analysis.get('race_id', ''))
+            if race_id in sent_races:
+                continue
+            # Arbitraj sinyalleri (UK favori + TJK'da underbet)
+            arbs = find_cross_market_arbitrage(analysis, tjk_pools)
+            text = format_uk_race_telegram(analysis)
+            if arbs:
+                text += "\n\n🔗 <b>CROSS-MARKET ARBITRAJ:</b>"
+                for a in arbs[:2]:
+                    text += (f"\n  {a['hippo']} R{a['race_no']}: "
+                             f"<b>{a['horse']}</b> — {a['note']}")
+            try:
+                _svc().send_telegram(text)
+                sent_races.add(race_id)
+                sent_now += 1
+                _log(logger, f"[uk-top4] sent {analysis['region']} "
+                             f"{analysis['course']}")
+            except Exception as _e_tg:
+                _log(logger, f"[uk-top4] send fail: {repr(_e_tg)[:160]}")
+        snaps.add(snap_key)
+        st['uk_race_top4_hours'] = sorted(snaps)
+        st['uk_race_top4_sent'] = sorted(sent_races)
+        _save_state(day, st)
+        _log(logger, f"[uk-top4] {snap_key}: {len(analyses)} yarış, "
+                     f"{sent_now} yeni alert")
+    except Exception as exc:
+        _log(logger, f"[uk-top4] skip: {repr(exc)[:200]}")
 
 
 def _maybe_capture_uk_live_odds(now, logger):
