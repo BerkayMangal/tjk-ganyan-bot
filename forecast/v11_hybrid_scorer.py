@@ -190,7 +190,10 @@ def format_hippo_altili(hippo_name: str,
     races_scored: [{kosu_no, distance, start_time, scored: [...]}, ...]
     """
     total = len(races_scored)
-    lines = [f"🎯 <b>V11 HYBRID</b>  {hippo_name} · {total} koşu"]
+    lines = [
+        f"🎯 <b>V11 HYBRID</b> · MODEL:V11 · {hippo_name} · {total} koşu",
+        f"<i>V11 ensemble (XGB+LGBM+CAT) + H2H Elo + Pace + Track + AGF steam</i>",
+    ]
     steam_all = []
     drift_all = []
     tier_summary = {"ELMAS": [], "FIRSAT": [], "STEAM_V": [], "SAGLAM": []}

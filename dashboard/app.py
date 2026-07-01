@@ -1331,6 +1331,40 @@ def api_canli_v11():
     })
 
 
+@app.route("/api/v11-hybrid/ping")
+def api_v11_hybrid_ping():
+    """PING — Telegram'a hızlı V11 test mesajı (2sn), pipeline ÇAĞIRMAZ.
+
+    ?token=tjk-acil-2026 · Response: send result.
+    """
+    tok = request.args.get("token", "") or request.headers.get("X-Token", "")
+    if tok != os.getenv("MANUAL_TRIGGER_TOKEN", "tjk-acil-2026"):
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        try:
+            from smart_coupon_service import send_telegram
+        except ImportError:
+            from dashboard.smart_coupon_service import send_telegram
+        text = (
+            "🎯 <b>V11 HYBRID</b> · PING TEST\n"
+            "<i>Bu mesaj gelirse V11 hibrit sistemi CANLI.</i>\n\n"
+            "• Model: V11 ensemble (XGB+LGBM+CAT, 123 feature)\n"
+            "• Yeni: H2H Elo + Pace + Track + AGF steam\n"
+            "• top-4 AUC: 0.7844 (V10 → +1.83pp)\n"
+            f"• Tetik: {datetime.utcnow().isoformat()[:19]}Z\n\n"
+            "<b>Kanıt: bu mesaj = V11 kod path'i çalıştı.</b>"
+        )
+        r = send_telegram(text)
+        return jsonify({"ping_result": r, "text_len": len(text)})
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e)[:400],
+            "type": type(e).__name__,
+            "traceback": traceback.format_exc()[:2000],
+        }), 500
+
+
 @app.route("/api/v11-hybrid/dry")
 def api_v11_hybrid_dry():
     """Diagnostic — publisher SENKRON çalıştır + hata dönsün.
