@@ -196,7 +196,9 @@ def build_hybrid_report(target_date, ensure_snapshot: bool = True) -> dict:
             # olduğu için uniform değer veriyor; yerli_engine model_prob
             # kullanılıyor default).
             v11_by_at = {}
-            if os.environ.get("TJK_V11_DIRECT_PREDICT", "0") == "1":
+            # V11 bundle içinde history_compact varsa direkt predict çalışır
+            # (data volume gerektirmez). Env kapatma imkanı var.
+            if os.environ.get("TJK_V11_DIRECT_PREDICT", "1") == "1":
                 try:
                     v11_input = []
                     for h in horses:

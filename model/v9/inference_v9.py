@@ -107,6 +107,8 @@ def load_v9_ensemble(force: bool = False) -> Optional[dict]:
                 "v11_h2h_dates": d.get("v11_h2h_dates") or {},
                 "v11_pace_timeline": d.get("v11_pace_timeline") or {},
                 "v11_track_timeline": d.get("v11_track_timeline") or {},
+                # V11 history compact (prod'da data volume yerine bundle-gömü)
+                "v11_history_compact": d.get("v11_history_compact") or {},
                 "heads": heads,
             }
             logger.info(f"V9 ensemble loaded ({d.get('version')}): "
@@ -154,6 +156,11 @@ def predict_race_v9(
 
     feature_cols = bundle["feature_cols"]
     heads = bundle["heads"]
+
+    # V11: history_lookup verilmemişse bundle'daki compact'ı kullan
+    _bundle_hist = bundle.get("v11_history_compact") or {}
+    if history_lookup is None and _bundle_hist:
+        history_lookup = lambda nm: _bundle_hist.get(nm) or []
 
     # Per-horse base features
     rows = []
