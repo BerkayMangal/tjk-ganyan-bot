@@ -378,6 +378,9 @@ def send_telegram(text, dry_run=False):
             '🌍 <b>FR',
             '📊 <b>RETRO',       # Akşam retro
             '🎯 <b>V11 HYBRID',  # V11 hybrid daily (model + AGF + steam)
+            '🎯 <b>V11 ALTILI',  # V11 altılı kupon formatı
+            '🎯 V11 HYBRID',      # Bold'suz varyant (ping test)
+            '🎯 V11 ALTILI',
         ]
         text_lower = text[:200]  # sadece başı incele — perf
         if not any(marker in text_lower for marker in allowed_markers):
