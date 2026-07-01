@@ -479,6 +479,13 @@ def _maybe_send_v9_t5_altili(pools_unused, now, logger):
             except Exception as _e_tg:
                 _log(logger, f"[t5-altili] {hippo} send fail: "
                               f"{repr(_e_tg)[:160]}")
+            # RETRO LOG (istisnasız her gönderim)
+            try:
+                from forecast.forward_logger import log_t5_altili
+                log_t5_altili(ref_date, hippo, result)
+            except Exception as _e_lg:
+                _log(logger, f"[t5-altili] log fail: "
+                              f"{repr(_e_lg)[:160]}")
 
         if sent_keys != set(st.get('t5_altili_sent', []) or []):
             st['t5_altili_sent'] = sorted(sent_keys)
@@ -1070,6 +1077,12 @@ def _maybe_send_uk_race_top4(now, logger):
                              f"{analysis['course']}")
             except Exception as _e_tg:
                 _log(logger, f"[uk-top4] send fail: {repr(_e_tg)[:160]}")
+            # RETRO LOG (istisnasız her gönderim)
+            try:
+                from forecast.forward_logger import log_uk_race_top4
+                log_uk_race_top4(day, analysis)
+            except Exception as _e_lg:
+                _log(logger, f"[uk-top4] log fail: {repr(_e_lg)[:160]}")
         snaps.add(snap_key)
         st['uk_race_top4_hours'] = sorted(snaps)
         st['uk_race_top4_sent'] = sorted(sent_races)
@@ -1195,6 +1208,13 @@ def _maybe_send_racing_api_value(now, logger):
             except Exception as _e_tg:
                 _log(logger, f"[racing-api] send fail: "
                              f"{repr(_e_tg)[:160]}")
+            # RETRO LOG (istisnasız her gönderim)
+            try:
+                from forecast.forward_logger import log_uk_value_bet
+                log_uk_value_bet(day, alert)
+            except Exception as _e_lg:
+                _log(logger, f"[racing-api] log fail: "
+                             f"{repr(_e_lg)[:160]}")
         snaps.add(snap_key)
         st['racing_api_alerts_sent'] = sorted(snaps)
         st['racing_api_race_sent'] = sorted(sent_keys)

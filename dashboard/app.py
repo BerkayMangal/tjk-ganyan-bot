@@ -394,6 +394,22 @@ try:
     except Exception:
         RECAP_HOUR, RECAP_MINUTE = 22, 0
 
+    # Berkay (2026-07-01): 22:30 tam retro — TÜM gönderimlerin sonucu.
+    def _scheduled_retro_daily():
+        try:
+            from datetime import date as _d
+            from audit.retro_daily import run_retro
+            send_flag = os.environ.get("TJK_RETRO_TELEGRAM", "1") == "1"
+            report = run_retro(_d.today().isoformat(),
+                                send_telegram=send_flag)
+            app.logger.info(
+                f"⏰ Retro daily gönderildi ✓ "
+                f"tr_prerace={report['tr_prerace'].get('matched',0)} "
+                f"tr_altili={report['tr_altili'].get('n_altili',0)}"
+            )
+        except Exception as e:
+            app.logger.error(f"⏰ Retro daily fail: {e}")
+
     ist_tz = pytz.timezone('Europe/Istanbul')
     scheduler = BackgroundScheduler(timezone=ist_tz)
     SCHEDULER = scheduler
@@ -402,6 +418,17 @@ try:
     # PATCH_FAZ1_STABILITY_v1: legacy retro disabled — V7 recap @ 22:00 replaces it.
     # scheduler.add_job(_scheduled_retro, 'cron', hour=21, minute=0,
     #                   id='daily_retro', replace_existing=True)
+
+    # Berkay (2026-07-01): TAM RETRO — 22:30, tüm log gönderimleri.
+    scheduler.add_job(_scheduled_retro_daily, 'cron',
+                      hour=int(os.environ.get("TJK_RETRO_HOUR", "22")),
+                      minute=int(os.environ.get("TJK_RETRO_MINUTE", "30")),
+                      id='retro_daily', replace_existing=True)
+    app.logger.info(
+        f"⏰ Retro daily aktif — "
+        f"{os.environ.get('TJK_RETRO_HOUR', '22')}:"
+        f"{os.environ.get('TJK_RETRO_MINUTE', '30')} İstanbul"
+    )
     # PATCH_V7_AUTOSCHED_v1
     scheduler.add_job(_scheduled_v7_recap, 'cron',
                       hour=RECAP_HOUR, minute=RECAP_MINUTE,

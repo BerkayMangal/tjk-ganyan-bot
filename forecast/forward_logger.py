@@ -35,8 +35,113 @@ ROOT = Path(__file__).resolve().parent.parent
 LOG_DIR = ROOT / "data" / "forward_log"
 
 
-def _log_path(date: str) -> Path:
-    return LOG_DIR / f"{date}.jsonl"
+def _log_path(date: str, kind: str = "prerace") -> Path:
+    """
+    kind: 'prerace' (T-3), 'altili' (T-5), 'uk_top4', 'uk_value',
+          'foreign_form', 'agf_steam'
+    """
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    if kind == "prerace":
+        return LOG_DIR / f"{date}.jsonl"
+    return LOG_DIR / f"{date}_{kind}.jsonl"
+
+
+def _append_log(date: str, kind: str, record: dict) -> bool:
+    """Genel amaçlı JSONL append. NEVER raises."""
+    try:
+        p = _log_path(date, kind)
+        record.setdefault("ts", datetime.now().isoformat())
+        record.setdefault("kind", kind)
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False,
+                                default=str) + "\n")
+        return True
+    except Exception as exc:
+        logger.warning(f"log write fail ({kind}): {exc}")
+        return False
+
+
+def log_t5_altili(date: str, hippo: str, altili_result: dict) -> bool:
+    """T-5 altılı build → jsonl.
+
+    altili_result: forecast.altili_builder.build_altili çıktısı.
+    """
+    if not altili_result:
+        return False
+    record = {
+        "date": date, "hippo": hippo,
+        "altili_no": altili_result.get("altili_no"),
+        "combos": altili_result.get("combos"),
+        "cost_tl": altili_result.get("cost_tl"),
+        "pas_count": altili_result.get("pas_count"),
+        "status": altili_result.get("status"),
+        "ayaklar": [
+            {
+                "ayak": a.get("ayak"),
+                "race_no": a.get("race_no"),
+                "guven": a.get("guven"),
+                "overlap": a.get("overlap"),
+                "n_at": a.get("n_at"),
+                "at_no_list": [x.get("no") for x in (a.get("atlar") or [])],
+                "at_name_list": [x.get("name") for x in (a.get("atlar") or [])],
+            }
+            for a in (altili_result.get("ayaklar") or [])
+        ],
+        "outcome_matched": False,
+    }
+    return _append_log(date, "altili", record)
+
+
+def log_uk_race_top4(date: str, uk_analysis: dict) -> bool:
+    """UK race TOP-4 tahmini → jsonl."""
+    if not uk_analysis:
+        return False
+    record = {
+        "date": date,
+        "region": uk_analysis.get("region"),
+        "course": uk_analysis.get("course"),
+        "off_time": uk_analysis.get("off_time"),
+        "race_id": uk_analysis.get("race_id"),
+        "confidence": uk_analysis.get("confidence"),
+        "n_runners": uk_analysis.get("n_runners"),
+        "strong_favorite": (uk_analysis.get("strong_favorite") or {}).get(
+            "horse_name"),
+        "top4": [
+            {"name": h.get("horse_name"),
+             "consensus_prob": h.get("consensus_prob_pct"),
+             "best_odds": h.get("best_odds"),
+             "best_bm": h.get("best_bookmaker"),
+             "is_my_bm": h.get("is_my_bookmaker")}
+            for h in (uk_analysis.get("top4") or [])
+        ],
+        "value_bets": [
+            {"name": v.get("horse_name"),
+             "odds": v.get("best_odds"),
+             "bm": v.get("best_bookmaker"),
+             "ev_pct": v.get("ev_pct"),
+             "kelly_pct": v.get("kelly_pct")}
+            for v in (uk_analysis.get("value_bets") or [])
+        ],
+        "arbitrage_signals": uk_analysis.get("arbitrage_signals") or [],
+        "outcome_matched": False,
+    }
+    return _append_log(date, "uk_top4", record)
+
+
+def log_uk_value_bet(date: str, alert: dict) -> bool:
+    """UK value bet alert → jsonl."""
+    if not alert:
+        return False
+    record = {
+        "date": date,
+        "region": alert.get("region"),
+        "course": alert.get("course"),
+        "off_time": alert.get("off_time"),
+        "race_id": alert.get("race_id"),
+        "value_bets": alert.get("value_bets") or [],
+        "outcome_matched": False,
+    }
+    return _append_log(date, "uk_value", record)
 
 
 def log_t5_prediction(date: str, hippo: str, race_no: int,
