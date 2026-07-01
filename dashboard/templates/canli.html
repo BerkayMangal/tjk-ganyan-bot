@@ -242,9 +242,9 @@
 <main>
   <header>
     <div>
-      <h1>🏇 CANLI · V9.5 + ALFA KATMANLAR</h1>
+      <h1>🏇 CANLI · V11 HYBRID + AGF STEAM</h1>
       <div class="meta">
-        TJK ULTRA_LEAN + RacingAPI value betting
+        V11 (model + H2H Elo + Pace + Track) + AGF public + AGF Δ steam
         <span class="last-update" id="lastUpdate"></span>
       </div>
     </div>
@@ -252,16 +252,26 @@
   </header>
 
   <div class="tabs">
-    <button class="tab active" id="tab-tjk" onclick="showTab('tjk')">
-      🇹🇷 TJK Canlı
+    <button class="tab active" id="tab-v11" onclick="showTab('v11')">
+      🎯 V11 HİBRİT
+    </button>
+    <button class="tab" id="tab-tjk" onclick="showTab('tjk')">
+      🇹🇷 TJK Klasik
     </button>
     <button class="tab uk" id="tab-uk" onclick="showTab('uk')">
-      🌍 Yabancı Value
+      🌍 Yabancı
     </button>
   </div>
 
+  <!-- V11 HYBRID TAB -->
+  <div class="tab-content active" id="content-v11">
+    <div class="status-line loading" id="v11-status">⟳ V11 hibrit tahminler yükleniyor...</div>
+    <div class="v11-summary" id="v11-summary"></div>
+    <div id="v11-hippos"></div>
+  </div>
+
   <!-- TJK TAB -->
-  <div class="tab-content active" id="content-tjk">
+  <div class="tab-content" id="content-tjk">
     <div class="status-line loading" id="tjk-status">⟳ TJK yarış kartı yükleniyor...</div>
     <div id="tjk-pools"></div>
   </div>
@@ -332,6 +342,84 @@ function alpha_tags(horse_data) {
     tags.push(`<span class="alpha-tag tag-agf-drift">📉AGF ${horse_data.agf_delta_pp.toFixed(1)}pp</span>`);
   }
   return tags.length ? `<div class="alpha-tags">${tags.join('')}</div>` : '';
+}
+
+function tierBadge(tier) {
+  if (!tier || tier === '•') return '';
+  const map = {
+    '⭐ ELMAS': ['#f0c674', '#1a1f2c', 'ELMAS'],
+    '💎 STEAM VALUE': ['#58a6ff', '#fff', 'STEAM VALUE'],
+    '🔥 FIRSAT': ['#ff6b6b', '#fff', 'FIRSAT'],
+    '✓ SAĞLAM': ['#3fb950', '#fff', 'SAĞLAM'],
+    '⚠ DRIFT': ['#f85149', '#fff', 'DRIFT'],
+  };
+  const c = map[tier] || ['#30363d', '#e6edf3', tier];
+  return `<span style="background:${c[0]};color:${c[1]};padding:2px 8px;border-radius:4px;font-size:0.72em;font-weight:700;margin-left:6px;">${tier.split(' ')[0]} ${c[2]}</span>`;
+}
+
+async function loadV11() {
+  const status = document.getElementById('v11-status');
+  const hippos = document.getElementById('v11-hippos');
+  const summary = document.getElementById('v11-summary');
+  try {
+    const res = await fetch(`/api/canli/v11?date=${TODAY}`);
+    const data = await res.json();
+    if (!data.hippodromes || !data.hippodromes.length) {
+      status.style.display = 'none';
+      hippos.innerHTML = `<div class="empty"><div class="empty-icon">🎯</div>
+        V11 hibrit tahminler henüz üretilmedi.<br>
+        <small>Otomatik: 09:15, 14:00, 17:00 · Manuel: /api/v11-hybrid/send?token=…</small></div>`;
+      return;
+    }
+    status.style.display = 'none';
+    const c = data.counts || {};
+    summary.innerHTML = `<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:0.85em;">
+      <b>${data.hippodromes.length} hipodrom</b> · ${c.n_predictions || 0} tahmin
+      &nbsp;·&nbsp; ⭐ ${c.elmas || 0} ELMAS
+      &nbsp;·&nbsp; 💎 ${c.steam_value || 0} STEAM VALUE
+      &nbsp;·&nbsp; 🔥 ${c.firsat || 0} FIRSAT
+      &nbsp;·&nbsp; ✓ ${c.saglam || 0} SAĞLAM
+      ${(data.steam || []).length ? `<br><span style="color:#f0c674;">⚡ AGF STEAM: ${(data.steam || []).slice(0,5).map(s => `${s.hippo} K${s.kosu}#${s.at_no} (+${(s.delta_pp||0).toFixed(1)}pp)`).join(' · ')}</span>` : ''}
+      ${(data.drift || []).length ? `<br><span style="color:#f85149;">📉 AGF DRIFT: ${(data.drift || []).slice(0,5).map(s => `${s.hippo} K${s.kosu}#${s.at_no} (${(s.delta_pp||0).toFixed(1)}pp)`).join(' · ')}</span>` : ''}
+    </div>`;
+    hippos.innerHTML = data.hippodromes.map(hip => `
+      <div class="hippo-card">
+        <div class="hippo-header">
+          <div class="hippo-title">
+            🏇 ${hip.hippo}
+            <span class="hippo-badge">${hip.n_kosu} koşu</span>
+          </div>
+          <div style="font-size:0.8em;color:#8b949e;">İlk: ${hip.first_start || '?'}</div>
+        </div>
+        <div style="padding:8px 12px;">
+          ${(hip.kosular || []).map(k => `
+            <div style="margin-bottom:14px;padding:10px;background:#0d1117;border-radius:8px;border:1px solid #21262d;">
+              <div style="font-weight:700;color:#58a6ff;margin-bottom:6px;">
+                K${k.kosu_no} · ${k.start_time || '?'} · ${k.distance || '?'}m
+              </div>
+              ${(k.top4 || []).map((h, i) => `
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #21262d;font-size:0.86em;">
+                  <div style="flex:1;">
+                    <span style="color:#8b949e;">#${i+1}.</span>
+                    <b style="color:#f0c674;">#${h.at_no}</b> ${h.name || '—'}
+                    ${tierBadge(h.tier)}
+                    ${h.is_steam ? '<span style="color:#f0c674;font-size:0.8em;">⚡</span>' : ''}
+                    ${h.is_drift ? '<span style="color:#f85149;font-size:0.8em;">📉</span>' : ''}
+                  </div>
+                  <div style="text-align:right;font-family:monospace;font-size:0.85em;">
+                    <code>H${(h.hybrid_score || 0).toFixed(2)}</code>
+                    <span style="color:#8b949e;margin-left:6px;">M${((h.v11_p_top4 || 0) * 100).toFixed(0)}·A${(h.agf_pct || 0).toFixed(0)}${Math.abs(h.agf_delta_pp || 0) >= 3 ? ` Δ${(h.agf_delta_pp || 0) >= 0 ? '+' : ''}${(h.agf_delta_pp || 0).toFixed(0)}` : ''}</span>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    status.textContent = '⚠ V11 hibrit yükleme hatası: ' + e.message;
+  }
 }
 
 async function loadTJK() {
@@ -511,11 +599,13 @@ async function loadUK() {
 }
 
 function refreshAll() {
+  loadV11();
   loadTJK();
   loadUK();
 }
 
 // Initial load
+loadV11();
 loadTJK();
 loadUK();
 // Auto-refresh 60sn

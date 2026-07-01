@@ -1,5 +1,5 @@
 """TJK ARB Dashboard v5 — Yerli + Yabanci + Model Kupon"""
-import os, sys, logging, threading
+import os, sys, logging, threading, json
 from datetime import datetime, timezone, date
 from flask import Flask, jsonify, send_from_directory, request
 from html import escape
@@ -1228,6 +1228,107 @@ def manual_trigger():
 
     threading.Thread(target=_run, daemon=True).start()
     return jsonify({"status": "triggered", "ts": datetime.utcnow().isoformat()}), 202
+
+
+@app.route("/api/canli/v11")
+def api_canli_v11():
+    """V11 hibrit tahminler — forward_log JSONL oku, hippo bazlı grupla.
+
+    Cache-friendly: her request pipeline çalıştırmıyor, JSONL okuyor
+    (scheduler günde 3 kez ürüyor + manuel /api/v11-hybrid/send).
+    """
+    from pathlib import Path
+    target = request.args.get("date") or date.today().isoformat()
+    fp = (Path(__file__).resolve().parent.parent
+          / "data" / "v11_forward_log" / f"{target}.jsonl")
+    if not fp.exists():
+        return jsonify({"date": target, "hippodromes": [],
+                         "note": "forward log yok — publisher tetiklenmemiş"})
+    rows = []
+    try:
+        with open(fp, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except Exception:
+                    pass
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    # Multi-snapshot dedup: (hippo, kosu, at_no) → latest snapshot_ts
+    latest = {}
+    for r in rows:
+        key = (r.get("hippo"), r.get("kosu_no"), r.get("at_no"))
+        prev = latest.get(key)
+        if (prev is None or (r.get("snapshot_ts") or "") >
+                (prev.get("snapshot_ts") or "")):
+            latest[key] = r
+    dedup = list(latest.values())
+
+    # Group by hippo → kosu
+    from collections import defaultdict
+    by_hippo = defaultdict(lambda: defaultdict(list))
+    for r in dedup:
+        by_hippo[r.get("hippo")][r.get("kosu_no")].append(r)
+
+    out_hippos = []
+    for hippo, kosular in by_hippo.items():
+        kosu_list = []
+        for kosu_no, atlar in sorted(kosular.items()):
+            atlar_sorted = sorted(atlar, key=lambda x: x.get("rank") or 99)
+            kosu_list.append({
+                "kosu_no": kosu_no,
+                "distance": atlar_sorted[0].get("distance") if atlar_sorted else None,
+                "start_time": atlar_sorted[0].get("start_time") if atlar_sorted else None,
+                "top4": atlar_sorted[:4],
+            })
+        # Sort kosular by start_time
+        kosu_list.sort(key=lambda k: k.get("start_time") or "99:99")
+        first_start = (kosu_list[0].get("start_time")
+                        if kosu_list else "99:99")
+        out_hippos.append({
+            "hippo": hippo, "first_start": first_start,
+            "n_kosu": len(kosu_list), "kosular": kosu_list,
+        })
+    out_hippos.sort(key=lambda x: x.get("first_start") or "99:99")
+
+    # Summary counts
+    tier_counts = defaultdict(int)
+    steam_all = []
+    drift_all = []
+    for r in dedup:
+        t = r.get("tier") or "•"
+        tier_counts[t] += 1
+        if r.get("is_steam"):
+            steam_all.append({"hippo": r.get("hippo"),
+                                "kosu": r.get("kosu_no"),
+                                "at_no": r.get("at_no"),
+                                "name": r.get("name"),
+                                "delta_pp": r.get("agf_delta_pp")})
+        if r.get("is_drift"):
+            drift_all.append({"hippo": r.get("hippo"),
+                                "kosu": r.get("kosu_no"),
+                                "at_no": r.get("at_no"),
+                                "name": r.get("name"),
+                                "delta_pp": r.get("agf_delta_pp")})
+
+    return jsonify({
+        "date": target,
+        "generated_at": datetime.utcnow().isoformat(),
+        "hippodromes": out_hippos,
+        "counts": {
+            "n_predictions": len(dedup),
+            "elmas": tier_counts.get("⭐ ELMAS", 0),
+            "steam_value": tier_counts.get("💎 STEAM VALUE", 0),
+            "firsat": tier_counts.get("🔥 FIRSAT", 0),
+            "saglam": tier_counts.get("✓ SAĞLAM", 0),
+        },
+        "steam": steam_all[:10],
+        "drift": drift_all[:10],
+    })
 
 
 @app.route("/api/v11-hybrid/send", methods=["POST", "GET"])
