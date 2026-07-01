@@ -106,7 +106,12 @@ def _extract_agf(horse: dict) -> float:
 
 def build_hybrid_report(target_date, ensure_snapshot: bool = True) -> dict:
     """Günün tüm koşuları → hibrit rapor + Telegram mesajları listesi."""
-    from dashboard.yerli_engine import run_yerli_pipeline
+    # Prod (Railway): cwd=dashboard, sys.path=dashboard/ → 'yerli_engine'
+    # Lokal (-m dashboard.v11_hybrid_publisher): sys.path=root → 'dashboard.yerli_engine'
+    try:
+        from yerli_engine import run_yerli_pipeline
+    except ImportError:
+        from dashboard.yerli_engine import run_yerli_pipeline
     from forecast.v11_hybrid_scorer import (
         score_race, format_race_top4, format_hippo_altili)
     from forecast.agf_intraday import (
@@ -285,7 +290,10 @@ def build_hybrid_report(target_date, ensure_snapshot: bool = True) -> dict:
 
 def publish(target_date, do_send: bool = False) -> dict:
     """Rapor + Telegram gönder (opsiyonel)."""
-    from dashboard.smart_coupon_service import send_telegram
+    try:
+        from smart_coupon_service import send_telegram
+    except ImportError:
+        from dashboard.smart_coupon_service import send_telegram
 
     report = build_hybrid_report(target_date)
     if report.get("status") != "ok":
