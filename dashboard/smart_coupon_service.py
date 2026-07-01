@@ -407,7 +407,15 @@ def send_telegram(text, dry_run=False):
             urllib.request.urlopen(req, timeout=20).read()
         return {'sent': True, 'chunks': len(chunks)}
     except Exception as e:
-        return {'sent': False, 'reason': repr(e)[:200]}
+        # HTTPError'ın body'sini oku — Telegram gerçek hata mesajı (chat_not_found vs)
+        body = ""
+        try:
+            import urllib.error as _ue
+            if isinstance(e, _ue.HTTPError):
+                body = e.read().decode('utf-8', errors='replace')[:400]
+        except Exception:
+            pass
+        return {'sent': False, 'reason': repr(e)[:200], 'tg_body': body}
 
 
 # CLI test
