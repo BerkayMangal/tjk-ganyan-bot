@@ -43,9 +43,10 @@ W_V11 = 0.55
 W_AGF = 0.30
 W_STEAM = 0.15
 STEAM_TIER_PP = 3.0
-VALUE_GAP = 0.10
-TIER_ELMAS = 0.40
-TIER_SAGLAM = 0.28
+VALUE_GAP = 0.20        # p_top4 kalibre değil, sıkı tut (114 → daha az)
+TIER_ELMAS = 0.45
+TIER_SAGLAM = 0.32
+MIN_V11_FOR_TIER = 0.30 # baseline 4/N field ~%30-40, üstü gerçek sinyal
 
 
 def _norm_steam(delta_pp: float) -> float:
@@ -84,14 +85,14 @@ def score_horse(v11_p4: Optional[float],
     elif value_edge <= -VALUE_GAP:
         tags.append(f"⚠ ASIRI FAV (halk V11'i geçmiş)")
 
-    # Tier — thresholds kalibre: model_prob 0..0.5 aralığında olur genelde
-    if hybrid >= TIER_ELMAS and not is_drift:
+    # Tier — V11 direct p_top4 %30-50 aralığında; baseline field-4/N
+    if hybrid >= TIER_ELMAS and v11 >= MIN_V11_FOR_TIER and not is_drift:
         tier = "⭐ ELMAS"
-    elif is_steam and v11 >= 0.20:
+    elif is_steam and v11 >= MIN_V11_FOR_TIER:
         tier = "💎 STEAM VALUE"
-    elif value_edge >= VALUE_GAP and v11 >= 0.15:
+    elif value_edge >= VALUE_GAP and v11 >= MIN_V11_FOR_TIER:
         tier = "🔥 FIRSAT"
-    elif hybrid >= TIER_SAGLAM:
+    elif hybrid >= TIER_SAGLAM and v11 >= 0.25:
         tier = "✓ SAĞLAM"
     elif is_drift:
         tier = "⚠ DRIFT"

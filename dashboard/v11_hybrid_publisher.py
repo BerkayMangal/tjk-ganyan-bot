@@ -114,6 +114,8 @@ def build_hybrid_report(target_date, ensure_snapshot: bool = True) -> dict:
     )
     from forecast.jockey_recent_form import (
         build_jockey_form_map, get_hot_tag)
+    from model.v9.inference_v9 import predict_race_v9
+    from model.v8.train_real import _build_history_map, _load_all_outcomes
 
     if isinstance(target_date, str):
         target_date = date.fromisoformat(target_date)
@@ -142,6 +144,18 @@ def build_hybrid_report(target_date, ensure_snapshot: bool = True) -> dict:
     except Exception as exc:
         log.warning(f"[v11-hybrid] jockey form fail: {exc}")
 
+    # V11 direct inference için history map (cache once)
+    v11_history_map = {}
+    try:
+        _records = _load_all_outcomes()
+        v11_history_map = _build_history_map(_records)
+        log.info(f"[v11-hybrid] history_map: {len(v11_history_map)} at")
+    except Exception as exc:
+        log.warning(f"[v11-hybrid] history_map fail: {exc}")
+
+    def _v11_lookup(name):
+        return v11_history_map.get(name, [])
+
     date_str = target_date.isoformat()
     messages = []
     counts = {"races": 0, "steam": 0, "drift": 0, "elmas": 0,
@@ -168,10 +182,39 @@ def build_hybrid_report(target_date, ensure_snapshot: bool = True) -> dict:
             horses = leg.get("all_horses_with_mp") or []
             if not horses:
                 continue
+            # V11 direct predict — gerçek p_top4
+            v11_by_at = {}
+            try:
+                v11_input = []
+                for h in horses:
+                    v11_input.append({
+                        "horse_no": h.get("number") or h.get("at_no"),
+                        "horse_name": h.get("name") or h.get("horse_name"),
+                        "age": h.get("age"), "weight": h.get("weight"),
+                        "jockey_name": h.get("jockey_name")
+                                        or h.get("jockey"),
+                        "sire": h.get("sire"),
+                        "distance": distance, "track_type": "Çim",
+                        "hippodrome": hippo_name,
+                    })
+                preds = predict_race_v9(
+                    v11_input, history_lookup=_v11_lookup,
+                    ref_date=date_str)
+                if preds:
+                    for p in preds:
+                        v11_by_at[p.get("horse_no")] = p
+            except Exception as _e_v11:
+                log.debug(f"[v11-hybrid] v11 direct fail K{kosu_no}: "
+                           f"{_e_v11}")
+
             scored_inputs = []
             for h in horses:
                 at_no = h.get("number") or h.get("at_no")
-                v11_p4 = _extract_v11_p4(h)
+                # V11 direct p_top4 > model_prob (top-1) > 0
+                v11_direct = v11_by_at.get(at_no) or {}
+                v11_p4 = v11_direct.get("p_top4")
+                if v11_p4 is None:
+                    v11_p4 = _extract_v11_p4(h)
                 agf = _extract_agf(h)
                 delta_pp = 0.0
                 key_try = f"{ayak}_{at_no}"
