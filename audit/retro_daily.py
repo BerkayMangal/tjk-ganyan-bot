@@ -446,6 +446,15 @@ def run_retro(target_date: str, send_telegram: bool = False) -> dict:
     uk_top = analyze_uk_top4(target_date)
     uk_val = analyze_uk_value(target_date)
     v11 = analyze_v11_hybrid(target_date)
+    # Online Elo update — outcome varsa bundle in-place güncelle
+    elo_result = None
+    if os.environ.get('TJK_ONLINE_ELO', '1') == '1':
+        try:
+            from model.v11.online_elo_update import update_elo
+            elo_result = update_elo(target_date)
+            log.info(f"online-elo: {elo_result}")
+        except Exception as exc:
+            log.warning(f"online-elo update fail: {exc}")
     report = {
         "date": target_date,
         "generated_at": datetime.now().isoformat(),
@@ -454,6 +463,7 @@ def run_retro(target_date: str, send_telegram: bool = False) -> dict:
         "uk_top4": uk_top,
         "uk_value": uk_val,
         "v11_hybrid": v11,
+        "online_elo": elo_result,
     }
     # Persist
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
