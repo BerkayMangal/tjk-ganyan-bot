@@ -27,6 +27,7 @@ NEVER raises — eksik veri/exception graceful boş döner.
 from __future__ import annotations
 
 import logging
+import os
 import random
 from collections import Counter
 from typing import Callable, Optional
