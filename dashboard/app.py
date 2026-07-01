@@ -1331,6 +1331,59 @@ def api_canli_v11():
     })
 
 
+@app.route("/api/v11-hybrid/getchat")
+def api_v11_getchat():
+    """Bot'un son mesajlarındaki chat_id'leri döndür — doğru chat_id bulmak için.
+
+    Kullanım:
+      1. Bota Telegram'dan bir mesaj at ('hi' yeter)
+      2. Bu endpoint'i tetikle
+      3. Response'ta chat.id ve first_name görünür → env'e o değeri koy
+    """
+    tok = request.args.get("token", "") or request.headers.get("X-Token", "")
+    if tok != os.getenv("MANUAL_TRIGGER_TOKEN", "tjk-acil-2026"):
+        return jsonify({"error": "unauthorized"}), 401
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    if not token:
+        return jsonify({"error": "no bot token"}), 500
+    try:
+        import urllib.request
+        url = f"https://api.telegram.org/bot{token}/getUpdates"
+        resp = urllib.request.urlopen(url, timeout=15).read()
+        data = json.loads(resp)
+        updates = data.get("result") or []
+        chats = []
+        for u in updates[-10:]:
+            msg = u.get("message") or u.get("channel_post") or {}
+            chat = msg.get("chat") or {}
+            if chat:
+                chats.append({
+                    "chat_id": chat.get("id"),
+                    "type": chat.get("type"),
+                    "title": chat.get("title"),
+                    "first_name": chat.get("first_name"),
+                    "username": chat.get("username"),
+                    "text": (msg.get("text") or "")[:100],
+                    "date": msg.get("date"),
+                })
+        # Uniqle chat_ids
+        seen = set()
+        uniq = []
+        for c in reversed(chats):
+            if c["chat_id"] not in seen:
+                seen.add(c["chat_id"])
+                uniq.append(c)
+        return jsonify({
+            "n_updates": len(updates),
+            "chats_found": uniq,
+            "current_env_chat_id": os.environ.get("TELEGRAM_CHAT_ID", ""),
+            "hint": ("chat_id'yi Railway env'e koy: TELEGRAM_CHAT_ID=<id>. "
+                     "Grup için genelde -100 ile başlar."),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)[:400]}), 500
+
+
 @app.route("/api/v11-hybrid/envcheck")
 def api_v11_env_check():
     """Env vars mask'li kontrol — TELEGRAM_BOT_TOKEN/CHAT_ID var mı?"""
