@@ -112,6 +112,8 @@ def build_hybrid_report(target_date, ensure_snapshot: bool = True) -> dict:
     from forecast.agf_intraday import (
         snapshot_agf, detect_steam_moves,
     )
+    from forecast.jockey_recent_form import (
+        build_jockey_form_map, get_hot_tag)
 
     if isinstance(target_date, str):
         target_date = date.fromisoformat(target_date)
@@ -131,6 +133,14 @@ def build_hybrid_report(target_date, ensure_snapshot: bool = True) -> dict:
                      f"n_hippos={snap_meta.get('n_hippos')}")
         except Exception as exc:
             log.warning(f"[v11-hybrid] snapshot fail: {exc}")
+
+    # Jockey recent form (son 30 gün)
+    jockey_form = {}
+    try:
+        jockey_form = build_jockey_form_map(
+            days_back=30, end_date=target_date.isoformat())
+    except Exception as exc:
+        log.warning(f"[v11-hybrid] jockey form fail: {exc}")
 
     date_str = target_date.isoformat()
     messages = []
@@ -163,18 +173,22 @@ def build_hybrid_report(target_date, ensure_snapshot: bool = True) -> dict:
                 at_no = h.get("number") or h.get("at_no")
                 v11_p4 = _extract_v11_p4(h)
                 agf = _extract_agf(h)
-                # Steam Δ lookup via ayak_no + at_no
                 delta_pp = 0.0
                 key_try = f"{ayak}_{at_no}"
                 comp = steam_by_key.get(key_try)
                 if comp:
                     delta_pp = comp.get("delta_pp", 0.0)
+                jockey_name = (h.get("jockey_name") or h.get("jockey")
+                                or "")
+                jockey_tag = get_hot_tag(jockey_name, jockey_form)
                 scored_inputs.append({
                     "at_no": at_no,
                     "name": h.get("name") or h.get("horse_name"),
                     "v11_p_top4": v11_p4,
                     "agf_pct": agf,
                     "agf_delta_pp": delta_pp,
+                    "jockey_name": jockey_name,
+                    "jockey_tag": jockey_tag,
                 })
             scored = score_race(scored_inputs, field_size=len(horses))
             counts["races"] += 1

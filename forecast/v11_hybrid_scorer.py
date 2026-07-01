@@ -113,7 +113,8 @@ def score_horse(v11_p4: Optional[float],
 def score_race(horses: list[dict], field_size: Optional[int] = None) -> list:
     """Bir koşu için tüm atları skorla + hybrid_score'a göre sırala.
 
-    horses: [{name, at_no, v11_p_top4, agf_pct, agf_delta_pp}, ...]
+    horses: [{name, at_no, v11_p_top4, agf_pct, agf_delta_pp,
+              jockey_name, jockey_tag}, ...]
     """
     if field_size is None:
         field_size = len(horses)
@@ -127,6 +128,13 @@ def score_race(horses: list[dict], field_size: Optional[int] = None) -> list:
         )
         s["at_no"] = h.get("at_no") or h.get("horse_no")
         s["name"] = h.get("name") or h.get("horse_name") or ""
+        s["jockey_name"] = h.get("jockey_name", "")
+        s["jockey_tag"] = h.get("jockey_tag", "")
+        # HOT jockey → hybrid'e +2 pp bonus (küçük, karar destek)
+        if s["jockey_tag"]:
+            s["hybrid_score"] = round(s["hybrid_score"] + 0.02, 4)
+            if s["jockey_tag"] not in s["tags"]:
+                s["tags"].append(s["jockey_tag"])
         scored.append(s)
     scored.sort(key=lambda x: -x["hybrid_score"])
     return scored
@@ -212,14 +220,16 @@ def format_hippo_altili(hippo_name: str,
                 tier_summary["SAGLAM"].append(f"K{kosu}#{h['at_no']}")
             elif h["tier"] == "⚠ DRIFT":
                 tag = " ⚠"
-            # Compact row: "1. #5 YILDIZ  M27 A24 Δ+6"
+            # Jokey hot tag
+            jt = h.get("jockey_tag") or ""
+            jt_suffix = f" 🏇" if jt else ""
             delta = h["agf_delta_pp"]
             delta_str = (f" Δ{delta:+.0f}" if abs(delta) >= 3 else "")
             lines.append(
                 f"{i}. <b>#{h['at_no']}</b> {h['name']}  "
                 f"<code>H{h['hybrid_score']:.2f}</code>  "
                 f"M{h['v11_p_top4']*100:.0f} A{h['agf_pct']:.0f}"
-                f"{delta_str}{tag}")
+                f"{delta_str}{tag}{jt_suffix}")
         for h in scored:
             if h["is_steam"]:
                 steam_all.append(f"K{kosu}#{h['at_no']} +{h['agf_delta_pp']:.1f}pp")
