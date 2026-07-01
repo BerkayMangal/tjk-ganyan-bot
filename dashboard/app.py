@@ -1229,6 +1229,40 @@ def manual_trigger():
     threading.Thread(target=_run, daemon=True).start()
     return jsonify({"status": "triggered", "ts": datetime.utcnow().isoformat()}), 202
 
+
+@app.route("/api/v11-hybrid/send", methods=["POST", "GET"])
+def api_v11_hybrid_send():
+    """V11+AGF hibrit tahminler → Telegram (hipodrom bazlı, 3 mesaj).
+
+    GET/POST with X-Token guard veya ?token=. Async thread.
+    """
+    tok_hdr = request.headers.get("X-Token", "")
+    tok_qry = request.args.get("token", "")
+    expected = os.getenv("MANUAL_TRIGGER_TOKEN", "tjk-acil-2026")
+    if tok_hdr != expected and tok_qry != expected:
+        return jsonify({"error": "unauthorized"}), 401
+    target = request.args.get("date")
+    send_flag = request.args.get("send", "1") == "1"
+
+    def _run():
+        try:
+            from v11_hybrid_publisher import publish
+            r = publish(target or date.today(), do_send=send_flag)
+            app.logger.info(f"v11-hybrid: {r.get('status')} "
+                             f"n={r.get('n_messages')} "
+                             f"counts={r.get('counts')}")
+        except Exception as _e:
+            app.logger.error(f"v11-hybrid error: {_e}")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({
+        "status": "triggered",
+        "date": target or date.today().isoformat(),
+        "send": send_flag,
+        "ts": datetime.utcnow().isoformat(),
+    }), 202
+
+
 # PATCH_FAZ4_ANA_ALPHA_DANGER_v1: BUG 9 — 5 diagnostic endpoints removed
 # (loader_diag, recap_diag, snap_diag, tjk_agf_probe, disk_diag).
 # These were temporary debug helpers for V7 snapshot/recap troubleshooting and

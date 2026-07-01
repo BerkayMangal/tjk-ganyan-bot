@@ -73,19 +73,30 @@ def snapshot_agf(now: Optional[datetime] = None) -> dict:
             return out
 
         for hippo_entry in hippos:
-            hippo = hippo_entry.get("hipodrom") or hippo_entry.get("hippodrome") or "?"
-            altilis = hippo_entry.get("altilis") or []
-            # Düzleştir at_no → agf_pct
+            hippo = (hippo_entry.get("hippodrome")
+                      or hippo_entry.get("hipodrom") or "?")
+            # parse_agf_page: legs = LIST of 6 lists (ayaks); each ayak list
+            # of {horse_number, agf_pct, is_ekuri}
+            legs = hippo_entry.get("legs")
             horse_agf = {}
-            for alt in altilis:
-                legs = alt.get("legs") or {}
+            if isinstance(legs, list):
+                for idx, ayak_list in enumerate(legs, 1):
+                    if not isinstance(ayak_list, list):
+                        continue
+                    for h in ayak_list:
+                        at_no = h.get("horse_number") or h.get("at_no")
+                        agf = h.get("agf_pct")
+                        if at_no is not None and agf is not None:
+                            key = f"{idx}_{at_no}"
+                            horse_agf[key] = float(agf)
+            elif isinstance(legs, dict):
                 for ayak_id, horses in legs.items():
                     try:
                         ayak_no = int(ayak_id)
                     except Exception:
                         continue
                     for h in (horses or []):
-                        at_no = h.get("at_no")
+                        at_no = (h.get("horse_number") or h.get("at_no"))
                         agf = h.get("agf_pct")
                         if at_no is not None and agf is not None:
                             key = f"{ayak_no}_{at_no}"

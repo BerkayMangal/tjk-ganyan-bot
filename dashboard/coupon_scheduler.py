@@ -996,7 +996,52 @@ def _tick_locked(logger):
     except Exception as _e_pr:
         _log(logger, f"[coupon_sched] v8-prerace fail: "
                       f"{repr(_e_pr)[:160]}")
+    try:
+        _maybe_send_v11_hybrid_daily(st, now, logger)
+    except Exception as _e_v11:
+        _log(logger, f"[coupon_sched] v11-hybrid fail: "
+                      f"{repr(_e_v11)[:160]}")
     _save_state(day, st)
+
+
+def _maybe_send_v11_hybrid_daily(st, now, logger):
+    """V11 hibrit tahminler (model + AGF + steam) — sabah + T-30 tetik.
+
+    Berkay (2026-07-01): 'v11 tahminleri bugün gelmeli agfli hibrit'.
+
+    Sabah 09:15 — ilk V11 hibrit tahmin (steam=henüz yok)
+    Öğlen 14:00 + akşam 17:00 — steam Δ dolu, revize tahmin
+
+    Env: TJK_V11_HYBRID_TELEGRAM=1 (default 1 — kapatmak için 0)
+    """
+    if os.environ.get('TJK_V11_HYBRID_TELEGRAM', '1') != '1':
+        return
+    # 3 tetik saati (yerel Istanbul saati)
+    trigger_hours = [(9, 15), (14, 0), (17, 0)]
+    key_map = {(9, 15): 'v11_hybrid_morning',
+                (14, 0): 'v11_hybrid_noon',
+                (17, 0): 'v11_hybrid_evening'}
+    cur = (now.hour, now.minute)
+    for (h, m) in trigger_hours:
+        if cur[0] == h and cur[1] >= m and cur[1] < m + 5:
+            key = key_map[(h, m)]
+            if st.get(key):
+                return
+            try:
+                from v11_hybrid_publisher import publish
+                r = publish(now.date(), do_send=True)
+                st[key] = True
+                _log(logger,
+                      f"[coupon_sched] v11-hybrid {key}: "
+                      f"n_msgs={r.get('n_messages')} "
+                      f"counts={r.get('counts')}")
+            except Exception as _e_v:
+                _log(logger,
+                      f"[coupon_sched] v11-hybrid {key} err: "
+                      f"{repr(_e_v)[:160]}")
+            return
+
+
 
 
 def _maybe_send_uk_race_top4(now, logger):
