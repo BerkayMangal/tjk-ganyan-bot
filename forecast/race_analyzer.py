@@ -97,10 +97,9 @@ def _tempo_scenario_sim(v8_preds: list, pace_by_no: dict, tempo: str,
 
 
 def _load_calibrated_weights():
-    """simulation/calibrators/composite_weights.json → (α, β, γ, δ).
+    """composite_weights.json → 9 terim tuple.
 
-    α = MC(1.olma), β = V8(p_top4), γ = tempo robust, δ = V7(model_prob).
-    Eski 3-değişken composite (delta yoksa) backward-compat: δ=0.
+    (α, β, γ, δ, ε, ζ, η, θ, ι)
     """
     import json
     from pathlib import Path
@@ -111,11 +110,14 @@ def _load_calibrated_weights():
             d = json.load(f)
         b = d.get("best") or {}
         return (
-            b.get("alpha", 0.60), b.get("beta", 0.25),
-            b.get("gamma", 0.15), b.get("delta", 0.0),
+            b.get("alpha", 0.35), b.get("beta", 0.40),
+            b.get("gamma", 0.05), b.get("delta", 0.20),
+            b.get("eps", 0.12), b.get("zeta", 0.03),
+            b.get("eta", 0.09), b.get("theta", 0.04),
+            b.get("iota", 0.10),
         )
     except Exception:
-        return (0.60, 0.25, 0.15, 0.0)
+        return (0.35, 0.40, 0.05, 0.20, 0.12, 0.03, 0.09, 0.04, 0.10)
 
 
 COMPOSITE_WEIGHTS = _load_calibrated_weights()
@@ -138,12 +140,14 @@ def _composite_winner(v8_preds: list, mc: dict, tempo_sims: dict,
       UK form güçlü + TJK AGF düşük → underrated bonus
     """
     import os
-    alpha, beta, gamma, delta = COMPOSITE_WEIGHTS
-    eps = float(os.environ.get("TJK_AGF_DELTA_WEIGHT", "0.05"))
-    zeta = float(os.environ.get("TJK_FOREIGN_FORM_WEIGHT", "0.08"))
-    eta = float(os.environ.get("TJK_BIG_SIRE_WEIGHT", "0.05"))   # ALFA 1
-    theta = float(os.environ.get("TJK_UK_CHAMPION_WEIGHT", "0.04"))  # ALFA 2
-    iota = float(os.environ.get("TJK_UK_STEAM_WEIGHT", "0.10"))  # ALFA 3 — en güçlü
+    # 9 terim JSON'dan (walk-forward kalibre); env override edilebilir
+    (alpha, beta, gamma, delta, eps_j, zeta_j, eta_j, theta_j,
+        iota_j) = COMPOSITE_WEIGHTS
+    eps = float(os.environ.get("TJK_AGF_DELTA_WEIGHT", str(eps_j)))
+    zeta = float(os.environ.get("TJK_FOREIGN_FORM_WEIGHT", str(zeta_j)))
+    eta = float(os.environ.get("TJK_BIG_SIRE_WEIGHT", str(eta_j)))
+    theta = float(os.environ.get("TJK_UK_CHAMPION_WEIGHT", str(theta_j)))
+    iota = float(os.environ.get("TJK_UK_STEAM_WEIGHT", str(iota_j)))
     if v7_prob_by_no is None:
         v7_prob_by_no = {}
     if agf_delta_by_no is None:

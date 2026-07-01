@@ -1004,6 +1004,75 @@ def api_canli_uk():
                     "my_bookmakers": my_bookmakers or []})
 
 
+@app.route("/api/bankroll/simulate")
+def api_bankroll_simulate():
+    """Kelly portfolio + Monte Carlo bankroll simülasyon."""
+    from flask import request, jsonify
+    from datetime import date as _date
+    bankroll_tl = float(request.args.get("bankroll", "10000"))
+    kelly_k = float(request.args.get("kelly_k", "0.25"))
+    target_str = request.args.get("date") or _date.today().isoformat()
+    try:
+        from forecast.bankroll import (
+            portfolio_stakes, monte_carlo_bankroll,
+        )
+        from forecast.racing_api_value import fetch_today_value_alerts
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    my_bm = os.environ.get("TJK_MY_BOOKMAKERS", "coral,ladbrokes")
+    my_bookmakers = [b.strip() for b in my_bm.split(",") if b.strip()]
+    regions_str = os.environ.get("TJK_RACING_API_REGIONS", "gb,ire,fr")
+    regions = tuple(r.strip().lower() for r in regions_str.split(",")
+                    if r.strip())
+    alerts = fetch_today_value_alerts(
+        min_ev_pct=5.0, regions=regions,
+        my_bookmakers=my_bookmakers or None) or []
+    # Bahisleri düzleştir
+    bets = []
+    for alert in alerts:
+        for vb in (alert.get("value_bets") or []):
+            bets.append({
+                "name": f"{alert.get('course','?')} · {vb['horse_name']}",
+                "decimal_odds": vb["best_odds"],
+                "fair_prob": vb["consensus_prob_pct"] / 100,
+            })
+    if not bets:
+        return jsonify({"date": target_str, "n_bets": 0,
+                         "message": "Bugün value bet tespit edilmedi"})
+    port = portfolio_stakes(bankroll_tl, bets, kelly_k=kelly_k)
+    mc = monte_carlo_bankroll(bankroll_tl,
+                                port["bets_with_stakes"],
+                                n_sims=3000, kelly_k=kelly_k)
+    return jsonify({
+        "date": target_str, "bankroll_tl": bankroll_tl,
+        "kelly_k": kelly_k,
+        "portfolio": port,
+        "monte_carlo": mc,
+    })
+
+
+@app.route("/api/retro/history")
+def api_retro_history():
+    """Son N günün retro rapor özetleri."""
+    from flask import request, jsonify
+    from pathlib import Path
+    n_days = int(request.args.get("n", "14"))
+    report_dir = Path(__file__).resolve().parent.parent / "audit" / "reports"
+    reports = []
+    if report_dir.exists():
+        for p in sorted(report_dir.glob("retro_*.json"), reverse=True):
+            if len(reports) >= n_days:
+                break
+            try:
+                import json as _j
+                with open(p) as f:
+                    d = _j.load(f)
+                reports.append(d)
+            except Exception:
+                pass
+    return jsonify({"n": len(reports), "reports": reports})
+
+
 @app.route("/berkay-deneme")
 def berkay_deneme_page():
     """HTML dashboard for BERKAY DENEME — shadow + SiB picks + retro.

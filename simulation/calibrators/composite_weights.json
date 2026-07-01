@@ -8,7 +8,12 @@
     "beta": 0.4,
     "gamma": 0.05,
     "delta": 0.2,
-    "score": 0.35053330360052837
+    "score": 0.35053330360052837,
+    "eps": 0.12,
+    "zeta": 0.03,
+    "eta": 0.09,
+    "theta": 0.04,
+    "iota": 0.1
   },
   "best_train_pure": {
     "n_races": 1810,

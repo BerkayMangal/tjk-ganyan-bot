@@ -226,8 +226,20 @@ def fetch_today_value_alerts(min_ev_pct: float = 5.0,
     return alerts
 
 
-def format_value_bet_telegram(alert: dict) -> str:
-    """Bir yarış için Telegram-friendly value bet mesajı."""
+def format_value_bet_telegram(alert: dict,
+                                bankroll_tl: float = None) -> str:
+    """Value bet mesajı + Kelly bankroll stake önerisi."""
+    import os
+    if bankroll_tl is None:
+        try:
+            bankroll_tl = float(os.environ.get("TJK_BANKROLL_TL", "10000"))
+        except Exception:
+            bankroll_tl = 10000
+    try:
+        from forecast.bankroll import kelly_stake
+    except Exception:
+        kelly_stake = None
+
     lines = []
     course = alert.get("course", "?")
     region = alert.get("region", "?")
@@ -244,8 +256,20 @@ def format_value_bet_telegram(alert: dict) -> str:
             f"→ <b>+EV %{vb['ev_pct']}</b>")
         lines.append(
             f"     Kelly %{vb['kelly_pct']:.1f} ({vb['n_bookmakers']} bm)")
+        # Bankroll TL öneri
+        if kelly_stake and bankroll_tl > 0:
+            try:
+                fair_p = vb["consensus_prob_pct"] / 100.0
+                st = kelly_stake(bankroll_tl, vb["best_odds"], fair_p)
+                if st["stake_tl"] > 0:
+                    lines.append(
+                        f"     💵 <b>Stake: {st['stake_tl']} TL</b> "
+                        f"(bankroll %{st['kelly_used_pct']:.2f}) → "
+                        f"beklenen {st['expected_profit_tl']:+.2f} TL")
+            except Exception:
+                pass
     lines.append("")
-    lines.append("⚠ Karar destek aracı — bahis garantisi YOK.")
+    lines.append("⚠ Karar destek — bahis garantisi YOK.")
     return "\n".join(lines)
 
 

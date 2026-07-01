@@ -1,0 +1,29 @@
+{
+  "base": {
+    "alpha": 0.35,
+    "beta": 0.4,
+    "gamma": 0.05,
+    "delta": 0.2
+  },
+  "best_train": {
+    "n": 1810,
+    "top1_hit_rate": 0.26464088397790053,
+    "top4_recall": 0.6626089570183349,
+    "eps": 0.12,
+    "zeta": 0.03,
+    "eta": 0.09,
+    "score": 0.4238281131940743
+  },
+  "test_oos": {
+    "n": 776,
+    "top1_hit_rate": 0.211340206185567,
+    "top4_recall": 0.5743760399334442,
+    "eps": 0.12,
+    "zeta": 0.03,
+    "eta": 0.09
+  },
+  "n_grid": 125,
+  "n_train_races": 1810,
+  "n_test_races": 776,
+  "note": "9-term (α–ι) composite grid. θ (uk_champion) and ι (uk_steam) proxy yok backfill'de — 0 alındı. ε, ζ, η optimize edildi. Base weights sabit (α=0.35 β=0.40 γ=0.05 δ=0.20 önceki kalibrasyondan)."
+}
