@@ -44,6 +44,7 @@ sys.path.insert(0, str(ROOT))
 LOG_DIR = ROOT / "data" / "forward_log"
 OUTCOME_DIR = ROOT / "data" / "backfill" / "outcomes_rich"
 REPORT_DIR = ROOT / "audit" / "reports"
+V11_FORWARD_DIR = ROOT / "data" / "v11_forward_log"
 
 
 def _load_jsonl(path: Path) -> list[dict]:
@@ -188,6 +189,125 @@ def analyze_tr_altili(target_date: str) -> dict:
     }
 
 
+def analyze_v11_hybrid(target_date: str) -> dict:
+    """V11 hibrit tahmin log'ları vs outcome — tier bazlı hit rate.
+
+    Metrik:
+      * rank_hit_top4 (rank 1-4 tahmininin ilk 4'te bitmesi)
+      * tier_hit: {'⭐ ELMAS': (n, n_hit_top4), ...}
+      * steam_hit: STEAM tag'lı atların top4 %
+      * drift_avoid: DRIFT tag'lıların top4 %
+      * value_edge korelasyon: value_edge > 0.1 vs baseline
+      * best snapshot only (multi-snapshot idempotent: en son snapshot al)
+    """
+    p = V11_FORWARD_DIR / f"{target_date}.jsonl"
+    rows = _load_jsonl(p)
+    if not rows:
+        return {"n": 0}
+    outcomes = _tr_outcomes(target_date)
+    if not outcomes:
+        return {"n": len(rows), "matched": 0,
+                 "note": "outcomes yok — TR backfill gecikmeli"}
+
+    # Multi-snapshot dedup: (hippo, kosu_no, at_no) → en son snapshot
+    latest = {}
+    for r in rows:
+        key = (r.get("hippo"), r.get("kosu_no"), r.get("at_no"))
+        prev = latest.get(key)
+        if prev is None or (r.get("snapshot_ts") or "") > (
+                prev.get("snapshot_ts") or ""):
+            latest[key] = r
+    rows = list(latest.values())
+
+    total = 0
+    top4_hit = 0
+    tier_stats = {}   # tier → [n, hit]
+    steam_stats = [0, 0]
+    drift_stats = [0, 0]
+    value_stats_hi = [0, 0]   # value_edge ≥ 0.10
+    value_stats_lo = [0, 0]   # value_edge ≤ -0.10
+    rank_stats = {1: [0, 0], 2: [0, 0], 3: [0, 0], 4: [0, 0]}
+
+    for r in rows:
+        hippo = r.get("hippo", "")
+        kosu = r.get("kosu_no")
+        at_no = r.get("at_no")
+        fins = _match_tr_race(hippo, kosu, outcomes)
+        if not fins:
+            continue
+        # top4 finish set
+        top4_set = {f.get("at_no") for f in fins
+                    if isinstance(f.get("S"), int) and f["S"] <= 4}
+        if not top4_set:
+            continue
+        total += 1
+        did_hit = at_no in top4_set
+        if did_hit:
+            top4_hit += 1
+        # tier
+        tier = r.get("tier") or "•"
+        tier_stats.setdefault(tier, [0, 0])
+        tier_stats[tier][0] += 1
+        if did_hit:
+            tier_stats[tier][1] += 1
+        # steam / drift
+        if r.get("is_steam"):
+            steam_stats[0] += 1
+            if did_hit:
+                steam_stats[1] += 1
+        if r.get("is_drift"):
+            drift_stats[0] += 1
+            if did_hit:
+                drift_stats[1] += 1
+        # value edge
+        ve = r.get("value_edge") or 0
+        if ve >= 0.10:
+            value_stats_hi[0] += 1
+            if did_hit:
+                value_stats_hi[1] += 1
+        elif ve <= -0.10:
+            value_stats_lo[0] += 1
+            if did_hit:
+                value_stats_lo[1] += 1
+        # rank
+        rank = r.get("rank") or 0
+        if rank in rank_stats:
+            rank_stats[rank][0] += 1
+            if did_hit:
+                rank_stats[rank][1] += 1
+
+    def _pct(n, d):
+        return round(100 * n / d, 1) if d else 0.0
+
+    return {
+        "n": len(rows),
+        "matched": total,
+        "top4_hit_rate": _pct(top4_hit, total),
+        "top4_hits": top4_hit,
+        "tier_stats": {
+            tier: {"n": v[0], "hit": v[1],
+                    "hit_pct": _pct(v[1], v[0])}
+            for tier, v in tier_stats.items()
+        },
+        "steam": {"n": steam_stats[0], "hit": steam_stats[1],
+                   "hit_pct": _pct(steam_stats[1], steam_stats[0])},
+        "drift": {"n": drift_stats[0], "hit": drift_stats[1],
+                   "hit_pct": _pct(drift_stats[1], drift_stats[0])},
+        "value_edge_hi": {"n": value_stats_hi[0],
+                            "hit": value_stats_hi[1],
+                            "hit_pct": _pct(value_stats_hi[1],
+                                             value_stats_hi[0])},
+        "value_edge_lo": {"n": value_stats_lo[0],
+                            "hit": value_stats_lo[1],
+                            "hit_pct": _pct(value_stats_lo[1],
+                                             value_stats_lo[0])},
+        "rank_stats": {
+            r: {"n": v[0], "hit": v[1], "hit_pct": _pct(v[1], v[0])}
+            for r, v in rank_stats.items()
+        },
+    }
+
+
 def analyze_uk_top4(target_date: str) -> dict:
     """UK race TOP-4 log'ları."""
     logs = _load_jsonl(LOG_DIR / f"{target_date}_uk_top4.jsonl")
@@ -209,7 +329,7 @@ def analyze_uk_value(target_date: str) -> dict:
 
 def format_report(target_date: str, tr_pre: dict,
                    tr_alt: dict, uk_top: dict,
-                   uk_val: dict) -> str:
+                   uk_val: dict, v11: Optional[dict] = None) -> str:
     """Kompakt Telegram raporu."""
     lines = [
         f"📊 <b>RETRO · {target_date}</b>",
@@ -265,8 +385,58 @@ def format_report(target_date: str, tr_pre: dict,
     else:
         lines.append("   Bugün outlier tespit edilmedi")
 
+    # V11 HYBRID
+    if v11 and v11.get("n") and not v11.get("matched"):
+        lines.append("")
+        lines.append("<b>🎯 V11 HYBRID</b>")
+        lines.append(f"   Log: {v11['n']} tahmin · outcomes bekleniyor "
+                      f"(TR backfill gecikmeli)")
+    elif v11 and v11.get("matched"):
+        lines.append("")
+        lines.append("<b>🎯 V11 HYBRID (model + AGF + steam)</b>")
+        lines.append(
+            f"   Eşleşen at: {v11['matched']} · TOP-4 hit: "
+            f"%{v11.get('top4_hit_rate', 0):.1f}")
+        rank_stats = v11.get("rank_stats") or {}
+        rank_line = " ".join(
+            f"R{r}:%{rank_stats.get(r, {}).get('hit_pct', 0):.0f}"
+            for r in (1, 2, 3, 4)
+            if rank_stats.get(r, {}).get('n', 0) > 0)
+        if rank_line:
+            lines.append(f"   Rank-hit: {rank_line}")
+        # Tier bazlı
+        tier_stats = v11.get("tier_stats") or {}
+        tier_lines = []
+        for tier_name in ("⭐ ELMAS", "💎 STEAM VALUE",
+                           "🔥 FIRSAT", "✓ SAĞLAM"):
+            ts = tier_stats.get(tier_name)
+            if ts and ts["n"] > 0:
+                tier_lines.append(
+                    f"   {tier_name}: %{ts['hit_pct']:.0f} "
+                    f"({ts['hit']}/{ts['n']})")
+        for t in tier_lines:
+            lines.append(t)
+        # Steam / Drift
+        steam = v11.get("steam") or {}
+        drift = v11.get("drift") or {}
+        if steam.get("n"):
+            lines.append(f"   ⚡ STEAM: %{steam['hit_pct']:.0f} "
+                          f"({steam['hit']}/{steam['n']})")
+        if drift.get("n"):
+            lines.append(f"   📉 DRIFT: %{drift['hit_pct']:.0f} "
+                          f"({drift['hit']}/{drift['n']})")
+        # Value edge
+        veh = v11.get("value_edge_hi") or {}
+        vel = v11.get("value_edge_lo") or {}
+        if veh.get("n"):
+            lines.append(f"   🔥 value_edge≥+10: %{veh['hit_pct']:.0f} "
+                          f"({veh['hit']}/{veh['n']})")
+        if vel.get("n"):
+            lines.append(f"   ⚠ value_edge≤−10: %{vel['hit_pct']:.0f} "
+                          f"({vel['hit']}/{vel['n']})")
+
     lines.append("")
-    lines.append("<i>V9.5 ensemble · CPCV walk-forward · 3 alfa aktif</i>")
+    lines.append("<i>V11 ensemble · CPCV walk-forward · H2H Elo + Pace + Track · AGF steam</i>")
     return "\n".join(lines)
 
 
@@ -275,6 +445,7 @@ def run_retro(target_date: str, send_telegram: bool = False) -> dict:
     tr_alt = analyze_tr_altili(target_date)
     uk_top = analyze_uk_top4(target_date)
     uk_val = analyze_uk_value(target_date)
+    v11 = analyze_v11_hybrid(target_date)
     report = {
         "date": target_date,
         "generated_at": datetime.now().isoformat(),
@@ -282,6 +453,7 @@ def run_retro(target_date: str, send_telegram: bool = False) -> dict:
         "tr_altili": tr_alt,
         "uk_top4": uk_top,
         "uk_value": uk_val,
+        "v11_hybrid": v11,
     }
     # Persist
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
@@ -290,7 +462,7 @@ def run_retro(target_date: str, send_telegram: bool = False) -> dict:
         json.dump(report, f, indent=2, ensure_ascii=False, default=str)
     log.info(f"saved {out_path}")
 
-    text = format_report(target_date, tr_pre, tr_alt, uk_top, uk_val)
+    text = format_report(target_date, tr_pre, tr_alt, uk_top, uk_val, v11)
     print(text)
 
     if send_telegram:
