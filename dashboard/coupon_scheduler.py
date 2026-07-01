@@ -1005,41 +1005,37 @@ def _tick_locked(logger):
 
 
 def _maybe_send_v11_hybrid_daily(st, now, logger):
-    """V11 hibrit tahminler (model + AGF + steam) — sabah + T-30 tetik.
+    """V11 hibrit tahminler — GÜNDE 1 KEZ sabah tetiği.
 
-    Berkay (2026-07-01): 'v11 tahminleri bugün gelmeli agfli hibrit'.
+    Berkay (2026-07-01): 'devamlı gelmesin, ben bile anlamıyorum neyi
+    oynayacağımı'. Öğlen/akşam gönderim İPTAL, sadece sabah 09:15.
 
-    Sabah 09:15 — ilk V11 hibrit tahmin (steam=henüz yok)
-    Öğlen 14:00 + akşam 17:00 — steam Δ dolu, revize tahmin
-
-    Env: TJK_V11_HYBRID_TELEGRAM=1 (default 1 — kapatmak için 0)
+    Env:
+      TJK_V11_HYBRID_TELEGRAM=1 (default 1 — kapatmak için 0)
+      TJK_V11_HYBRID_HOUR=9 (default 9 — sabah saati)
+      TJK_V11_HYBRID_MIN=15 (default 15)
     """
     if os.environ.get('TJK_V11_HYBRID_TELEGRAM', '1') != '1':
         return
-    # 3 tetik saati (yerel Istanbul saati)
-    trigger_hours = [(9, 15), (14, 0), (17, 0)]
-    key_map = {(9, 15): 'v11_hybrid_morning',
-                (14, 0): 'v11_hybrid_noon',
-                (17, 0): 'v11_hybrid_evening'}
+    hh = int(os.environ.get('TJK_V11_HYBRID_HOUR', '9'))
+    mm = int(os.environ.get('TJK_V11_HYBRID_MIN', '15'))
     cur = (now.hour, now.minute)
-    for (h, m) in trigger_hours:
-        if cur[0] == h and cur[1] >= m and cur[1] < m + 5:
-            key = key_map[(h, m)]
-            if st.get(key):
-                return
-            try:
-                from v11_hybrid_publisher import publish
-                r = publish(now.date(), do_send=True)
-                st[key] = True
-                _log(logger,
-                      f"[coupon_sched] v11-hybrid {key}: "
-                      f"n_msgs={r.get('n_messages')} "
-                      f"counts={r.get('counts')}")
-            except Exception as _e_v:
-                _log(logger,
-                      f"[coupon_sched] v11-hybrid {key} err: "
-                      f"{repr(_e_v)[:160]}")
-            return
+    if not (cur[0] == hh and mm <= cur[1] < mm + 5):
+        return
+    if st.get('v11_hybrid_daily_sent'):
+        return
+    try:
+        from v11_hybrid_publisher import publish
+        r = publish(now.date(), do_send=True)
+        st['v11_hybrid_daily_sent'] = True
+        _log(logger,
+              f"[coupon_sched] v11-hybrid DAILY: "
+              f"n_msgs={r.get('n_messages')} "
+              f"counts={r.get('counts')}")
+    except Exception as _e_v:
+        _log(logger,
+              f"[coupon_sched] v11-hybrid daily err: "
+              f"{repr(_e_v)[:160]}")
 
 
 
