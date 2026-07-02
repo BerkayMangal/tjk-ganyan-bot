@@ -26,8 +26,31 @@ V10_PATH = (Path(__file__).resolve().parent.parent
             / "v10" / "trained" / "v10_ensemble.json")
 V11_PATH = (Path(__file__).resolve().parent.parent
             / "v11" / "trained" / "v11_ensemble.json")
+V11_CALIB_PATH = (Path(__file__).resolve().parent.parent.parent
+                   / "simulation" / "calibrators" / "fitted"
+                   / "v11_top4_calibrator.pkl")
 _V9_CACHE: Optional[dict] = None
+_V11_CALIB_CACHE = None
 _V9_LOCK = threading.Lock()
+
+
+def _load_v11_calibrator():
+    """V11 isotonic calibrator (bir kere yükle, cache)."""
+    global _V11_CALIB_CACHE
+    if _V11_CALIB_CACHE is not None:
+        return _V11_CALIB_CACHE
+    if os.environ.get("TJK_V11_CALIB_SKIP", "0") == "1":
+        return None
+    try:
+        if V11_CALIB_PATH.exists():
+            import pickle
+            with open(V11_CALIB_PATH, "rb") as f:
+                _V11_CALIB_CACHE = pickle.load(f)
+            logger.info(f"V11 calibrator loaded: {V11_CALIB_PATH.name}")
+            return _V11_CALIB_CACHE
+    except Exception as exc:
+        logger.warning(f"V11 calibrator load fail: {exc}")
+    return None
 
 
 def _force_v9_skip():
@@ -298,6 +321,17 @@ def predict_race_v9(
                                        preds_raw["p_top3"])
             preds_raw["p_top4"] = max(preds_raw["p_top3"],
                                        preds_raw["p_top4"])
+        # V11 isotonic calibration (top-4) — model %4.5 underestimate
+        # düzeltiliyor. `p_top4_raw` da saklanır (backward compat).
+        _v11_calib = _load_v11_calibrator()
+        if _v11_calib is not None and preds_raw.get("p_top4") is not None:
+            try:
+                preds_raw["p_top4_raw"] = preds_raw["p_top4"]
+                cal = float(_v11_calib.transform(
+                    [preds_raw["p_top4"]])[0])
+                preds_raw["p_top4"] = max(0.0, min(1.0, cal))
+            except Exception as exc:
+                logger.debug(f"V11 calib apply fail: {exc}")
         out.append({
             "horse_no": h.get("horse_no") or h.get("horse_number"),
             "horse_name": h.get("horse_name") or h.get("name"),
