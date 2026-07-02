@@ -1331,6 +1331,57 @@ def api_canli_v11():
     })
 
 
+@app.route("/api/uk/dry")
+def api_uk_dry():
+    """UK RacingAPI diagnostic — kredensiyel + yarış çekimi test."""
+    tok = request.args.get("token", "") or request.headers.get("X-Token", "")
+    if tok != os.getenv("MANUAL_TRIGGER_TOKEN", "tjk-acil-2026"):
+        return jsonify({"error": "unauthorized"}), 401
+    result = {}
+    try:
+        try:
+            from forecast.sources.theracingapi import (
+                RacingAPIClient, RacingAPIConfig)
+        except ImportError:
+            from sources.theracingapi import (
+                RacingAPIClient, RacingAPIConfig)
+        cfg = RacingAPIConfig.from_env()
+        result["config"] = {
+            "base_url": cfg.base_url,
+            "user_set": bool(cfg.username),
+            "pass_set": bool(cfg.password),
+            "enabled": cfg.enabled,
+        }
+        if not cfg.enabled:
+            result["error"] = "credentials missing (both user+pass required)"
+            return jsonify(result)
+        client = RacingAPIClient(cfg)
+        # Test: bugün yarışlar
+        try:
+            from forecast.uk_race_analyzer import fetch_upcoming_uk_races
+        except ImportError:
+            from uk_race_analyzer import fetch_upcoming_uk_races
+        analyses = fetch_upcoming_uk_races(
+            hours_ahead=6.0, regions=("gb", "ire", "fr"))
+        result["n_races_found"] = len(analyses) if analyses else 0
+        if analyses:
+            result["sample_races"] = [
+                {"course": a.get("course"),
+                 "off_time": a.get("off_time"),
+                 "region": a.get("region"),
+                 "n_runners": len(a.get("runners") or []),
+                 "top4": [r.get("horse_name") for r in
+                           (a.get("top4") or [])[:4]]}
+                for a in analyses[:5]
+            ]
+        return jsonify(result)
+    except Exception as e:
+        import traceback
+        result["error"] = str(e)[:400]
+        result["traceback"] = traceback.format_exc()[:2000]
+        return jsonify(result), 500
+
+
 @app.route("/api/v11-hybrid/modelinfo")
 def api_v11_modelinfo():
     """V11 bundle prod'da yüklü mü + history_compact dolu mu."""
