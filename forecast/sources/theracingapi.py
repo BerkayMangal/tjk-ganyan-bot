@@ -49,10 +49,15 @@ class RacingAPIConfig:
         return cls(
             base_url=os.environ.get(
                 "TJK_RACING_API_BASE",
-                "https://api.theracingapi.com/v1",
+                os.environ.get("RACING_API_BASE",
+                                "https://api.theracingapi.com/v1"),
             ),
-            username=os.environ.get("TJK_RACING_API_USER"),
-            password=os.environ.get("TJK_RACING_API_PASS"),
+            username=(os.environ.get("TJK_RACING_API_USER")
+                      or os.environ.get("RACING_API_USER")
+                      or os.environ.get("RACING_API_USERNAME")),
+            password=(os.environ.get("TJK_RACING_API_PASS")
+                      or os.environ.get("RACING_API_PASS")
+                      or os.environ.get("RACING_API_PASSWORD")),
             timeout=int(os.environ.get("TJK_RACING_API_TIMEOUT", "15")),
         )
 
