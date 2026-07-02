@@ -1456,7 +1456,10 @@ def api_v11_env_check():
         "MANUAL_TRIGGER_TOKEN", "TJK_ULTRA_LEAN",
         "TJK_V11_HYBRID_TELEGRAM", "TJK_AGF_INTRADAY",
         "TJK_KUPON_MODE", "TJK_DAILY_COUPON",
-        "TJK_MEASURE_DB_URL", "RACING_API_KEY",
+        "TJK_MEASURE_DB_URL",
+        # RacingAPI Basic Auth (theracingapi.com)
+        "TJK_RACING_API_USER", "TJK_RACING_API_PASS",
+        "TJK_V11_DIRECT_PREDICT", "TJK_V11_CALIB_SKIP",
     ]
     return jsonify({k: _mask(os.environ.get(k, "")) for k in keys})
 

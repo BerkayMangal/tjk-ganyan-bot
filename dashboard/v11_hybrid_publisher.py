@@ -154,17 +154,22 @@ def build_hybrid_report(target_date, ensure_snapshot: bool = True) -> dict:
     except Exception as exc:
         log.warning(f"[v11-hybrid] jockey form fail: {exc}")
 
-    # V11 direct inference için history map (cache once)
+    # V11 direct inference için history map — LOKAL varsa outcomes'tan,
+    # yoksa None (inference otomatik bundle'daki v11_history_compact kullanır).
     v11_history_map = {}
     try:
         _records = _load_all_outcomes()
-        v11_history_map = _build_history_map(_records)
-        log.info(f"[v11-hybrid] history_map: {len(v11_history_map)} at")
+        if _records:
+            v11_history_map = _build_history_map(_records)
+        log.info(f"[v11-hybrid] history_map: {len(v11_history_map)} at "
+                  f"(bundle fallback active if empty)")
     except Exception as exc:
         log.warning(f"[v11-hybrid] history_map fail: {exc}")
 
-    def _v11_lookup(name):
-        return v11_history_map.get(name, [])
+    _v11_lookup = None
+    if v11_history_map:
+        def _v11_lookup(name):
+            return v11_history_map.get(name, [])
 
     date_str = target_date.isoformat()
     messages = []
