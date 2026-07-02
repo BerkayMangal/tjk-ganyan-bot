@@ -1,12 +1,12 @@
 {
-  "n_samples": 12991,
-  "positive_rate": 0.401431760449542,
-  "brier_raw": 0.18577114214754925,
-  "brier_calibrated": 0.18045935308219993,
-  "brier_improvement": 0.0053117890653493205,
-  "ece_raw": 0.05070740132189393,
-  "ece_calibrated": 1.4374529500573576e-17,
-  "ece_improvement_pct": 99.99999999999999,
-  "gap_raw": -0.04489618214911112,
-  "gap_calibrated": -5.551115123125783e-17
+  "n_samples": 16374,
+  "positive_rate": 0.4017955294979846,
+  "brier_raw": 0.18026216584291024,
+  "brier_calibrated": 0.17838059911214624,
+  "brier_improvement": 0.001881566730764006,
+  "ece_raw": 0.010410694657097035,
+  "ece_calibrated": 2.8850610539758406e-17,
+  "ece_improvement_pct": 99.99999999999973,
+  "gap_raw": 0.006696912312323833,
+  "gap_calibrated": 0.0
 }
