@@ -1331,6 +1331,62 @@ def api_canli_v11():
     })
 
 
+@app.route("/api/v11-hybrid/modelinfo")
+def api_v11_modelinfo():
+    """V11 bundle prod'da yüklü mü + history_compact dolu mu."""
+    tok = request.args.get("token", "") or request.headers.get("X-Token", "")
+    if tok != os.getenv("MANUAL_TRIGGER_TOKEN", "tjk-acil-2026"):
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        try:
+            from model.v9.inference_v9 import (
+                load_v9_ensemble, predict_race_v9)
+        except ImportError:
+            from v9.inference_v9 import load_v9_ensemble, predict_race_v9
+        b = load_v9_ensemble()
+        if not b:
+            return jsonify({"error": "bundle load fail",
+                             "path_hint": "check V11_PATH exists"})
+        info = {
+            "version": b.get("version"),
+            "n_features": len(b.get("feature_cols") or []),
+            "n_history_compact": len(b.get("v11_history_compact") or {}),
+            "n_elo_final": len(b.get("v11_elo_final") or {}),
+            "n_pace_timeline": len(b.get("v11_pace_timeline") or {}),
+            "n_track_timeline": len(b.get("v11_track_timeline") or {}),
+            "n_h2h_dates": len(b.get("v11_h2h_dates") or {}),
+            "heads": list((b.get("heads") or {}).keys()),
+        }
+        # Test predict: 3 farklı fake at, sonuç varyansı olmalı
+        test_horses = [
+            {"horse_no": 1, "horse_name": "A", "age": 4, "weight": 58,
+             "distance": 1600, "track_type": "Çim",
+             "hippodrome": "İstanbul"},
+            {"horse_no": 2, "horse_name": "B", "age": 3, "weight": 56,
+             "distance": 1600, "track_type": "Çim",
+             "hippodrome": "İstanbul"},
+            {"horse_no": 3, "horse_name": "C", "age": 5, "weight": 60,
+             "distance": 1600, "track_type": "Çim",
+             "hippodrome": "İstanbul"},
+        ]
+        preds = predict_race_v9(test_horses, ref_date="2026-06-27")
+        info["test_predict"] = [
+            {"horse_no": p.get("horse_no"),
+             "p_top4": p.get("p_top4"),
+             "p_top4_raw": p.get("p_top4_raw")}
+            for p in (preds or [])
+        ]
+        # Sample real horse from history_compact
+        hc = b.get("v11_history_compact") or {}
+        sample_names = list(hc.keys())[:3]
+        info["history_sample_names"] = sample_names
+        return jsonify(info)
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e)[:400],
+                         "traceback": traceback.format_exc()[:3000]}), 500
+
+
 @app.route("/api/v11-hybrid/getchat")
 def api_v11_getchat():
     """Bot'un son mesajlarındaki chat_id'leri döndür — doğru chat_id bulmak için.
