@@ -62,6 +62,9 @@ def _norm(name: str) -> str:
     return out.lower().strip()
 
 
+MIN_NAME_LEN = 4  # boş/tek harfli / çok kısa string false-match ederdi
+
+
 def check_uk_champion(jockey: str = "", trainer: str = "") -> dict:
     """At meta'sından UK champion eşleşmesi.
 
@@ -72,33 +75,39 @@ def check_uk_champion(jockey: str = "", trainer: str = "") -> dict:
     is_cj = False
     is_ct = False
     tags = []
-    # Fuzzy match — last name + first initial
-    for champion in UK_CHAMPION_JOCKEYS:
-        if not champion:
-            continue
-        parts = champion.split()
-        # Try full match first
-        if champion in j_norm or j_norm in champion:
-            is_cj = True
-            tags.append(f"🏆 UK JOCKEY ({champion.title()})")
-            break
-        # Last name match (e.g. "MOORE" matches "Ryan Moore")
-        if len(parts) >= 2 and parts[-1] in j_norm.split():
-            is_cj = True
-            tags.append(f"🏆 UK JOCKEY ({champion.title()})")
-            break
-    for champion in UK_CHAMPION_TRAINERS:
-        if not champion:
-            continue
-        parts = champion.split()
-        if champion in t_norm or t_norm in champion:
-            is_ct = True
-            tags.append(f"🏆 UK TRAINER ({champion.title()})")
-            break
-        if len(parts) >= 2 and parts[-1] in t_norm.split():
-            is_ct = True
-            tags.append(f"🏆 UK TRAINER ({champion.title()})")
-            break
+
+    # Fuzzy match — last name + first initial. BOŞ STRING GUARD.
+    if j_norm and len(j_norm) >= MIN_NAME_LEN:
+        for champion in UK_CHAMPION_JOCKEYS:
+            if not champion:
+                continue
+            parts = champion.split()
+            # Try full match first (bilateral substring)
+            if champion in j_norm or j_norm in champion:
+                is_cj = True
+                tags.append(f"🏆 UK JOCKEY ({champion.title()})")
+                break
+            # Last name match — sadece SOYADI 4+ karakter ise
+            if (len(parts) >= 2 and len(parts[-1]) >= MIN_NAME_LEN
+                    and parts[-1] in j_norm.split()):
+                is_cj = True
+                tags.append(f"🏆 UK JOCKEY ({champion.title()})")
+                break
+
+    if t_norm and len(t_norm) >= MIN_NAME_LEN:
+        for champion in UK_CHAMPION_TRAINERS:
+            if not champion:
+                continue
+            parts = champion.split()
+            if champion in t_norm or t_norm in champion:
+                is_ct = True
+                tags.append(f"🏆 UK TRAINER ({champion.title()})")
+                break
+            if (len(parts) >= 2 and len(parts[-1]) >= MIN_NAME_LEN
+                    and parts[-1] in t_norm.split()):
+                is_ct = True
+                tags.append(f"🏆 UK TRAINER ({champion.title()})")
+                break
     return {
         "is_champion_jockey": is_cj,
         "is_champion_trainer": is_ct,
