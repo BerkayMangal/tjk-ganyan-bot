@@ -28,7 +28,9 @@ def main():
     h['agf_rank'] = h['agf_rank'].fillna(99).astype(int)
 
     # PG'den race_bettings full pull — bet_type bazlı tüm
-    PGPASSWORD = '4yhT8xJp7LZkWyKlSQrFalBp3qMFoOfh'
+    PGPASSWORD = os.environ.get('PGPASSWORD', '')
+    if not PGPASSWORD:
+        sys.exit('PGPASSWORD env değişkeni gerekli (berkay_ro, salt-okunur)')
     import psycopg2
     from psycopg2.extras import RealDictCursor
     conn = psycopg2.connect(
